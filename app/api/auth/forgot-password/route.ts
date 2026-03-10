@@ -12,7 +12,7 @@ const appUrl = process.env.NEXT_PUBLIC_APP_URL;
 function createServerSupabaseClient() {
   if (!supabaseUrl || !supabaseAnonKey) {
     throw new Error(
-      "Missing Supabase env vars: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY",
+      "Thiếu biến môi trường Supabase: NEXT_PUBLIC_SUPABASE_URL và NEXT_PUBLIC_SUPABASE_ANON_KEY",
     );
   }
 
@@ -30,13 +30,13 @@ export async function POST(request: Request) {
   try {
     payload = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    return NextResponse.json({ error: "Body JSON không hợp lệ." }, { status: 400 });
   }
 
   const email = payload.email?.trim();
 
   if (!email) {
-    return NextResponse.json({ error: "Email is required." }, { status: 400 });
+    return NextResponse.json({ error: "Email là bắt buộc." }, { status: 400 });
   }
 
   try {
@@ -54,13 +54,13 @@ export async function POST(request: Request) {
 
     return NextResponse.json(
       {
-        message: "Reset email sent.",
+        message: "Đã gửi email đặt lại mật khẩu.",
       },
       { status: 200 },
     );
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Internal Server Error";
+      error instanceof Error ? error.message : "Lỗi máy chủ nội bộ";
 
     return NextResponse.json({ error: message }, { status: 500 });
   }

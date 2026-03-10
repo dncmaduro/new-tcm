@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
 type LoginResponse = {
@@ -35,17 +36,16 @@ function AlertIcon() {
 }
 
 export default function Home() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setIsSubmitting(true);
     setError(null);
-    setSuccess(null);
 
     try {
       const response = await fetch("/api/auth/login", {
@@ -68,9 +68,7 @@ export default function Home() {
         return;
       }
 
-      setSuccess(
-        `Đăng nhập thành công${payload.user?.email ? `, ${payload.user.email}` : ""}.`,
-      );
+      router.push("/dashboard");
     } catch {
       setError("Không thể kết nối tới dịch vụ xác thực. Vui lòng thử lại.");
     } finally {
@@ -105,12 +103,6 @@ export default function Home() {
               </div>
             ) : null}
 
-            {success ? (
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 animate-[panel-in_220ms_ease-out]">
-                {success}
-              </div>
-            ) : null}
-
             <div className="space-y-2">
               <label
                 htmlFor="email"
@@ -122,7 +114,7 @@ export default function Home() {
                 id="email"
                 type="email"
                 autoComplete="username"
-                placeholder="tenban@congty.com"
+                placeholder="name@company.com"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-[15px] text-slate-900 outline-none transition focus:border-blue-500 focus:ring-3 focus:ring-blue-100"
@@ -190,7 +182,7 @@ export default function Home() {
         </section>
 
         <footer className="mt-9 text-center">
-          <p className="text-sm text-slate-400">© 2024 Corporate Systems Inc.</p>
+          <p className="text-sm text-slate-400">© 2024 TCM.</p>
           <div className="mt-2 flex items-center justify-center gap-5 text-sm text-slate-400">
             <a href="#" className="transition hover:text-slate-600">
               Chính sách bảo mật

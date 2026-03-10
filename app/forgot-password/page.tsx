@@ -59,9 +59,7 @@ export default function ForgotPasswordPage() {
         return;
       }
 
-      setSuccess(
-        "Yêu cầu đã được gửi. Vui lòng kiểm tra email để nhận liên kết đặt lại mật khẩu.",
-      );
+      setSuccess("Yêu cầu đã được gửi. Vui lòng kiểm tra email để nhận liên kết đặt lại mật khẩu.");
     } catch {
       setError("Không thể gửi yêu cầu lúc này. Vui lòng thử lại.");
     } finally {
@@ -165,7 +163,7 @@ export default function ForgotPasswordPage() {
         </Link>
 
         <p className="mt-24 text-sm text-slate-400">
-          © 2024 Internal Systems Ltd. Cổng thông tin doanh nghiệp bảo mật.
+          © 2024 TCM. Cổng thông tin doanh nghiệp bảo mật.
         </p>
       </main>
     </div>

@@ -205,7 +205,7 @@ export default function ResetPasswordPage() {
         </Link>
 
         <p className="mt-24 text-sm text-slate-400">
-          © 2024 Internal Systems Ltd. Cổng thông tin doanh nghiệp bảo mật.
+          © 2024 TCM. Cổng thông tin doanh nghiệp bảo mật.
         </p>
       </main>
     </div>

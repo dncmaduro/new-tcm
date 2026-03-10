@@ -13,7 +13,7 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 function createServerSupabaseClient() {
   if (!supabaseUrl || !supabaseAnonKey) {
     throw new Error(
-      "Missing Supabase env vars: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY",
+      "Thiếu biến môi trường Supabase: NEXT_PUBLIC_SUPABASE_URL và NEXT_PUBLIC_SUPABASE_ANON_KEY",
     );
   }
 
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
   try {
     payload = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    return NextResponse.json({ error: "Body JSON không hợp lệ." }, { status: 400 });
   }
 
   const password = payload.password;
@@ -40,14 +40,14 @@ export async function POST(request: Request) {
 
   if (!password || password.length < 8) {
     return NextResponse.json(
-      { error: "Password must be at least 8 characters." },
+      { error: "Mật khẩu phải có ít nhất 8 ký tự." },
       { status: 400 },
     );
   }
 
   if (!accessToken || !refreshToken) {
     return NextResponse.json(
-      { error: "Missing recovery token." },
+      { error: "Thiếu token khôi phục." },
       { status: 400 },
     );
   }
@@ -74,13 +74,13 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         user: data.user,
-        message: "Password updated.",
+        message: "Đã cập nhật mật khẩu.",
       },
       { status: 200 },
     );
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Internal Server Error";
+      error instanceof Error ? error.message : "Lỗi máy chủ nội bộ";
 
     return NextResponse.json({ error: message }, { status: 500 });
   }

@@ -15,8 +15,8 @@ const appMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Cổng đăng nhập",
-  description: "Trang đăng nhập bảo mật sử dụng Supabase Auth",
+  title: "TCM",
+  description: "TCM - Cổng xác thực bảo mật sử dụng Supabase Auth",
 };
 
 export default function RootLayout({
@@ -25,7 +25,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="vi">
       <body
         className={`${appSans.variable} ${appMono.variable} antialiased`}
       >
