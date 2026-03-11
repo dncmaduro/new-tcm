@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-type SidebarKey = "dashboard" | "goals" | "tasks" | "timesheet" | "reports" | "team";
+type SidebarKey = "dashboard" | "goals" | "tasks" | "timesheet" | "reports" | "team" | "departments";
 
 type WorkspaceSidebarProps = {
   active: SidebarKey;
@@ -13,6 +13,7 @@ const sidebarItems: Array<{ key: SidebarKey; label: string; href: string }> = [
   { key: "timesheet", label: "Chấm công", href: "/timesheet" },
   { key: "reports", label: "Báo cáo", href: "#" },
   { key: "team", label: "Nhóm", href: "#" },
+  { key: "departments", label: "Phòng ban", href: "/departments" },
 ];
 
 function SidebarBadge() {
