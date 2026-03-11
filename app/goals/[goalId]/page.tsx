@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 
 type GoalDetail = {
   title: string;
@@ -54,22 +55,6 @@ const activityFeed = [
   { user: "Luna R.", action: "đính kèm file Q4_Competitive_Analysis.pdf", time: "24/10/2023" },
 ];
 
-const menuItems = [
-  { label: "Bảng điều khiển", href: "/dashboard", active: false },
-  { label: "Mục tiêu", href: "/goals", active: true },
-  { label: "Công việc", href: "#", active: false },
-  { label: "Phân tích", href: "#", active: false },
-  { label: "Nhóm", href: "#", active: false },
-];
-
-function SidebarBadge() {
-  return (
-    <div className="grid h-8 w-8 place-items-center rounded-xl bg-blue-500">
-      <div className="h-3 w-3 rounded-sm border-2 border-white" />
-    </div>
-  );
-}
-
 function ProgressBar({ value }: { value: number }) {
   return (
     <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
@@ -110,50 +95,7 @@ export default function GoalDetailPage() {
   return (
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
       <div className="flex min-h-screen w-full">
-        <aside className="fixed inset-y-0 left-0 z-40 hidden w-[280px] flex-col overflow-y-auto bg-[#081633] px-5 pb-5 pt-6 text-slate-100 lg:flex">
-          <div className="mb-8 flex items-center gap-3">
-            <SidebarBadge />
-            <div>
-              <p className="text-2xl font-semibold tracking-[-0.02em]">TCM</p>
-              <p className="text-xs text-slate-400">Enterprise Edition</p>
-            </div>
-          </div>
-
-          <nav className="space-y-2">
-            {menuItems.map((item) => (
-              <Link
-                key={item.label}
-                href={item.href}
-                className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-lg font-medium tracking-[-0.01em] transition ${
-                  item.active
-                    ? "bg-[#1e62d8] text-white"
-                    : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
-                }`}
-              >
-                <span className="grid h-5 w-5 place-items-center rounded-md border border-current/45 text-[11px]">
-                  {item.label[0]}
-                </span>
-                {item.label}
-              </Link>
-            ))}
-          </nav>
-
-          <div className="mt-auto space-y-4">
-            <button
-              type="button"
-              className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-lg text-slate-300 transition hover:bg-[#0b1e43] hover:text-white"
-            >
-              <span className="grid h-5 w-5 place-items-center rounded-md border border-current/45 text-[11px]">
-                S
-              </span>
-              Cài đặt
-            </button>
-            <div className="rounded-xl bg-[#0d234f] p-3">
-              <p className="text-base font-semibold">John Doe</p>
-              <p className="text-sm text-slate-400">Product Lead</p>
-            </div>
-          </div>
-        </aside>
+        <WorkspaceSidebar active="goals" />
 
         <div className="flex h-screen w-full flex-1 flex-col overflow-hidden lg:pl-[280px]">
           <header className="sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-7">
