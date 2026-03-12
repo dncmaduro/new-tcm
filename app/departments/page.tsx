@@ -1,13 +1,39 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { supabase } from "@/lib/supabase";
 
 type DepartmentMode = "tree" | "list";
 
-type DepartmentMember = {
+type DepartmentRow = {
+  id: string;
   name: string;
+  parent_department_id: string | null;
+};
+
+type UserRoleDepartmentRow = {
+  department_id: string | null;
+  profile_id: string | null;
+  role_id: string | null;
+};
+
+type ProfileRow = {
+  id: string;
+  name: string | null;
+  email: string | null;
+};
+
+type RoleRow = {
+  id: string;
+  name: string | null;
+};
+
+type DepartmentMember = {
+  id: string;
+  name: string;
+  email: string | null;
   role: string;
   avatar: string;
   tone: string;
@@ -17,6 +43,7 @@ type DepartmentItem = {
   id: string;
   tag: string;
   name: string;
+  parentId: string | null;
   parent: string;
   head: string;
   headRole: string;
@@ -24,6 +51,7 @@ type DepartmentItem = {
   subDepartments: number;
   createdAt: string;
   description: string;
+  membersList: DepartmentMember[];
 };
 
 type TreeNode = {
@@ -32,136 +60,135 @@ type TreeNode = {
   y: number;
 };
 
-const departments: DepartmentItem[] = [
-  {
-    id: "board",
-    tag: "Điều hành",
-    name: "Ban giám đốc",
-    parent: "—",
-    head: "Jonathan Wick",
-    headRole: "Giám đốc điều hành",
-    members: 12,
-    subDepartments: 2,
-    createdAt: "10/01/2023",
-    description: "Định hướng chiến lược, ngân sách và mục tiêu phát triển toàn công ty.",
-  },
-  {
-    id: "engineering",
-    tag: "Kỹ thuật",
-    name: "Khối kỹ thuật sản phẩm",
-    parent: "Ban giám đốc",
-    head: "Sarah Chen",
-    headRole: "VP Engineering",
-    members: 42,
-    subDepartments: 3,
-    createdAt: "12/10/2023",
-    description: "Phát triển nền tảng, sản phẩm cốt lõi và vận hành hạ tầng kỹ thuật.",
-  },
-  {
-    id: "growth",
-    tag: "Tăng trưởng",
-    name: "Marketing & Sales",
-    parent: "Ban giám đốc",
-    head: "David Miller",
-    headRole: "CMO",
-    members: 28,
-    subDepartments: 2,
-    createdAt: "20/01/2024",
-    description: "Xây dựng thương hiệu, tạo nhu cầu và mở rộng doanh thu cho sản phẩm.",
-  },
-  {
-    id: "product",
-    tag: "Sản phẩm",
-    name: "Product Team",
-    parent: "Khối kỹ thuật sản phẩm",
-    head: "Marcus Thorne",
-    headRole: "Frontend Lead",
-    members: 18,
-    subDepartments: 1,
-    createdAt: "05/11/2023",
-    description: "Quản lý roadmap, trải nghiệm người dùng và chiến lược tính năng.",
-  },
-  {
-    id: "backend",
-    tag: "Nền tảng",
-    name: "Backend Team",
-    parent: "Khối kỹ thuật sản phẩm",
-    head: "Elena Kovac",
-    headRole: "Backend Architect",
-    members: 24,
-    subDepartments: 1,
-    createdAt: "14/02/2024",
-    description: "Xây dựng dịch vụ lõi, API, dữ liệu và đảm bảo hiệu năng hệ thống.",
-  },
-  {
-    id: "design",
-    tag: "Thiết kế",
-    name: "Design Team",
-    parent: "Product Team",
-    head: "Arjun Mehta",
-    headRole: "Product Designer",
-    members: 9,
-    subDepartments: 0,
-    createdAt: "14/02/2024",
-    description: "Thiết kế trải nghiệm, UI system và định hướng nhận diện sản phẩm.",
-  },
-];
+type TreeEdge = {
+  from: string;
+  to: string;
+};
 
 const TREE_CARD_WIDTH = 320;
 const TREE_CARD_HEIGHT = 212;
 const TREE_INITIAL_SCALE = 0.86;
-const TREE_MIN_SCALE = 0.6;
+const TREE_MIN_SCALE = 0.2;
 const TREE_MAX_SCALE = 1.4;
-const TREE_WORLD_WIDTH = 1220;
-const TREE_WORLD_HEIGHT = 820;
+const TREE_WORLD_WIDTH = 2200;
+const TREE_WORLD_HEIGHT = 1500;
+const TREE_LEVEL_GAP_Y = 280;
+const TREE_NODE_GAP_X = 80;
 
-const initialTreeNodes: TreeNode[] = [
-  { id: "board", x: 450, y: 20 },
-  { id: "engineering", x: 170, y: 300 },
-  { id: "growth", x: 730, y: 300 },
-  { id: "product", x: 170, y: 568 },
-  { id: "backend", x: 500, y: 568 },
-  { id: "design", x: 830, y: 568 },
+const memberToneClasses = [
+  "bg-cyan-100 text-cyan-700",
+  "bg-indigo-100 text-indigo-700",
+  "bg-amber-100 text-amber-700",
+  "bg-rose-100 text-rose-700",
+  "bg-emerald-100 text-emerald-700",
+  "bg-orange-100 text-orange-700",
+  "bg-purple-100 text-purple-700",
+  "bg-blue-100 text-blue-700",
 ];
 
-const treeEdges = [
-  { from: "board", to: "engineering" },
-  { from: "board", to: "growth" },
-  { from: "engineering", to: "product" },
-  { from: "engineering", to: "backend" },
-  { from: "engineering", to: "design" },
-];
+const toInitials = (value: string) => {
+  const parts = value
+    .split(" ")
+    .map((item) => item.trim())
+    .filter(Boolean);
 
-const departmentMembers: Record<string, DepartmentMember[]> = {
-  board: [
-    { name: "Jonathan Wick", role: "CEO", avatar: "JW", tone: "bg-cyan-100 text-cyan-700" },
-    { name: "Nora Lin", role: "CFO", avatar: "NL", tone: "bg-indigo-100 text-indigo-700" },
-    { name: "Hiro Tan", role: "COO", avatar: "HT", tone: "bg-amber-100 text-amber-700" },
-  ],
-  engineering: [
-    { name: "Marcus Thorne", role: "Frontend Lead", avatar: "MT", tone: "bg-rose-100 text-rose-700" },
-    { name: "Elena Kovac", role: "Backend Architect", avatar: "EK", tone: "bg-emerald-100 text-emerald-700" },
-    { name: "Arjun Mehta", role: "Fullstack Developer", avatar: "AM", tone: "bg-orange-100 text-orange-700" },
-    { name: "Lisa Thompson", role: "DevOps Engineer", avatar: "LT", tone: "bg-purple-100 text-purple-700" },
-    { name: "Wei Zhang", role: "Data Engineer", avatar: "WZ", tone: "bg-blue-100 text-blue-700" },
-  ],
-  growth: [
-    { name: "David Miller", role: "CMO", avatar: "DM", tone: "bg-amber-100 text-amber-700" },
-    { name: "Luna Ross", role: "Brand Manager", avatar: "LR", tone: "bg-rose-100 text-rose-700" },
-    { name: "Milo Vega", role: "Performance Lead", avatar: "MV", tone: "bg-cyan-100 text-cyan-700" },
-  ],
-  product: [
-    { name: "Marcus Thorne", role: "Product Lead", avatar: "MT", tone: "bg-rose-100 text-rose-700" },
-    { name: "Anna Lee", role: "Product Owner", avatar: "AL", tone: "bg-indigo-100 text-indigo-700" },
-  ],
-  backend: [
-    { name: "Elena Kovac", role: "Backend Architect", avatar: "EK", tone: "bg-emerald-100 text-emerald-700" },
-    { name: "Nam Phan", role: "API Engineer", avatar: "NP", tone: "bg-blue-100 text-blue-700" },
-  ],
-  design: [
-    { name: "Arjun Mehta", role: "Product Designer", avatar: "AM", tone: "bg-orange-100 text-orange-700" },
-    { name: "Mia Tran", role: "UI Designer", avatar: "MT", tone: "bg-pink-100 text-pink-700" },
-  ],
+  if (!parts.length) {
+    return "--";
+  }
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
+};
+
+const normalizeText = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+const isHeadRole = (roleName: string) => {
+  const normalized = normalizeText(roleName);
+  return (
+    normalized.includes("leader") ||
+    normalized.includes("head") ||
+    normalized.includes("manager") ||
+    normalized.includes("truong")
+  );
+};
+
+const buildTreeLayout = (items: DepartmentItem[]): { nodes: TreeNode[]; edges: TreeEdge[] } => {
+  if (!items.length) {
+    return { nodes: [], edges: [] };
+  }
+
+  const byId = items.reduce<Record<string, DepartmentItem>>((acc, item) => {
+    acc[item.id] = item;
+    return acc;
+  }, {});
+
+  const childrenByParent = items.reduce<Record<string, string[]>>((acc, item) => {
+    if (!item.parentId || !byId[item.parentId]) {
+      return acc;
+    }
+    if (!acc[item.parentId]) {
+      acc[item.parentId] = [];
+    }
+    acc[item.parentId].push(item.id);
+    return acc;
+  }, {});
+
+  const sortByName = (list: DepartmentItem[]) => [...list].sort((a, b) => a.name.localeCompare(b.name, "vi"));
+
+  const roots = sortByName(items.filter((item) => !item.parentId || !byId[item.parentId]));
+  const queue = roots.map((item) => item.id);
+
+  const levelById: Record<string, number> = {};
+  roots.forEach((root) => {
+    levelById[root.id] = 0;
+  });
+
+  while (queue.length) {
+    const currentId = queue.shift() as string;
+    const childIds = (childrenByParent[currentId] ?? []).filter((id) => Boolean(byId[id]));
+    const children = sortByName(childIds.map((id) => byId[id]));
+
+    children.forEach((child) => {
+      if (levelById[child.id] !== undefined) {
+        return;
+      }
+      levelById[child.id] = (levelById[currentId] ?? 0) + 1;
+      queue.push(child.id);
+    });
+  }
+
+  const levelBuckets = items.reduce<Record<number, DepartmentItem[]>>((acc, item) => {
+    const level = levelById[item.id] ?? 0;
+    if (!acc[level]) {
+      acc[level] = [];
+    }
+    acc[level].push(item);
+    return acc;
+  }, {});
+
+  const nodes: TreeNode[] = [];
+  Object.entries(levelBuckets).forEach(([levelRaw, rawItems]) => {
+    const level = Number(levelRaw);
+    const levelItems = sortByName(rawItems);
+    const rowWidth = levelItems.length * TREE_CARD_WIDTH + (levelItems.length - 1) * TREE_NODE_GAP_X;
+    const startX = Math.max(20, (TREE_WORLD_WIDTH - rowWidth) / 2);
+
+    levelItems.forEach((item, index) => {
+      nodes.push({
+        id: item.id,
+        x: startX + index * (TREE_CARD_WIDTH + TREE_NODE_GAP_X),
+        y: 120 + level * TREE_LEVEL_GAP_Y,
+      });
+    });
+  });
+
+  const edges: TreeEdge[] = items
+    .filter((item) => item.parentId && byId[item.parentId])
+    .map((item) => ({ from: item.parentId as string, to: item.id }));
+
+  return { nodes, edges };
 };
 
 function TreeCard({
@@ -181,7 +208,7 @@ function TreeCard({
       type="button"
       onPointerDown={onPointerDown}
       onClick={() => onSelect(item.id)}
-      className={`w-[320px] rounded-2xl border bg-white p-4 text-left shadow-sm transition ${
+      className={`flex h-[212px] w-[320px] flex-col rounded-2xl border bg-white p-4 text-left shadow-sm transition ${
         active ? "border-blue-500 ring-1 ring-blue-200" : "border-slate-200 hover:border-blue-300"
       }`}
     >
@@ -193,13 +220,9 @@ function TreeCard({
       </div>
       <p className="mt-3 text-xl font-semibold tracking-[-0.01em] text-slate-900">{item.name}</p>
       <p className="mt-2 line-clamp-2 text-sm text-slate-500">{item.description}</p>
-      <div className="mt-3 flex items-center gap-2">
+      <div className="mt-auto flex items-center gap-2">
         <span className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">
-          {item.head
-            .split(" ")
-            .slice(0, 2)
-            .map((word) => word[0])
-            .join("")}
+          {toInitials(item.head)}
         </span>
         <div>
           <p className="text-sm font-semibold text-slate-700">{item.head}</p>
@@ -210,8 +233,14 @@ function TreeCard({
   );
 }
 
-function DepartmentPanel({ item }: { item: DepartmentItem }) {
-  const members = departmentMembers[item.id] ?? [];
+function DepartmentPanel({ item }: { item: DepartmentItem | null }) {
+  if (!item) {
+    return (
+      <aside className="self-start rounded-2xl border border-slate-200 bg-white p-5 xl:sticky xl:top-[92px]">
+        <p className="text-sm text-slate-500">Chưa có dữ liệu phòng ban để hiển thị.</p>
+      </aside>
+    );
+  }
 
   return (
     <aside className="self-start overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 xl:sticky xl:top-[92px] xl:max-h-[calc(100vh-112px)]">
@@ -225,11 +254,7 @@ function DepartmentPanel({ item }: { item: DepartmentItem }) {
         <p className="text-xs font-bold tracking-[0.08em] text-slate-400 uppercase">Trưởng phòng</p>
         <div className="mt-2 flex items-center gap-2">
           <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700">
-            {item.head
-              .split(" ")
-              .slice(0, 2)
-              .map((word) => word[0])
-              .join("")}
+            {toInitials(item.head)}
           </span>
           <div>
             <p className="text-sm font-semibold text-slate-700">{item.head}</p>
@@ -246,26 +271,26 @@ function DepartmentPanel({ item }: { item: DepartmentItem }) {
           </span>
         </div>
 
-        <div className="space-y-3">
-          {members.map((member) => (
-            <div key={member.name} className="flex items-center gap-2">
-              <span className={`grid h-9 w-9 place-items-center rounded-full text-xs font-semibold ${member.tone}`}>
-                {member.avatar}
-              </span>
-              <div>
-                <p className="text-sm font-semibold text-slate-700">{member.name}</p>
-                <p className="text-xs text-slate-500">{member.role}</p>
+        {item.membersList.length > 0 ? (
+          <div className="space-y-3">
+            {item.membersList.slice(0, 12).map((member) => (
+              <div key={member.id} className="flex items-center gap-2">
+                <span className={`grid h-9 w-9 place-items-center rounded-full text-xs font-semibold ${member.tone}`}>
+                  {member.avatar}
+                </span>
+                <div>
+                  <p className="text-sm font-semibold text-slate-700">{member.name}</p>
+                  <p className="text-xs text-slate-500">{member.role}</p>
+                  {member.email ? (
+                    <p className="text-[11px] text-slate-400">{member.email}</p>
+                  ) : null}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
-
-        <button
-          type="button"
-          className="mt-4 w-full rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100"
-        >
-          Xem toàn bộ thành viên
-        </button>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">Chưa có thành viên trong phòng ban này.</p>
+        )}
       </div>
     </aside>
   );
@@ -276,36 +301,251 @@ export default function DepartmentsPage() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const mode: DepartmentMode = searchParams.get("mode") === "list" ? "list" : "tree";
-  const selectedId = searchParams.get("dept") ?? "engineering";
-  const selectedDepartment = departments.find((item) => item.id === selectedId) ?? departments[1];
+  const [departments, setDepartments] = useState<DepartmentItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [searchKeyword, setSearchKeyword] = useState("");
 
-  const updateQuery = (next: { mode?: DepartmentMode; dept?: string }) => {
+  const mode: DepartmentMode = searchParams.get("mode") === "list" ? "list" : "tree";
+  const selectedId = searchParams.get("dept") ?? "";
+
+  const updateQuery = (next: { mode?: DepartmentMode; dept?: string | null }) => {
     const params = new URLSearchParams(searchParams.toString());
+
     if (next.mode) {
       params.set("mode", next.mode);
     }
-    if (next.dept) {
-      params.set("dept", next.dept);
+
+    if (next.dept !== undefined) {
+      if (next.dept) {
+        params.set("dept", next.dept);
+      } else {
+        params.delete("dept");
+      }
     }
+
     const query = params.toString();
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   };
 
-  const listRows = departments.filter((item) => ["engineering", "product", "growth", "design"].includes(item.id));
-  const [treeNodes, setTreeNodes] = useState<TreeNode[]>(initialTreeNodes);
+  useEffect(() => {
+    let isActive = true;
+
+    const loadDepartments = async () => {
+      setIsLoading(true);
+      setLoadError(null);
+
+      try {
+        const [{ data: departmentsData, error: departmentsError }, { data: urdData, error: urdError }, { data: profilesData, error: profilesError }, { data: rolesData, error: rolesError }] =
+          await Promise.all([
+            supabase.from("departments").select("id,name,parent_department_id"),
+            supabase.from("user_role_in_department").select("department_id,profile_id,role_id"),
+            supabase.from("profiles").select("id,name,email"),
+            supabase.from("roles").select("id,name"),
+          ]);
+
+        if (!isActive) {
+          return;
+        }
+
+        if (departmentsError) {
+          setLoadError(departmentsError.message || "Không tải được danh sách phòng ban.");
+          setDepartments([]);
+          return;
+        }
+
+        const rows = (departmentsData ?? []) as DepartmentRow[];
+        const urdRows = (urdData ?? []) as UserRoleDepartmentRow[];
+        const profileRows = (profilesData ?? []) as ProfileRow[];
+        const roleRows = (rolesData ?? []) as RoleRow[];
+
+        const nameByDepartmentId = rows.reduce<Record<string, string>>((acc, row) => {
+          acc[String(row.id)] = String(row.name);
+          return acc;
+        }, {});
+
+        const profileInfoById = profileRows.reduce<
+          Record<string, { name: string; email: string | null }>
+        >((acc, row) => {
+          acc[String(row.id)] = {
+            name: String(row.name ?? "Chưa có tên"),
+            email: row.email ? String(row.email) : null,
+          };
+          return acc;
+        }, {});
+
+        const roleNameById = roleRows.reduce<Record<string, string>>((acc, row) => {
+          acc[String(row.id)] = String(row.name ?? "Thành viên");
+          return acc;
+        }, {});
+
+        const subDepartmentsById = rows.reduce<Record<string, number>>((acc, row) => {
+          if (!row.parent_department_id) {
+            return acc;
+          }
+          const parentId = String(row.parent_department_id);
+          acc[parentId] = (acc[parentId] ?? 0) + 1;
+          return acc;
+        }, {});
+
+        const membersByDepartmentId = urdRows.reduce<
+          Record<string, Array<{ profileId: string; roleId: string | null }>>
+        >((acc, row) => {
+          if (!row.department_id || !row.profile_id) {
+            return acc;
+          }
+
+          const departmentId = String(row.department_id);
+          if (!acc[departmentId]) {
+            acc[departmentId] = [];
+          }
+
+          acc[departmentId].push({
+            profileId: String(row.profile_id),
+            roleId: row.role_id ? String(row.role_id) : null,
+          });
+
+          return acc;
+        }, {});
+
+        const mappedDepartments = rows.map((row) => {
+          const rawMembers = membersByDepartmentId[String(row.id)] ?? [];
+          const uniqueMembersByProfile = new Map<string, { profileId: string; roleName: string }>();
+
+          rawMembers.forEach((member) => {
+            const roleName = member.roleId ? roleNameById[member.roleId] ?? "Thành viên" : "Thành viên";
+            if (!uniqueMembersByProfile.has(member.profileId)) {
+              uniqueMembersByProfile.set(member.profileId, {
+                profileId: member.profileId,
+                roleName,
+              });
+            }
+          });
+
+          const membersList: DepartmentMember[] = Array.from(uniqueMembersByProfile.values())
+            .map((member, index) => {
+              const info = profileInfoById[member.profileId] ?? { name: "Chưa có tên", email: null };
+              return {
+                id: member.profileId,
+                name: info.name,
+                email: info.email,
+                role: member.roleName,
+                avatar: toInitials(info.name),
+                tone: memberToneClasses[index % memberToneClasses.length],
+              };
+            })
+            .sort((a, b) => a.name.localeCompare(b.name, "vi"));
+
+          const headCandidate = membersList.find((member) => isHeadRole(member.role)) ?? membersList[0] ?? null;
+
+          const parentId = row.parent_department_id ? String(row.parent_department_id) : null;
+          const parentName = parentId ? nameByDepartmentId[parentId] ?? "—" : "—";
+
+          return {
+            id: String(row.id),
+            tag: parentId ? "Phòng ban con" : "Phòng ban gốc",
+            name: String(row.name),
+            parentId,
+            parent: parentName,
+            head: headCandidate?.name ?? "Chưa có",
+            headRole: headCandidate?.role ?? "Chưa gán vai trò",
+            members: membersList.length,
+            subDepartments: subDepartmentsById[String(row.id)] ?? 0,
+            createdAt: "Chưa có",
+            description: `Phòng ban ${row.name}.`,
+            membersList,
+          } as DepartmentItem;
+        });
+
+        setDepartments(mappedDepartments);
+
+        const nonFatalErrors: string[] = [];
+        if (urdError) {
+          nonFatalErrors.push("Không tải được liên kết vai trò-phòng ban.");
+        }
+        if (profilesError) {
+          nonFatalErrors.push("Không tải được hồ sơ nhân sự.");
+        }
+        if (rolesError) {
+          nonFatalErrors.push("Không tải được danh sách vai trò.");
+        }
+        setLoadError(nonFatalErrors.length > 0 ? nonFatalErrors.join(" ") : null);
+      } catch {
+        if (!isActive) {
+          return;
+        }
+        setLoadError("Có lỗi xảy ra khi tải dữ liệu phòng ban.");
+        setDepartments([]);
+      } finally {
+        if (isActive) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void loadDepartments();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  const visibleDepartments = useMemo(() => {
+    const normalizedKeyword = normalizeText(searchKeyword.trim());
+
+    if (!normalizedKeyword) {
+      return departments;
+    }
+
+    return departments.filter((item) => {
+      const haystack = normalizeText(`${item.name} ${item.parent} ${item.head}`);
+      return haystack.includes(normalizedKeyword);
+    });
+  }, [departments, searchKeyword]);
+
+  const visibleDepartmentById = useMemo(
+    () =>
+      visibleDepartments.reduce<Record<string, DepartmentItem>>((acc, item) => {
+        acc[item.id] = item;
+        return acc;
+      }, {}),
+    [visibleDepartments],
+  );
+
+  const selectedDepartment =
+    visibleDepartments.find((item) => item.id === selectedId) ?? visibleDepartments[0] ?? null;
+
+  const layout = useMemo(() => buildTreeLayout(visibleDepartments), [visibleDepartments]);
+
+  const [treeNodes, setTreeNodes] = useState<TreeNode[]>([]);
   const [draggingTreeId, setDraggingTreeId] = useState<string | null>(null);
   const [treeScale, setTreeScale] = useState(TREE_INITIAL_SCALE);
-  const [treePan, setTreePan] = useState({ x: -20, y: -14 });
+  const [treePan, setTreePan] = useState({ x: -520, y: -160 });
   const [isTreePanning, setIsTreePanning] = useState(false);
   const treeCanvasRef = useRef<HTMLDivElement | null>(null);
   const treeDragOffsetRef = useRef({ x: 0, y: 0 });
+  const autoCenteredTreeKeyRef = useRef<string>("");
   const treePanStartRef = useRef<{
     pointerX: number;
     pointerY: number;
     startX: number;
     startY: number;
   } | null>(null);
+
+  useEffect(() => {
+    setTreeNodes((prev) => {
+      if (!layout.nodes.length) {
+        return [];
+      }
+
+      const prevById = prev.reduce<Record<string, TreeNode>>((acc, node) => {
+        acc[node.id] = node;
+        return acc;
+      }, {});
+
+      return layout.nodes.map((node) => prevById[node.id] ?? node);
+    });
+  }, [layout.nodes]);
 
   const treeNodeMap = useMemo(
     () =>
@@ -316,25 +556,83 @@ export default function DepartmentsPage() {
     [treeNodes],
   );
 
-  const clampScale = (nextScale: number) =>
-    Math.min(TREE_MAX_SCALE, Math.max(TREE_MIN_SCALE, nextScale));
+  const treeNodeIdentityKey = useMemo(
+    () =>
+      layout.nodes
+        .map((node) => node.id)
+        .sort((a, b) => a.localeCompare(b))
+        .join("|"),
+    [layout.nodes],
+  );
 
-  const clampPanToViewport = (
-    nextPan: { x: number; y: number },
-    scale: number,
-    rect?: DOMRect,
-  ) => {
-    const viewportRect = rect ?? treeCanvasRef.current?.getBoundingClientRect();
-    if (!viewportRect) {
-      return nextPan;
+  const clampScale = useCallback(
+    (nextScale: number) => Math.min(TREE_MAX_SCALE, Math.max(TREE_MIN_SCALE, nextScale)),
+    [],
+  );
+
+  const clampPanToViewport = useCallback(
+    (nextPan: { x: number; y: number }, scale: number, rect?: DOMRect) => {
+      const viewportRect = rect ?? treeCanvasRef.current?.getBoundingClientRect();
+      if (!viewportRect) {
+        return nextPan;
+      }
+
+      const worldPixelWidth = TREE_WORLD_WIDTH * scale;
+      const worldPixelHeight = TREE_WORLD_HEIGHT * scale;
+      if (worldPixelWidth <= viewportRect.width && worldPixelHeight <= viewportRect.height) {
+        return {
+          x: (viewportRect.width - worldPixelWidth) / 2,
+          y: (viewportRect.height - worldPixelHeight) / 2,
+        };
+      }
+
+      const minX = Math.min(0, viewportRect.width - worldPixelWidth);
+      const minY = Math.min(0, viewportRect.height - worldPixelHeight);
+      const centeredX =
+        worldPixelWidth <= viewportRect.width
+          ? (viewportRect.width - worldPixelWidth) / 2
+          : Math.min(0, Math.max(minX, nextPan.x));
+      const centeredY =
+        worldPixelHeight <= viewportRect.height
+          ? (viewportRect.height - worldPixelHeight) / 2
+          : Math.min(0, Math.max(minY, nextPan.y));
+
+      return {
+        x: centeredX,
+        y: centeredY,
+      };
+    },
+    [],
+  );
+
+  const fitTreeToNodes = useCallback(() => {
+    if (!treeCanvasRef.current || treeNodes.length === 0) {
+      return;
     }
-    const minX = Math.min(0, viewportRect.width - TREE_WORLD_WIDTH * scale);
-    const minY = Math.min(0, viewportRect.height - TREE_WORLD_HEIGHT * scale);
-    return {
-      x: Math.min(0, Math.max(minX, nextPan.x)),
-      y: Math.min(0, Math.max(minY, nextPan.y)),
+
+    const rect = treeCanvasRef.current.getBoundingClientRect();
+    const minNodeX = Math.min(...treeNodes.map((node) => node.x));
+    const minNodeY = Math.min(...treeNodes.map((node) => node.y));
+    const maxNodeX = Math.max(...treeNodes.map((node) => node.x + TREE_CARD_WIDTH));
+    const maxNodeY = Math.max(...treeNodes.map((node) => node.y + TREE_CARD_HEIGHT));
+
+    const contentWidth = Math.max(1, maxNodeX - minNodeX);
+    const contentHeight = Math.max(1, maxNodeY - minNodeY);
+    const padding = 72;
+
+    const scaleByWidth = (rect.width - padding * 2) / contentWidth;
+    const scaleByHeight = (rect.height - padding * 2) / contentHeight;
+    const targetScale = clampScale(Math.min(scaleByWidth, scaleByHeight, TREE_MAX_SCALE));
+    const contentCenterX = minNodeX + contentWidth / 2;
+    const contentCenterY = minNodeY + contentHeight / 2;
+    const targetPan = {
+      x: rect.width / 2 - contentCenterX * targetScale,
+      y: rect.height / 2 - contentCenterY * targetScale,
     };
-  };
+
+    setTreeScale(targetScale);
+    setTreePan(clampPanToViewport(targetPan, targetScale, rect));
+  }, [clampPanToViewport, clampScale, treeNodes]);
 
   const applyTreeZoom = (nextScaleRaw: number, anchor?: { x: number; y: number }) => {
     if (!treeCanvasRef.current) {
@@ -459,6 +757,25 @@ export default function DepartmentsPage() {
     applyTreeZoom(treeScale * factor, pointer);
   };
 
+  useEffect(() => {
+    if (mode !== "tree" || treeNodes.length === 0 || !treeNodeIdentityKey) {
+      return;
+    }
+
+    if (autoCenteredTreeKeyRef.current === treeNodeIdentityKey) {
+      return;
+    }
+
+    autoCenteredTreeKeyRef.current = treeNodeIdentityKey;
+    const frameId = requestAnimationFrame(() => {
+      fitTreeToNodes();
+    });
+
+    return () => {
+      cancelAnimationFrame(frameId);
+    };
+  }, [fitTreeToNodes, mode, treeNodeIdentityKey, treeNodes.length]);
+
   return (
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
       <div className="flex min-h-screen w-full">
@@ -494,200 +811,221 @@ export default function DepartmentsPage() {
               <div className="flex items-center gap-2">
                 <input
                   type="text"
+                  value={searchKeyword}
+                  onChange={(event) => setSearchKeyword(event.target.value)}
                   placeholder="Tìm phòng ban..."
-                  className="h-11 w-[280px] rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-3 focus:ring-blue-100"
+                  className="h-11 w-[280px] rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 />
-                <button
-                  type="button"
-                  className="h-11 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700"
-                >
-                  + Tạo phòng ban
-                </button>
               </div>
             </div>
           </header>
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-7">
-            <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-              <section className="min-w-0">
-                {mode === "tree" ? (
-                  <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <div className="mb-3 flex items-center justify-between">
-                      <p className="text-sm text-slate-500">
-                        Giữ chuột để kéo sơ đồ. Dùng Ctrl/Cmd + lăn chuột để zoom.
-                      </p>
-                      <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-1">
-                        <button
-                          type="button"
-                          onClick={() => applyTreeZoom(treeScale - 0.08)}
-                          className="h-7 w-7 rounded text-sm font-semibold text-slate-600 hover:bg-slate-100"
-                        >
-                          −
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => applyTreeZoom(1)}
-                          className="h-7 rounded px-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                        >
-                          {Math.round(treeScale * 100)}%
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => applyTreeZoom(treeScale + 0.08)}
-                          className="h-7 w-7 rounded text-sm font-semibold text-slate-600 hover:bg-slate-100"
-                        >
-                          +
-                        </button>
+            {isLoading ? (
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
+                Đang tải dữ liệu phòng ban...
+              </div>
+            ) : null}
+
+            {!isLoading && loadError ? (
+              <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                {loadError}
+              </div>
+            ) : null}
+
+            {!isLoading ? (
+              <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+                <section className="min-w-0">
+                  {mode === "tree" ? (
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                      <div className="mb-3 flex items-center justify-between">
+                        <p className="text-sm text-slate-500">
+                          Giữ chuột để kéo sơ đồ. Dùng Ctrl/Cmd + lăn chuột để zoom.
+                        </p>
+                        <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-1">
+                          <button
+                            type="button"
+                            onClick={() => applyTreeZoom(treeScale - 0.08)}
+                            className="h-7 w-7 rounded text-sm font-semibold text-slate-600 hover:bg-slate-100"
+                          >
+                            −
+                          </button>
+                          <button
+                            type="button"
+                            onClick={fitTreeToNodes}
+                            className="h-7 rounded px-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                          >
+                            {Math.round(treeScale * 100)}%
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => applyTreeZoom(treeScale + 0.08)}
+                            className="h-7 w-7 rounded text-sm font-semibold text-slate-600 hover:bg-slate-100"
+                          >
+                            +
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                    <div
-                      ref={treeCanvasRef}
-                      onPointerDown={handleTreePointerDown}
-                      onPointerMove={handleTreePointerMove}
-                      onPointerUp={handleTreePointerUp}
-                      onPointerCancel={handleTreePointerUp}
-                      onWheel={handleTreeWheel}
-                      className={`relative h-[700px] overflow-hidden rounded-xl border border-slate-100 bg-slate-50/60 select-none ${
-                        isTreePanning || draggingTreeId ? "cursor-grabbing" : "cursor-grab"
-                      }`}
-                      style={{ touchAction: "none" }}
-                    >
+
                       <div
-                        className="absolute left-0 top-0"
-                        style={{
-                          width: TREE_WORLD_WIDTH,
-                          height: TREE_WORLD_HEIGHT,
-                          transform: `translate(${treePan.x}px, ${treePan.y}px) scale(${treeScale})`,
-                          transformOrigin: "0 0",
-                        }}
+                        ref={treeCanvasRef}
+                        onPointerDown={handleTreePointerDown}
+                        onPointerMove={handleTreePointerMove}
+                        onPointerUp={handleTreePointerUp}
+                        onPointerCancel={handleTreePointerUp}
+                        onWheel={handleTreeWheel}
+                        className={`relative h-[700px] overflow-hidden rounded-xl border border-slate-100 bg-slate-50/60 select-none ${
+                          isTreePanning || draggingTreeId ? "cursor-grabbing" : "cursor-grab"
+                        }`}
+                        style={{ touchAction: "none" }}
                       >
-                        <svg
-                          className="pointer-events-none absolute inset-0"
-                          style={{ width: TREE_WORLD_WIDTH, height: TREE_WORLD_HEIGHT }}
-                        >
-                          {treeEdges.map((edge) => {
-                            const fromNode = treeNodeMap[edge.from];
-                            const toNode = treeNodeMap[edge.to];
-                            if (!fromNode || !toNode) {
-                              return null;
-                            }
-
-                            const startX = fromNode.x + TREE_CARD_WIDTH / 2;
-                            const startY = fromNode.y + TREE_CARD_HEIGHT - 1;
-                            const endX = toNode.x + TREE_CARD_WIDTH / 2;
-                            const endY = toNode.y + 1;
-                            const midY = startY + (endY - startY) * 0.55;
-
-                            return (
-                              <path
-                                key={`${edge.from}-${edge.to}`}
-                                d={`M ${startX} ${startY} L ${startX} ${midY} L ${endX} ${midY} L ${endX} ${endY}`}
-                                stroke="#a8bedf"
-                                strokeWidth="2.4"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                fill="none"
-                              />
-                            );
-                          })}
-                        </svg>
-
-                        {treeNodes.map((node) => {
-                          const item = departments.find((department) => department.id === node.id);
-                          if (!item) {
-                            return null;
-                          }
-
-                          return (
-                            <div
-                              key={node.id}
-                              className="absolute"
-                              style={{ left: node.x, top: node.y, width: TREE_CARD_WIDTH }}
+                        {treeNodes.length === 0 ? (
+                          <div className="grid h-full place-items-center text-sm text-slate-500">
+                            Không có phòng ban phù hợp.
+                          </div>
+                        ) : (
+                          <div
+                            className="absolute left-0 top-0"
+                            style={{
+                              width: TREE_WORLD_WIDTH,
+                              height: TREE_WORLD_HEIGHT,
+                              transform: `translate(${treePan.x}px, ${treePan.y}px) scale(${treeScale})`,
+                              transformOrigin: "0 0",
+                            }}
+                          >
+                            <svg
+                              className="pointer-events-none absolute inset-0"
+                              style={{ width: TREE_WORLD_WIDTH, height: TREE_WORLD_HEIGHT }}
                             >
-                              <TreeCard
-                                item={item}
-                                active={selectedDepartment.id === item.id}
-                                onSelect={(dept) => updateQuery({ dept })}
-                                onPointerDown={(event) => handleTreeCardPointerDown(event, item.id)}
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="rounded-2xl border border-slate-200 bg-white">
-                    <div className="border-b border-slate-100 px-5 py-4">
-                      <h2 className="text-3xl font-semibold tracking-[-0.02em] text-slate-900">Cơ cấu tổ chức</h2>
-                      <p className="mt-1 text-sm text-slate-500">
-                        Quản lý và theo dõi cấu trúc phòng ban cùng nguồn lực nhân sự.
-                      </p>
-                    </div>
+                              {layout.edges.map((edge) => {
+                                const fromNode = treeNodeMap[edge.from];
+                                const toNode = treeNodeMap[edge.to];
+                                if (!fromNode || !toNode) {
+                                  return null;
+                                }
 
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[980px] text-left">
-                        <thead>
-                          <tr className="text-xs tracking-[0.08em] text-slate-400 uppercase">
-                            <th className="px-5 py-3 font-semibold">Phòng ban</th>
-                            <th className="px-5 py-3 font-semibold">Phòng ban cha</th>
-                            <th className="px-5 py-3 font-semibold">Trưởng phòng</th>
-                            <th className="px-5 py-3 font-semibold">Thành viên</th>
-                            <th className="px-5 py-3 font-semibold">Ngày tạo</th>
-                            <th className="px-5 py-3 font-semibold text-right">Hành động</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {listRows.map((item) => (
-                            <tr
-                              key={item.id}
-                              className={`cursor-pointer border-t border-slate-100 transition hover:bg-slate-50 ${
-                                selectedDepartment.id === item.id ? "bg-blue-50/50" : ""
-                              }`}
-                              onClick={() => updateQuery({ dept: item.id })}
-                            >
-                              <td className="px-5 py-4">
-                                <p className="text-lg font-semibold text-slate-800">{item.name}</p>
-                              </td>
-                              <td className="px-5 py-4 text-base text-slate-600">{item.parent}</td>
-                              <td className="px-5 py-4">
-                                <div className="flex items-center gap-2">
-                                  <span className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-700">
-                                    {item.head
-                                      .split(" ")
-                                      .slice(0, 2)
-                                      .map((word) => word[0])
-                                      .join("")}
-                                  </span>
-                                  <span className="text-base font-medium text-slate-700">{item.head}</span>
+                                const startX = fromNode.x + TREE_CARD_WIDTH / 2;
+                                const startY = fromNode.y + TREE_CARD_HEIGHT;
+                                const endX = toNode.x + TREE_CARD_WIDTH / 2;
+                                const endY = toNode.y;
+                                const midY = startY + (endY - startY) * 0.55;
+
+                                return (
+                                  <path
+                                    key={`${edge.from}-${edge.to}`}
+                                    d={`M ${startX} ${startY} L ${startX} ${midY} L ${endX} ${midY} L ${endX} ${endY}`}
+                                    stroke="#a8bedf"
+                                    strokeWidth="2.4"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    fill="none"
+                                  />
+                                );
+                              })}
+                            </svg>
+
+                            {treeNodes.map((node) => {
+                              const item = visibleDepartmentById[node.id];
+                              if (!item) {
+                                return null;
+                              }
+
+                              return (
+                                <div
+                                  key={node.id}
+                                  className="absolute"
+                                  style={{ left: node.x, top: node.y, width: TREE_CARD_WIDTH }}
+                                >
+                                  <TreeCard
+                                    item={item}
+                                    active={selectedDepartment?.id === item.id}
+                                    onSelect={(dept) => updateQuery({ dept })}
+                                    onPointerDown={(event) => handleTreeCardPointerDown(event, item.id)}
+                                  />
                                 </div>
-                              </td>
-                              <td className="px-5 py-4 text-base font-semibold text-slate-700">{item.members}</td>
-                              <td className="px-5 py-4 text-base text-slate-600">{item.createdAt}</td>
-                              <td className="px-5 py-4 text-right text-lg text-slate-400">⋯</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    <div className="flex items-center justify-between px-5 py-4 text-sm text-slate-500">
-                      <p>Hiển thị {listRows.length} phòng ban</p>
-                      <div className="flex items-center gap-2">
-                        <button type="button" className="rounded-xl border border-slate-200 px-3 py-1.5 text-slate-500">
-                          Trước
-                        </button>
-                        <button type="button" className="rounded-xl border border-slate-200 px-3 py-1.5 text-slate-500">
-                          Sau
-                        </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     </div>
-                  </div>
-                )}
-              </section>
+                  ) : (
+                    <div className="rounded-2xl border border-slate-200 bg-white">
+                      <div className="border-b border-slate-100 px-5 py-4">
+                        <h2 className="text-3xl font-semibold tracking-[-0.02em] text-slate-900">Cơ cấu tổ chức</h2>
+                        <p className="mt-1 text-sm text-slate-500">
+                          Quản lý và theo dõi cấu trúc phòng ban cùng nguồn lực nhân sự.
+                        </p>
+                      </div>
 
-              <DepartmentPanel item={selectedDepartment} />
-            </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full min-w-[980px] text-left">
+                          <thead>
+                            <tr className="text-xs tracking-[0.08em] text-slate-400 uppercase">
+                              <th className="px-5 py-3 font-semibold">Phòng ban</th>
+                              <th className="px-5 py-3 font-semibold">Phòng ban cha</th>
+                              <th className="px-5 py-3 font-semibold">Trưởng phòng</th>
+                              <th className="px-5 py-3 font-semibold">Thành viên</th>
+                              <th className="px-5 py-3 font-semibold">Ngày tạo</th>
+                              <th className="px-5 py-3 font-semibold text-right">Hành động</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {visibleDepartments.map((item) => (
+                              <tr
+                                key={item.id}
+                                className={`cursor-pointer border-t border-slate-100 transition hover:bg-slate-50 ${
+                                  selectedDepartment?.id === item.id ? "bg-blue-50/50" : ""
+                                }`}
+                                onClick={() => updateQuery({ dept: item.id })}
+                              >
+                                <td className="px-5 py-4">
+                                  <p className="text-lg font-semibold text-slate-800">{item.name}</p>
+                                </td>
+                                <td className="px-5 py-4 text-base text-slate-600">{item.parent}</td>
+                                <td className="px-5 py-4">
+                                  <div className="flex items-center gap-2">
+                                    <span className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-700">
+                                      {toInitials(item.head)}
+                                    </span>
+                                    <span className="text-base font-medium text-slate-700">{item.head}</span>
+                                  </div>
+                                </td>
+                                <td className="px-5 py-4 text-base font-semibold text-slate-700">{item.members}</td>
+                                <td className="px-5 py-4 text-base text-slate-600">{item.createdAt}</td>
+                                <td className="px-5 py-4 text-right text-lg text-slate-400">⋯</td>
+                              </tr>
+                            ))}
+
+                            {visibleDepartments.length === 0 ? (
+                              <tr>
+                                <td colSpan={6} className="px-5 py-10 text-center text-sm text-slate-500">
+                                  Không có phòng ban phù hợp.
+                                </td>
+                              </tr>
+                            ) : null}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex items-center justify-between px-5 py-4 text-sm text-slate-500">
+                        <p>Hiển thị {visibleDepartments.length} phòng ban</p>
+                        <div className="flex items-center gap-2">
+                          <button type="button" className="rounded-xl border border-slate-200 px-3 py-1.5 text-slate-500">
+                            Trước
+                          </button>
+                          <button type="button" className="rounded-xl border border-slate-200 px-3 py-1.5 text-slate-500">
+                            Sau
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </section>
+
+                <DepartmentPanel item={selectedDepartment} />
+              </div>
+            ) : null}
           </main>
         </div>
       </div>

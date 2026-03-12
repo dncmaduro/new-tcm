@@ -3,11 +3,16 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 type LoginResponse = {
   error?: string;
   user?: {
     email?: string;
+  };
+  session?: {
+    access_token?: string;
+    refresh_token?: string;
   };
 };
 
@@ -66,6 +71,20 @@ export default function Home() {
           payload.error ?? "Email hoặc mật khẩu không đúng. Vui lòng thử lại.",
         );
         return;
+      }
+
+      const accessToken = payload.session?.access_token;
+      const refreshToken = payload.session?.refresh_token;
+      if (accessToken && refreshToken) {
+        const { error: sessionError } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+
+        if (sessionError) {
+          setError("Đăng nhập thành công nhưng không thể khởi tạo phiên làm việc.");
+          return;
+        }
       }
 
       router.push("/dashboard");
@@ -145,10 +164,8 @@ export default function Home() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 className="h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-[15px] text-slate-900 outline-none transition focus:border-blue-500 focus:ring-3 focus:ring-blue-100"
-                minLength={8}
                 required
               />
-              <p className="text-xs text-slate-400">Mật khẩu phải có ít nhất 8 ký tự.</p>
             </div>
 
             <button

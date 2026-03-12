@@ -2,177 +2,166 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { TASK_STATUSES, type TaskStatusValue } from "@/lib/constants/tasks";
+import { supabase } from "@/lib/supabase";
 
-type TaskMode = "list" | "kanban" | "gantt";
-type TaskStatus = "todo" | "inprogress" | "review" | "done";
+type TaskMode = "list" | "kanban";
+
+type TaskRow = {
+  id: string;
+  name: string;
+  goal_id: string | null;
+  profile_id: string | null;
+  status: string | null;
+  progress: number | null;
+  deadline?: string | null;
+  due_date?: string | null;
+  due_at?: string | null;
+  created_at: string | null;
+};
+
+type GoalLiteRow = {
+  id: string;
+  name: string;
+};
+
+type ProfileLiteRow = {
+  id: string;
+  name: string | null;
+  email: string | null;
+};
 
 type TaskItem = {
   id: string;
   name: string;
-  goalTags: string[];
+  goalId: string | null;
+  goalName: string;
+  profileId: string | null;
   assignee: string;
   assigneeShort: string;
-  status: TaskStatus;
+  status: TaskStatusValue;
   progress: number;
-  priority: "thap" | "trungbinh" | "cao";
-  dueDate: string;
-  gantt?: {
-    start: number;
-    duration: number;
-    color: "blue" | "green" | "amber";
-    label: string;
-  };
+  deadlineAt: string | null;
+  createdAt: string | null;
 };
 
-const tasks: TaskItem[] = [
-  {
-    id: "task-auth-flow",
-    name: "Triển khai luồng xác thực",
-    goalTags: ["Sản phẩm", "Ra mắt Q4"],
-    assignee: "Alex Rivera",
-    assigneeShort: "AR",
-    status: "inprogress",
-    progress: 65,
-    priority: "cao",
-    dueDate: "24/10/2023",
-    gantt: { start: 1, duration: 14, color: "blue", label: "75%" },
-  },
-  {
-    id: "task-db-opt",
-    name: "Tối ưu cơ sở dữ liệu",
-    goalTags: ["Hạ tầng", "Nâng cấp"],
-    assignee: "Sarah Chen",
-    assigneeShort: "SC",
-    status: "todo",
-    progress: 0,
-    priority: "trungbinh",
-    dueDate: "28/10/2023",
-    gantt: { start: 8, duration: 10, color: "blue", label: "40%" },
-  },
-  {
-    id: "task-api-phase1",
-    name: "Tích hợp API giai đoạn 1",
-    goalTags: ["Nền tảng", "API lõi"],
-    assignee: "James Wilson",
-    assigneeShort: "JW",
-    status: "done",
-    progress: 100,
-    priority: "thap",
-    dueDate: "15/10/2023",
-    gantt: { start: 29, duration: 11, color: "green", label: "Phát triển API" },
-  },
-  {
-    id: "task-feedback-review",
-    name: "Rà soát phản hồi khách hàng",
-    goalTags: ["Khách hàng", "Trải nghiệm"],
-    assignee: "Maya Patel",
-    assigneeShort: "MP",
-    status: "review",
-    progress: 90,
-    priority: "cao",
-    dueDate: "22/10/2023",
-    gantt: { start: 40, duration: 9, color: "amber", label: "Kiểm thử QA" },
-  },
-  {
-    id: "task-beta-launch",
-    name: "Chuẩn bị ra mắt Beta",
-    goalTags: ["Tăng trưởng", "Phát hành"],
-    assignee: "Luna Ross",
-    assigneeShort: "LR",
-    status: "inprogress",
-    progress: 48,
-    priority: "trungbinh",
-    dueDate: "02/11/2023",
-  },
-  {
-    id: "task-market-analysis",
-    name: "Báo cáo phân tích thị trường",
-    goalTags: ["Thị trường", "Phân tích"],
-    assignee: "Milo Vega",
-    assigneeShort: "MV",
-    status: "todo",
-    progress: 12,
-    priority: "thap",
-    dueDate: "10/11/2023",
-  },
-];
+type DepartmentOption = {
+  id: string;
+  name: string;
+};
 
-const DAY_WIDTH = 54;
-const TIMELINE_TOTAL_DAYS = 49;
-const TODAY_INDEX = 14;
-const timelineStart = new Date(Date.UTC(2023, 9, 1));
+type TaskCreatePermissionDebug = {
+  checkedAt: string;
+  step: string;
+  authUserId: string | null;
+  profileId: string | null;
+  profileName: string | null;
+  leaderRoleIds: string[];
+  leaderRolesRaw: Array<{ id: string; name: string | null }>;
+  userRoleRows: Array<{ department_id: string | null; role_id: string | null }>;
+  departments: Array<{ id: string; name: string; parent_department_id: string | null }>;
+  rootDepartments: Array<{ id: string; name: string }>;
+  canCreateTask: boolean;
+  error: string | null;
+};
 
-const timelineDays = Array.from({ length: TIMELINE_TOTAL_DAYS }, (_, index) => {
-  const date = new Date(timelineStart);
-  date.setUTCDate(timelineStart.getUTCDate() + index);
+const statusLabelMap = TASK_STATUSES.reduce<Record<string, string>>((acc, status) => {
+  acc[status.value] = status.label;
+  return acc;
+}, {});
 
-  const month = `T${date.getUTCMonth() + 1}`;
-  const day = date.getUTCDate();
-  const isMonthStart = day === 1 || index === 0;
+const normalizeTaskStatus = (value: string | null): TaskStatusValue => {
+  const raw = (value ?? "").trim().toLowerCase();
+  if (raw === "done" || raw === "completed") {
+    return "done";
+  }
+  if (raw === "doing" || raw === "inprogress" || raw === "review") {
+    return "doing";
+  }
+  if (raw === "cancelled" || raw === "canceled") {
+    return "cancelled";
+  }
+  return "todo";
+};
 
-  return {
-    index,
-    month,
-    day,
-    isMonthStart,
-  };
-});
+const clampProgress = (value: number | null) => {
+  const safe = Number.isFinite(value) ? Number(value) : 0;
+  return Math.min(100, Math.max(0, Math.round(safe)));
+};
 
-function StatusBadge({ status }: { status: TaskStatus }) {
-  if (status === "inprogress") {
+const resolveDeadline = (task: TaskRow) =>
+  task.deadline ?? task.due_date ?? task.due_at ?? null;
+
+const formatDate = (value: string | null) => {
+  if (!value) {
+    return "Chưa đặt";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Không hợp lệ";
+  }
+  return new Intl.DateTimeFormat("vi-VN", {
+    dateStyle: "short",
+  }).format(date);
+};
+
+const toShortName = (name: string) => {
+  const parts = name
+    .split(" ")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (!parts.length) {
+    return "--";
+  }
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+  return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
+};
+
+function StatusBadge({ status }: { status: TaskStatusValue }) {
+  if (status === "doing") {
     return (
       <span className="rounded-lg bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">
-        Đang làm
-      </span>
-    );
-  }
-  if (status === "review") {
-    return (
-      <span className="rounded-lg bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">
-        Đánh giá
+        {statusLabelMap[status]}
       </span>
     );
   }
   if (status === "done") {
     return (
       <span className="rounded-lg bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
-        Hoàn thành
+        {statusLabelMap[status]}
+      </span>
+    );
+  }
+  if (status === "cancelled") {
+    return (
+      <span className="rounded-lg bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700">
+        {statusLabelMap[status]}
       </span>
     );
   }
   return (
-    <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
-      Cần làm
+    <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+      {statusLabelMap[status]}
     </span>
   );
 }
 
-function ProgressBar({ value, color }: { value: number; color?: "blue" | "green" }) {
+function ProgressBar({ value }: { value: number }) {
   return (
     <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
-      <div
-        className={`h-full rounded-full ${color === "green" ? "bg-emerald-500" : "bg-blue-600"}`}
-        style={{ width: `${value}%` }}
-      />
+      <div className="h-full rounded-full bg-blue-600" style={{ width: `${value}%` }} />
     </div>
-  );
-}
-
-function PriorityBars({ level }: { level: TaskItem["priority"] }) {
-  const colors =
-    level === "cao"
-      ? ["bg-rose-500", "bg-rose-500", "bg-rose-500"]
-      : level === "trungbinh"
-        ? ["bg-amber-500", "bg-amber-500", "bg-slate-200"]
-        : ["bg-slate-300", "bg-slate-200", "bg-slate-200"];
-
-  return (
-    <span className="inline-flex items-end gap-1">
-      <span className={`h-2 w-1 rounded ${colors[0]}`} />
-      <span className={`h-3 w-1 rounded ${colors[1]}`} />
-      <span className={`h-4 w-1 rounded ${colors[2]}`} />
-    </span>
   );
 }
 
@@ -182,7 +171,7 @@ function ModeButton({
   onClick,
 }: {
   active: boolean;
-  children: React.ReactNode;
+  children: ReactNode;
   onClick: () => void;
 }) {
   return (
@@ -203,12 +192,27 @@ export default function TasksPage() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
+  const [canCreateTask, setCanCreateTask] = useState(false);
+  const [isCheckingCreatePermission, setIsCheckingCreatePermission] = useState(true);
+  const [rootDepartments, setRootDepartments] = useState<DepartmentOption[]>([]);
+  const [permissionDebug, setPermissionDebug] = useState<TaskCreatePermissionDebug | null>(null);
+
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [isLoadingTasks, setIsLoadingTasks] = useState(true);
+  const [taskLoadError, setTaskLoadError] = useState<string | null>(null);
+  const [goalFilters, setGoalFilters] = useState<Array<{ id: string; name: string }>>([]);
+  const [assigneeFilters, setAssigneeFilters] = useState<Array<{ id: string; name: string }>>([]);
+
+  const [searchKeyword, setSearchKeyword] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | TaskStatusValue>("all");
+  const [goalFilter, setGoalFilter] = useState<"all" | string>("all");
+  const [assigneeFilter, setAssigneeFilter] = useState<"all" | string>("all");
+
   const mode: TaskMode =
     searchParams.get("mode") === "kanban"
       ? "kanban"
-      : searchParams.get("mode") === "gantt"
-        ? "gantt"
-        : "list";
+      : "list";
+  const showPermissionDebug = searchParams.get("debugPermission") === "1";
 
   const changeMode = (nextMode: TaskMode) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -217,10 +221,313 @@ export default function TasksPage() {
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
   };
 
-  const todo = tasks.filter((task) => task.status === "todo");
-  const inprogress = tasks.filter((task) => task.status === "inprogress");
-  const review = tasks.filter((task) => task.status === "review");
-  const done = tasks.filter((task) => task.status === "done");
+  useEffect(() => {
+    let isActive = true;
+
+    const loadTasks = async () => {
+      setIsLoadingTasks(true);
+      setTaskLoadError(null);
+
+      try {
+        const [{ data: taskRows, error: taskError }, { data: goalRows, error: goalError }, { data: profileRows, error: profileError }] =
+          await Promise.all([
+            supabase
+              .from("tasks")
+              .select("*")
+              .order("created_at", { ascending: false }),
+            supabase.from("goals").select("id,name"),
+            supabase.from("profiles").select("id,name,email"),
+          ]);
+
+        if (!isActive) {
+          return;
+        }
+
+        if (taskError) {
+          setTaskLoadError(taskError.message || "Không tải được danh sách công việc.");
+          setTasks([]);
+          setGoalFilters([]);
+          setAssigneeFilters([]);
+          return;
+        }
+
+        const goalsById = (goalRows ?? []).reduce<Record<string, string>>((acc, item: GoalLiteRow) => {
+          acc[String(item.id)] = String(item.name);
+          return acc;
+        }, {});
+
+        const profilesById = (profileRows ?? []).reduce<Record<string, string>>((acc, item: ProfileLiteRow) => {
+          acc[String(item.id)] = String(item.name ?? item.email ?? "Chưa có tên");
+          return acc;
+        }, {});
+
+        const mappedTasks = (taskRows ?? []).map((row: TaskRow) => {
+          const assignee = row.profile_id ? profilesById[String(row.profile_id)] ?? "Chưa gán" : "Chưa gán";
+          const goalName = row.goal_id ? goalsById[String(row.goal_id)] ?? "Chưa có mục tiêu" : "Chưa có mục tiêu";
+
+          return {
+            id: String(row.id),
+            name: String(row.name),
+            goalId: row.goal_id ? String(row.goal_id) : null,
+            goalName,
+            profileId: row.profile_id ? String(row.profile_id) : null,
+            assignee,
+            assigneeShort: toShortName(assignee),
+            status: normalizeTaskStatus(row.status),
+            progress: clampProgress(row.progress),
+            deadlineAt: resolveDeadline(row),
+            createdAt: row.created_at,
+          } as TaskItem;
+        });
+
+        setTasks(mappedTasks);
+
+        const mappedGoalFilters = (goalRows ?? []).map((item: GoalLiteRow) => ({
+          id: String(item.id),
+          name: String(item.name),
+        }));
+        setGoalFilters(mappedGoalFilters);
+
+        const mappedAssigneeFilters = (profileRows ?? []).map((item: ProfileLiteRow) => ({
+          id: String(item.id),
+          name: String(item.name ?? item.email ?? "Chưa có tên"),
+        }));
+        setAssigneeFilters(mappedAssigneeFilters);
+
+        const nonFatalErrors: string[] = [];
+        if (goalError) {
+          nonFatalErrors.push("Không tải được danh sách mục tiêu.");
+        }
+        if (profileError) {
+          nonFatalErrors.push("Không tải được danh sách người phụ trách.");
+        }
+        setTaskLoadError(nonFatalErrors.length ? nonFatalErrors.join(" ") : null);
+      } catch {
+        if (!isActive) {
+          return;
+        }
+        setTaskLoadError("Có lỗi khi tải dữ liệu công việc.");
+        setTasks([]);
+        setGoalFilters([]);
+        setAssigneeFilters([]);
+      } finally {
+        if (isActive) {
+          setIsLoadingTasks(false);
+        }
+      }
+    };
+
+    void loadTasks();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadCreatePermission = async () => {
+      setIsCheckingCreatePermission(true);
+
+      const debugState: TaskCreatePermissionDebug = {
+        checkedAt: new Date().toISOString(),
+        step: "start",
+        authUserId: null,
+        profileId: null,
+        profileName: null,
+        leaderRoleIds: [],
+        leaderRolesRaw: [],
+        userRoleRows: [],
+        departments: [],
+        rootDepartments: [],
+        canCreateTask: false,
+        error: null,
+      };
+
+      try {
+        debugState.step = "auth.getUser";
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+        if (authError || !authData.user) {
+          debugState.error = authError?.message ?? "Không lấy được auth user";
+          debugState.step = "failed.auth";
+          if (isActive) {
+            setCanCreateTask(false);
+            setRootDepartments([]);
+            setPermissionDebug({ ...debugState });
+          }
+          return;
+        }
+        debugState.authUserId = authData.user.id;
+
+        debugState.step = "profiles.by_user_id";
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("id,name")
+          .eq("user_id", authData.user.id)
+          .maybeSingle();
+
+        if (profileError || !profile?.id) {
+          debugState.error = profileError?.message ?? "Không tìm thấy profile theo user_id";
+          debugState.step = "failed.profile";
+          if (isActive) {
+            setCanCreateTask(false);
+            setRootDepartments([]);
+            setPermissionDebug({ ...debugState });
+          }
+          return;
+        }
+        debugState.profileId = profile.id;
+        debugState.profileName = profile.name ?? null;
+
+        debugState.step = "roles.list";
+        const { data: rolesData, error: roleError } = await supabase.from("roles").select("id,name");
+
+        debugState.leaderRolesRaw = (rolesData ?? []).map((role) => ({
+          id: String(role.id),
+          name: typeof role.name === "string" ? role.name : null,
+        }));
+
+        const leaderRoleIds = (rolesData ?? [])
+          .filter((role) => {
+            const roleName = typeof role.name === "string" ? role.name.trim().toLowerCase() : "";
+            return roleName === "leader" || roleName.includes("leader");
+          })
+          .map((role) => role.id)
+          .filter(Boolean) as string[];
+
+        debugState.leaderRoleIds = leaderRoleIds;
+        if (roleError || leaderRoleIds.length === 0) {
+          debugState.error = roleError?.message ?? "Không tìm thấy role Leader";
+          debugState.step = "failed.role";
+          if (isActive) {
+            setCanCreateTask(false);
+            setRootDepartments([]);
+            setPermissionDebug({ ...debugState });
+          }
+          return;
+        }
+
+        debugState.step = "user_role_in_department.by_profile";
+        const { data: userRolesData, error: userRolesError } = await supabase
+          .from("user_role_in_department")
+          .select("department_id,role_id")
+          .eq("profile_id", profile.id)
+          .in("role_id", leaderRoleIds);
+
+        debugState.userRoleRows = (userRolesData ?? []).map((item) => ({
+          department_id: item.department_id ?? null,
+          role_id: item.role_id ?? null,
+        }));
+
+        const departmentIds = [
+          ...new Set((userRolesData ?? []).map((item) => item.department_id).filter(Boolean)),
+        ];
+
+        if (userRolesError || departmentIds.length === 0) {
+          debugState.error = userRolesError?.message ?? "Không có role Leader gắn với phòng ban";
+          debugState.step = "failed.user_role_in_department";
+          if (isActive) {
+            setCanCreateTask(false);
+            setRootDepartments([]);
+            setPermissionDebug({ ...debugState });
+          }
+          return;
+        }
+
+        debugState.step = "departments.by_ids";
+        const { data: departmentsData, error: departmentsError } = await supabase
+          .from("departments")
+          .select("id,name,parent_department_id")
+          .in("id", departmentIds);
+
+        if (departmentsError || !departmentsData?.length) {
+          debugState.error = departmentsError?.message ?? "Không lấy được phòng ban";
+          debugState.step = "failed.departments";
+          if (isActive) {
+            setCanCreateTask(false);
+            setRootDepartments([]);
+            setPermissionDebug({ ...debugState });
+          }
+          return;
+        }
+
+        debugState.departments = departmentsData.map((department) => ({
+          id: String(department.id),
+          name: String(department.name),
+          parent_department_id: department.parent_department_id ?? null,
+        }));
+
+        const roots = departmentsData
+          .filter((department) => !department.parent_department_id)
+          .map((department) => ({
+            id: String(department.id),
+            name: String(department.name),
+          }));
+
+        debugState.rootDepartments = roots;
+        debugState.canCreateTask = roots.length > 0;
+        debugState.step = "done";
+
+        if (!isActive) {
+          return;
+        }
+
+        setCanCreateTask(roots.length > 0);
+        setRootDepartments(roots);
+        setPermissionDebug({ ...debugState });
+      } catch {
+        debugState.error = "Lỗi không xác định khi kiểm tra quyền tạo công việc";
+        debugState.step = "failed.exception";
+        if (isActive) {
+          setCanCreateTask(false);
+          setRootDepartments([]);
+          setPermissionDebug({ ...debugState });
+        }
+      } finally {
+        if (isActive) {
+          setIsCheckingCreatePermission(false);
+        }
+
+        console.groupCollapsed("[tasks] Debug quyền tạo công việc");
+        console.log(debugState);
+        console.groupEnd();
+      }
+    };
+
+    void loadCreatePermission();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  const filteredTasks = useMemo(() => {
+    return tasks.filter((task) => {
+      if (statusFilter !== "all" && task.status !== statusFilter) {
+        return false;
+      }
+      if (goalFilter !== "all" && task.goalId !== goalFilter) {
+        return false;
+      }
+      if (assigneeFilter !== "all" && task.profileId !== assigneeFilter) {
+        return false;
+      }
+
+      const keyword = searchKeyword.trim().toLowerCase();
+      if (!keyword) {
+        return true;
+      }
+
+      const haystack = `${task.name} ${task.goalName} ${task.assignee}`.toLowerCase();
+      return haystack.includes(keyword);
+    });
+  }, [assigneeFilter, goalFilter, searchKeyword, statusFilter, tasks]);
+
+  const todo = filteredTasks.filter((task) => task.status === "todo");
+  const doing = filteredTasks.filter((task) => task.status === "doing");
+  const done = filteredTasks.filter((task) => task.status === "done");
+  const cancelled = filteredTasks.filter((task) => task.status === "cancelled");
 
   return (
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
@@ -232,41 +539,122 @@ export default function TasksPage() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-sm text-slate-500">
-                  Không gian làm việc <span className="px-2">›</span> Công việc
+                  <Link href="/dashboard" className="hover:text-slate-700">
+                    Bảng điều khiển
+                  </Link>
+                  <span className="px-2">›</span>
+                  <span>Công việc</span>
                 </p>
-                <h1 className="text-5xl font-semibold tracking-[-0.03em] text-slate-900">Công việc</h1>
+                <h1 className="mt-1 text-3xl font-semibold tracking-[-0.02em] text-slate-900">Công việc</h1>
+                <p className="mt-1 text-sm text-slate-500">{filteredTasks.length} / {tasks.length} công việc</p>
               </div>
               <div className="flex items-center gap-3">
                 <input
-                  placeholder="Tìm kiếm công việc..."
-                  className="h-11 w-[280px] rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none focus:border-blue-500 focus:ring-3 focus:ring-blue-100"
+                  value={searchKeyword}
+                  onChange={(event) => setSearchKeyword(event.target.value)}
+                  placeholder="Tìm theo tên, mục tiêu, người phụ trách..."
+                  className="h-11 w-[300px] rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 />
-                <button
-                  type="button"
-                  className="h-11 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700"
-                >
-                  + Tạo việc mới
-                </button>
+                {!isCheckingCreatePermission && canCreateTask ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const defaultDepartmentId = rootDepartments[0]?.id;
+                      const next = defaultDepartmentId
+                        ? `/tasks/new?departmentId=${defaultDepartmentId}`
+                        : "/tasks/new";
+                      router.push(next);
+                    }}
+                    className="h-11 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700"
+                  >
+                    + Thêm công việc
+                  </button>
+                ) : null}
               </div>
             </div>
           </header>
 
           <main className="space-y-4 px-4 py-5 lg:px-7">
-            <section className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
+            {showPermissionDebug && permissionDebug ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-950 px-4 py-3 text-xs text-slate-100">
+                <p className="mb-2 font-semibold text-sky-300">
+                  Debug quyền tạo công việc (debugPermission=1)
+                </p>
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed">
+                  {JSON.stringify(permissionDebug, null, 2)}
+                </pre>
+              </div>
+            ) : null}
+
+            <section className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_auto]">
+                <Select
+                  value={statusFilter}
+                  onValueChange={(value) => setStatusFilter(value as "all" | TaskStatusValue)}
+                >
+                  <SelectTrigger className="h-10">
+                    <SelectValue placeholder="Tất cả trạng thái" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Tất cả trạng thái</SelectItem>
+                    {TASK_STATUSES.map((status) => (
+                      <SelectItem key={status.value} value={status.value}>
+                        {status.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select
+                  value={goalFilter}
+                  onValueChange={(value) => setGoalFilter(value as "all" | string)}
+                >
+                  <SelectTrigger className="h-10">
+                    <SelectValue placeholder="Tất cả mục tiêu" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Tất cả mục tiêu</SelectItem>
+                    {goalFilters.map((goal) => (
+                      <SelectItem key={goal.id} value={goal.id}>
+                        {goal.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select
+                  value={assigneeFilter}
+                  onValueChange={(value) => setAssigneeFilter(value as "all" | string)}
+                >
+                  <SelectTrigger className="h-10">
+                    <SelectValue placeholder="Tất cả người phụ trách" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Tất cả người phụ trách</SelectItem>
+                    {assigneeFilters.map((assignee) => (
+                      <SelectItem key={assignee.id} value={assignee.id}>
+                        {assignee.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
                 <button
                   type="button"
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-base font-medium text-slate-700 hover:bg-slate-50"
+                  onClick={() => {
+                    setSearchKeyword("");
+                    setStatusFilter("all");
+                    setGoalFilter("all");
+                    setAssigneeFilter("all");
+                  }}
+                  className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 >
-                  ☰ Lọc
-                </button>
-                <button
-                  type="button"
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-base font-medium text-slate-700 hover:bg-slate-50"
-                >
-                  ⇅ Sắp xếp
+                  Xóa lọc
                 </button>
               </div>
+            </section>
+
+            <section className="flex flex-wrap items-center justify-end gap-3">
               <div className="rounded-xl border border-slate-200 bg-slate-100 p-1">
                 <ModeButton active={mode === "list"} onClick={() => changeMode("list")}>
                   Danh sách
@@ -274,110 +662,94 @@ export default function TasksPage() {
                 <ModeButton active={mode === "kanban"} onClick={() => changeMode("kanban")}>
                   Bảng
                 </ModeButton>
-                <ModeButton active={mode === "gantt"} onClick={() => changeMode("gantt")}>
-                  Biểu đồ Gantt
-                </ModeButton>
               </div>
             </section>
 
-            {mode === "list" ? (
+            {isLoadingTasks ? (
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
+                Đang tải danh sách công việc...
+              </div>
+            ) : null}
+
+            {!isLoadingTasks && taskLoadError ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                {taskLoadError}
+              </div>
+            ) : null}
+
+            {!isLoadingTasks && mode === "list" ? (
               <section className="rounded-2xl border border-slate-200 bg-white">
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[980px] text-left">
+                  <table className="w-full min-w-[900px] text-left">
                     <thead>
-                      <tr className="text-sm tracking-[0.08em] text-slate-400 uppercase">
+                      <tr className="text-xs tracking-[0.08em] text-slate-400 uppercase">
                         <th className="px-6 py-4 font-semibold">Tên công việc</th>
                         <th className="px-4 py-4 font-semibold">Mục tiêu</th>
                         <th className="px-4 py-4 font-semibold">Người phụ trách</th>
                         <th className="px-4 py-4 font-semibold">Trạng thái</th>
                         <th className="px-4 py-4 font-semibold">Tiến độ</th>
-                        <th className="px-4 py-4 font-semibold">Ưu tiên</th>
-                        <th className="px-4 py-4 font-semibold">Hạn chót</th>
+                        <th className="px-4 py-4 font-semibold">Deadline</th>
+                        <th className="px-4 py-4 font-semibold">Ngày tạo</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {tasks.slice(0, 4).map((task) => (
+                      {filteredTasks.map((task) => (
                         <tr key={task.id} className="border-t border-slate-100">
-                          <td className="px-6 py-5">
+                          <td className="px-6 py-4">
                             <Link
                               href={`/tasks/${task.id}`}
-                              className="text-xl font-medium leading-tight text-slate-800 hover:text-blue-700"
+                              className="text-base font-semibold leading-tight text-slate-800 hover:text-blue-700"
                             >
                               {task.name}
                             </Link>
                           </td>
-                          <td className="px-4 py-5">
-                            <div className="space-y-1">
-                              {task.goalTags.map((tag) => (
-                                <span
-                                  key={tag}
-                                  className="mr-1 inline-block rounded-lg bg-slate-100 px-2 py-1 text-sm text-slate-600"
-                                >
-                                  {tag}
-                                </span>
-                              ))}
-                            </div>
-                          </td>
-                          <td className="px-4 py-5">
+                          <td className="px-4 py-4 text-sm text-slate-600">{task.goalName}</td>
+                          <td className="px-4 py-4">
                             <div className="flex items-center gap-2">
-                              <span className="grid h-8 w-8 place-items-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700">
+                              <span className="grid h-7 w-7 place-items-center rounded-full bg-blue-100 text-[11px] font-semibold text-blue-700">
                                 {task.assigneeShort}
                               </span>
-                              <span className="text-lg text-slate-700">{task.assignee}</span>
+                              <span className="text-sm text-slate-700">{task.assignee}</span>
                             </div>
                           </td>
-                          <td className="px-4 py-5">
+                          <td className="px-4 py-4">
                             <StatusBadge status={task.status} />
                           </td>
-                          <td className="px-4 py-5">
+                          <td className="px-4 py-4">
                             <div className="w-40 space-y-1">
-                              <ProgressBar value={task.progress} color={task.status === "done" ? "green" : "blue"} />
-                              <p className="text-right text-sm font-semibold text-slate-500">{task.progress}%</p>
+                              <ProgressBar value={task.progress} />
+                              <p className="text-right text-xs font-semibold text-slate-500">{task.progress}%</p>
                             </div>
                           </td>
-                          <td className="px-4 py-5">
-                            <PriorityBars level={task.priority} />
-                          </td>
-                          <td className="px-4 py-5 text-base text-slate-500">{task.dueDate}</td>
+                          <td className="px-4 py-4 text-sm text-slate-500">{formatDate(task.deadlineAt)}</td>
+                          <td className="px-4 py-4 text-sm text-slate-500">{formatDate(task.createdAt)}</td>
                         </tr>
                       ))}
+
+                      {filteredTasks.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="px-6 py-10 text-center text-sm text-slate-500">
+                            Không có công việc phù hợp bộ lọc hiện tại.
+                          </td>
+                        </tr>
+                      ) : null}
                     </tbody>
                   </table>
-                </div>
-                <div className="flex items-center justify-between px-6 py-4">
-                  <p className="text-base text-slate-500">Hiển thị 1-4 trên 24 công việc</p>
-                  <div className="flex items-center gap-2">
-                    <button type="button" className="h-10 w-10 rounded-xl border border-slate-200 text-slate-500">
-                      ‹
-                    </button>
-                    <button type="button" className="h-10 w-10 rounded-xl bg-blue-600 text-white">
-                      1
-                    </button>
-                    <button type="button" className="h-10 w-10 rounded-xl border border-slate-200 text-slate-600">
-                      2
-                    </button>
-                    <button type="button" className="h-10 w-10 rounded-xl border border-slate-200 text-slate-600">
-                      3
-                    </button>
-                    <button type="button" className="h-10 w-10 rounded-xl border border-slate-200 text-slate-500">
-                      ›
-                    </button>
-                  </div>
                 </div>
               </section>
             ) : null}
 
-            {mode === "kanban" ? (
+            {!isLoadingTasks && mode === "kanban" ? (
               <section className="grid gap-4 xl:grid-cols-4">
                 {[
-                  { key: "todo", title: "Cần làm", items: todo },
-                  { key: "inprogress", title: "Đang làm", items: inprogress },
-                  { key: "review", title: "Đánh giá", items: review },
-                  { key: "done", title: "Hoàn thành", items: done },
+                  { key: "todo", title: statusLabelMap.todo, items: todo },
+                  { key: "doing", title: statusLabelMap.doing, items: doing },
+                  { key: "done", title: statusLabelMap.done, items: done },
+                  { key: "cancelled", title: statusLabelMap.cancelled, items: cancelled },
                 ].map((column) => (
                   <article key={column.key} className="rounded-2xl border border-slate-200 bg-white p-4">
                     <div className="mb-3 flex items-center justify-between">
-                      <h2 className="text-xl font-semibold text-slate-800">{column.title}</h2>
+                      <h2 className="text-base font-semibold text-slate-800">{column.title}</h2>
                       <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
                         {column.items.length}
                       </span>
@@ -387,118 +759,32 @@ export default function TasksPage() {
                         <div key={task.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                           <Link
                             href={`/tasks/${task.id}`}
-                            className="text-xl font-semibold leading-tight text-slate-800 hover:text-blue-700"
+                            className="text-base font-semibold leading-tight text-slate-800 hover:text-blue-700"
                           >
                             {task.name}
                           </Link>
-                          <p className="mt-1 text-sm text-slate-500">{task.goalTags.join(" · ")}</p>
+                          <p className="mt-1 text-xs text-slate-500">{task.goalName}</p>
                           <div className="mt-3">
-                            <ProgressBar value={task.progress} color={task.status === "done" ? "green" : "blue"} />
+                            <ProgressBar value={task.progress} />
                           </div>
-                          <div className="mt-2 flex items-center justify-between text-sm text-slate-500">
+                          <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
                             <span>{task.progress}%</span>
                             <span>{task.assignee}</span>
                           </div>
                         </div>
                       ))}
+
+                      {column.items.length === 0 ? (
+                        <p className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">
+                          Không có công việc.
+                        </p>
+                      ) : null}
                     </div>
                   </article>
                 ))}
               </section>
             ) : null}
 
-            {mode === "gantt" ? (
-              <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                <div className="grid grid-cols-[300px_minmax(0,1fr)]">
-                  <div className="border-r border-slate-200 bg-white">
-                    <div className="h-14 border-b border-slate-200 px-4 text-sm font-semibold tracking-[0.08em] text-slate-500 uppercase leading-[56px]">
-                      Tên công việc
-                    </div>
-                    {tasks.slice(0, 7).map((task) => (
-                      <div key={`${task.id}-name`} className="h-16 border-b border-slate-100 px-4 leading-[64px]">
-                        <Link
-                          href={`/tasks/${task.id}`}
-                          className="text-base font-medium text-slate-800 hover:text-blue-700"
-                        >
-                          {task.name}
-                        </Link>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <div className="relative" style={{ width: `${timelineDays.length * DAY_WIDTH}px` }}>
-                      <div
-                        className="grid border-b border-slate-200 bg-slate-50"
-                        style={{ gridTemplateColumns: `repeat(${timelineDays.length}, ${DAY_WIDTH}px)` }}
-                      >
-                        {timelineDays.map((day) => (
-                          <div
-                            key={`${day.month}-${day.day}-${day.index}`}
-                            className="border-l border-slate-200 px-1 py-2 text-center"
-                          >
-                            <p className="h-3 text-[10px] font-semibold tracking-[0.06em] text-slate-400 uppercase">
-                              {day.isMonthStart ? day.month : ""}
-                            </p>
-                            <p className="mt-1 text-xs font-semibold text-slate-700">{day.day}</p>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div
-                        className="pointer-events-none absolute bottom-0 top-0 w-px bg-blue-500/80"
-                        style={{ left: `${TODAY_INDEX * DAY_WIDTH + DAY_WIDTH / 2}px` }}
-                      >
-                        <span className="absolute -top-6 left-1/2 -translate-x-1/2 rounded bg-blue-600 px-2 py-0.5 text-[11px] font-semibold text-white">
-                          Hôm nay
-                        </span>
-                      </div>
-
-                      {tasks.slice(0, 7).map((task) => (
-                        <div key={`${task.id}-timeline`} className="relative h-16 border-b border-slate-100">
-                          <div
-                            className="grid h-full"
-                            style={{ gridTemplateColumns: `repeat(${timelineDays.length}, ${DAY_WIDTH}px)` }}
-                          >
-                            {timelineDays.map((day) => (
-                              <div
-                                key={`${task.id}-${day.index}`}
-                                className="border-l border-slate-100"
-                              />
-                            ))}
-                          </div>
-                          {task.gantt ? (
-                            <div
-                              className={`pointer-events-none absolute top-3 h-10 rounded-full px-3 text-sm font-semibold leading-10 ${
-                                task.gantt.color === "green"
-                                  ? "bg-emerald-200 text-emerald-800"
-                                  : task.gantt.color === "amber"
-                                    ? "bg-amber-200 text-amber-800"
-                                    : "bg-blue-200 text-blue-800"
-                              }`}
-                              style={{
-                                left: `${task.gantt.start * DAY_WIDTH + 4}px`,
-                                width: `${Math.max(task.gantt.duration * DAY_WIDTH - 8, 42)}px`,
-                              }}
-                            >
-                              {task.gantt.label}
-                            </div>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between px-6 py-3 text-sm text-slate-500">
-                  <div className="flex items-center gap-4">
-                    <span>✓ 12 hoàn thành</span>
-                    <span>• 4 đang làm</span>
-                    <span>• 2 có rủi ro</span>
-                  </div>
-                  <span>Đồng bộ lần cuối: 2 phút trước</span>
-                </div>
-              </section>
-            ) : null}
           </main>
         </div>
       </div>
