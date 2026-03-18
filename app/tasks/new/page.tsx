@@ -5,7 +5,19 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { supabase } from "@/lib/supabase";
-import { TASK_STATUSES, TaskStatusValue } from "@/lib/constants/tasks";
+import {
+  getTaskProgressByType,
+  getTaskProgressHint,
+  TASK_STATUSES,
+  TASK_TYPES,
+  TaskStatusValue,
+  TaskTypeValue,
+} from "@/lib/constants/tasks";
+import {
+  formatKeyResultMetric,
+  formatKeyResultUnit,
+  getKeyResultProgressHint,
+} from "@/lib/constants/key-results";
 import {
   Select,
   SelectContent,
@@ -33,6 +45,16 @@ type ProfileOption = {
   email: string | null;
 };
 
+type KeyResultOption = {
+  id: string;
+  goalId: string;
+  name: string;
+  progress: number;
+  target: number;
+  current: number;
+  unit: string | null;
+};
+
 type TaskCreatePermissionDebug = {
   checkedAt: string;
   step: string;
@@ -50,7 +72,9 @@ type TaskCreatePermissionDebug = {
 
 type TaskFormState = {
   goalId: string;
+  keyResultId: string;
   profileId: string;
+  type: TaskTypeValue;
   name: string;
   description: string;
   progress: number;
@@ -60,7 +84,9 @@ type TaskFormState = {
 
 const defaultForm: TaskFormState = {
   goalId: "",
+  keyResultId: "",
   profileId: "",
+  type: "kpi",
   name: "",
   description: "",
   progress: 0,
@@ -75,6 +101,7 @@ export default function NewTaskPage() {
   const [form, setForm] = useState<TaskFormState>(defaultForm);
   const [rootDepartments, setRootDepartments] = useState<DepartmentOption[]>([]);
   const [goalOptions, setGoalOptions] = useState<GoalOption[]>([]);
+  const [keyResultOptions, setKeyResultOptions] = useState<KeyResultOption[]>([]);
   const [profileOptions, setProfileOptions] = useState<ProfileOption[]>([]);
   const [isCheckingPermission, setIsCheckingPermission] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -88,6 +115,7 @@ export default function NewTaskPage() {
 
   const showPermissionDebug = searchParams.get("debugPermission") === "1";
   const queryGoalId = searchParams.get("goalId");
+  const queryKeyResultId = searchParams.get("keyResultId");
   const queryDepartmentId = searchParams.get("departmentId");
 
   const canCreateTask = rootDepartments.length > 0 && !permissionError;
@@ -126,6 +154,7 @@ export default function NewTaskPage() {
             setPermissionError("Không xác thực được người dùng hiện tại.");
             setRootDepartments([]);
             setGoalOptions([]);
+            setKeyResultOptions([]);
             setProfileOptions([]);
             setPermissionDebug({ ...debugState });
           }
@@ -147,6 +176,7 @@ export default function NewTaskPage() {
             setPermissionError("Không tìm thấy hồ sơ người dùng.");
             setRootDepartments([]);
             setGoalOptions([]);
+            setKeyResultOptions([]);
             setProfileOptions([]);
             setPermissionDebug({ ...debugState });
           }
@@ -183,6 +213,7 @@ export default function NewTaskPage() {
             setPermissionError("Không tìm thấy role Leader để xác thực quyền tạo công việc.");
             setRootDepartments([]);
             setGoalOptions([]);
+            setKeyResultOptions([]);
             setProfileOptions([]);
             setPermissionDebug({ ...debugState });
           }
@@ -212,6 +243,7 @@ export default function NewTaskPage() {
             setPermissionError("Bạn chưa có quyền tạo công việc ở phòng ban gốc.");
             setRootDepartments([]);
             setGoalOptions([]);
+            setKeyResultOptions([]);
             setProfileOptions([]);
             setPermissionDebug({ ...debugState });
           }
@@ -231,6 +263,7 @@ export default function NewTaskPage() {
             setPermissionError("Không tải được danh sách phòng ban.");
             setRootDepartments([]);
             setGoalOptions([]);
+            setKeyResultOptions([]);
             setProfileOptions([]);
             setPermissionDebug({ ...debugState });
           }
@@ -263,6 +296,7 @@ export default function NewTaskPage() {
           setPermissionError("Bạn không có quyền tạo công việc ở phòng ban cấp gốc.");
           setRootDepartments([]);
           setGoalOptions([]);
+          setKeyResultOptions([]);
           setProfileOptions([]);
           setPermissionDebug({ ...debugState });
           return;
@@ -271,11 +305,20 @@ export default function NewTaskPage() {
         setRootDepartments(roots);
         setPermissionDebug({ ...debugState });
 
-        const [{ data: goalsData, error: goalsError }, { data: allDepartmentsData }, { data: profilesData, error: profilesError }] =
+        const [
+          { data: goalsData, error: goalsError },
+          { data: keyResultsData, error: keyResultsError },
+          { data: allDepartmentsData },
+          { data: profilesData, error: profilesError },
+        ] =
           await Promise.all([
             supabase
               .from("goals")
               .select("id,name,department_id,created_at")
+              .order("created_at", { ascending: false }),
+            supabase
+              .from("key_results")
+              .select("id,goal_id,name,progress,target,current,unit,created_at")
               .order("created_at", { ascending: false }),
             supabase.from("departments").select("id,name"),
             supabase.from("profiles").select("id,name,email").order("name", { ascending: true }),
@@ -297,6 +340,17 @@ export default function NewTaskPage() {
         });
         setGoalOptions(mappedGoals);
 
+        const mappedKeyResults: KeyResultOption[] = (keyResultsData ?? []).map((keyResult) => ({
+          id: String(keyResult.id),
+          goalId: String(keyResult.goal_id),
+          name: String(keyResult.name),
+          progress: typeof keyResult.progress === "number" ? Math.round(keyResult.progress) : 0,
+          target: typeof keyResult.target === "number" ? keyResult.target : Number(keyResult.target ?? 0),
+          current: typeof keyResult.current === "number" ? keyResult.current : Number(keyResult.current ?? 0),
+          unit: keyResult.unit ? String(keyResult.unit) : null,
+        }));
+        setKeyResultOptions(mappedKeyResults);
+
         let mappedProfiles: ProfileOption[] = [];
         if (!profilesError) {
           mappedProfiles = (profilesData ?? []).map((item) => ({
@@ -311,6 +365,9 @@ export default function NewTaskPage() {
         if (goalsError) {
           loadErrorMessages.push("Không tải được danh sách mục tiêu.");
         }
+        if (keyResultsError) {
+          loadErrorMessages.push("Không tải được danh sách key result.");
+        }
         if (profilesError) {
           loadErrorMessages.push(
             "Không tải được toàn bộ người phụ trách. Kiểm tra policy SELECT của bảng profiles.",
@@ -320,16 +377,30 @@ export default function NewTaskPage() {
           setDataLoadError(loadErrorMessages.join(" "));
         }
 
+        const preselectedKeyResult = queryKeyResultId
+          ? mappedKeyResults.find((item) => item.id === queryKeyResultId) ?? null
+          : null;
+
         const preselectedGoal =
+          (preselectedKeyResult
+            ? mappedGoals.find((item) => item.id === preselectedKeyResult.goalId) ?? null
+            : null) ??
           (queryGoalId ? mappedGoals.find((item) => item.id === queryGoalId) : null) ??
           (queryDepartmentId
             ? mappedGoals.find((item) => item.departmentId === queryDepartmentId)
             : null) ??
           null;
 
+        const preselectedGoalId = preselectedGoal?.id ?? "";
+        const preselectedGoalKeyResult =
+          preselectedKeyResult && preselectedKeyResult.goalId === preselectedGoalId
+            ? preselectedKeyResult
+            : mappedKeyResults.find((item) => item.goalId === preselectedGoalId) ?? null;
+
         setForm((prev) => ({
           ...prev,
-          goalId: preselectedGoal?.id ?? "",
+          goalId: preselectedGoalId,
+          keyResultId: preselectedGoalKeyResult?.id ?? "",
           profileId: mappedProfiles[0]?.id ?? "",
         }));
       } catch {
@@ -339,6 +410,7 @@ export default function NewTaskPage() {
           setPermissionError("Có lỗi khi kiểm tra quyền tạo công việc.");
           setRootDepartments([]);
           setGoalOptions([]);
+          setKeyResultOptions([]);
           setProfileOptions([]);
           setPermissionDebug({ ...debugState });
         }
@@ -358,7 +430,7 @@ export default function NewTaskPage() {
     return () => {
       isActive = false;
     };
-  }, [queryGoalId, queryDepartmentId]);
+  }, [queryGoalId, queryKeyResultId, queryDepartmentId]);
 
   const isFormValid = useMemo(
     () =>
@@ -376,6 +448,21 @@ export default function NewTaskPage() {
       `${profile.name} ${profile.email ?? ""}`.toLowerCase().includes(keyword),
     );
   }, [profileOptions, profileSearchKeyword]);
+
+  const availableKeyResults = useMemo(
+    () => keyResultOptions.filter((keyResult) => keyResult.goalId === form.goalId),
+    [form.goalId, keyResultOptions],
+  );
+
+  const selectedGoal = useMemo(
+    () => goalOptions.find((goal) => goal.id === form.goalId) ?? null,
+    [form.goalId, goalOptions],
+  );
+
+  const selectedKeyResult = useMemo(
+    () => keyResultOptions.find((keyResult) => keyResult.id === form.keyResultId) ?? null,
+    [form.keyResultId, keyResultOptions],
+  );
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -400,11 +487,13 @@ export default function NewTaskPage() {
     try {
       const payload = {
         goal_id: form.goalId.trim() ? form.goalId : null,
+        key_result_id: form.keyResultId.trim() ? form.keyResultId : null,
         profile_id: form.profileId,
         creator_profile_id: creatorProfileId,
+        type: form.type,
         name: form.name.trim(),
         description: form.description.trim() || null,
-        progress: 0,
+        progress: getTaskProgressByType(form.type, form.status, form.progress),
         status: form.status,
         note: form.note.trim() || null,
       };
@@ -522,9 +611,20 @@ export default function NewTaskPage() {
                       <label className="text-sm font-semibold text-slate-700">Mục tiêu</label>
                       <Select
                         value={form.goalId || "__no_goal__"}
-                        onValueChange={(value) =>
-                          setForm((prev) => ({ ...prev, goalId: value === "__no_goal__" ? "" : value }))
-                        }
+                        onValueChange={(value) => {
+                          const nextGoalId = value === "__no_goal__" ? "" : value;
+                          setForm((prev) => ({
+                            ...prev,
+                            goalId: nextGoalId,
+                            keyResultId:
+                              nextGoalId && prev.keyResultId
+                                ? keyResultOptions.find(
+                                    (keyResult) =>
+                                      keyResult.id === prev.keyResultId && keyResult.goalId === nextGoalId,
+                                  )?.id ?? ""
+                                : "",
+                          }));
+                        }}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Chọn mục tiêu" />
@@ -541,6 +641,77 @@ export default function NewTaskPage() {
                       </Select>
                     </div>
 
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-semibold text-slate-700">Key result</label>
+                      <Select
+                        value={form.keyResultId || "__no_key_result__"}
+                        onValueChange={(value) => {
+                          if (value === "__no_key_result__") {
+                            setForm((prev) => ({ ...prev, keyResultId: "" }));
+                            return;
+                          }
+
+                          const matchedKeyResult =
+                            keyResultOptions.find((keyResult) => keyResult.id === value) ?? null;
+                          setForm((prev) => ({
+                            ...prev,
+                            goalId: matchedKeyResult?.goalId ?? prev.goalId,
+                            keyResultId: value,
+                          }));
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Chọn key result" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__no_key_result__">Chưa gắn key result</SelectItem>
+                          {availableKeyResults.map((keyResult) => (
+                            <SelectItem key={keyResult.id} value={keyResult.id}>
+                              {keyResult.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {selectedGoal ? (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                      <p className="font-semibold text-slate-800">{selectedGoal.name}</p>
+                      <p className="mt-1">
+                        {selectedGoal.departmentName
+                          ? `Đơn vị chính: ${selectedGoal.departmentName}.`
+                          : "Mục tiêu này chưa có thông tin phòng ban."}
+                        {" "}
+                        {availableKeyResults.length > 0
+                          ? `Có ${availableKeyResults.length} key result để gắn công việc.`
+                          : "Mục tiêu này chưa có key result, task sẽ nằm ở cấp goal."}
+                      </p>
+                    </div>
+                  ) : null}
+
+                  {selectedKeyResult ? (
+                    <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">{selectedKeyResult.name}</p>
+                          <p className="mt-1 text-xs text-slate-600">
+                            Tiến độ {selectedKeyResult.progress}% · {formatKeyResultMetric(selectedKeyResult.current, selectedKeyResult.unit)}
+                            {" / "}
+                            {formatKeyResultMetric(selectedKeyResult.target, selectedKeyResult.unit)} · {formatKeyResultUnit(selectedKeyResult.unit)}
+                          </p>
+                          <p className="mt-1 text-[11px] text-slate-500">
+                            {getKeyResultProgressHint(selectedKeyResult.unit)}
+                          </p>
+                        </div>
+                        <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-blue-700">
+                          Task sẽ được gắn vào key result này
+                        </span>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-1.5">
                       <label className="text-sm font-semibold text-slate-700">Người phụ trách *</label>
                       <Select
@@ -595,11 +766,40 @@ export default function NewTaskPage() {
 
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-1.5">
+                      <label className="text-sm font-semibold text-slate-700">Loại task</label>
+                      <Select
+                        value={form.type}
+                        onValueChange={(value: TaskTypeValue) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            type: value,
+                            progress: getTaskProgressByType(value, prev.status, prev.progress),
+                          }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Chọn loại task" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {TASK_TYPES.map((type) => (
+                            <SelectItem key={type.value} value={type.value}>
+                              {type.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1.5">
                       <label className="text-sm font-semibold text-slate-700">Trạng thái</label>
                       <Select
                         value={form.status}
                         onValueChange={(value: TaskStatusValue) =>
-                          setForm((prev) => ({ ...prev, status: value }))
+                          setForm((prev) => ({
+                            ...prev,
+                            status: value,
+                            progress: getTaskProgressByType(prev.type, value, prev.progress),
+                          }))
                         }
                       >
                         <SelectTrigger>
@@ -614,18 +814,39 @@ export default function NewTaskPage() {
                         </SelectContent>
                       </Select>
                     </div>
+                  </div>
 
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                    {getTaskProgressHint(form.type)}
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-1.5">
                       <label htmlFor="task-progress" className="text-sm font-semibold text-slate-700">
-                        Tiến độ (%) - mặc định
+                        Tiến độ (%)
                       </label>
                       <input
                         id="task-progress"
                         type="number"
-                        value={0}
-                        disabled
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 text-sm font-semibold text-slate-600 outline-none"
+                        value={getTaskProgressByType(form.type, form.status, form.progress)}
+                        disabled={form.type === "okr"}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            progress: Number(event.target.value) || 0,
+                          }))
+                        }
+                        className="h-11 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 text-sm font-semibold text-slate-600 outline-none disabled:cursor-not-allowed"
                       />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-semibold text-slate-700">Cách tính tiến độ</label>
+                      <div className="flex h-11 items-center rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700">
+                        {form.type === "okr"
+                          ? `${TASK_STATUSES.find((item) => item.value === form.status)?.label ?? "Cần làm"} = ${getTaskProgressByType(form.type, form.status, form.progress)}%`
+                          : "Nhập trực tiếp theo % hoàn thành"}
+                      </div>
                     </div>
                   </div>
 

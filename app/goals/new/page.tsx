@@ -80,6 +80,7 @@ export default function NewGoalPage() {
   const [form, setForm] = useState<GoalFormState>(defaultForm);
   const [rootDepartments, setRootDepartments] = useState<DepartmentOption[]>([]);
   const [allDepartments, setAllDepartments] = useState<DepartmentOption[]>([]);
+  const [relatedDepartmentIds, setRelatedDepartmentIds] = useState<string[]>([]);
   const [parentGoalOptions, setParentGoalOptions] = useState<ParentGoalOption[]>([]);
   const [isCheckingPermission, setIsCheckingPermission] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -124,6 +125,7 @@ export default function NewGoalPage() {
             setPermissionError("Không xác thực được người dùng hiện tại.");
             setRootDepartments([]);
             setAllDepartments([]);
+            setRelatedDepartmentIds([]);
             setParentGoalOptions([]);
             setPermissionDebug({ ...debugState });
           }
@@ -145,6 +147,7 @@ export default function NewGoalPage() {
             setPermissionError("Không tìm thấy hồ sơ người dùng.");
             setRootDepartments([]);
             setAllDepartments([]);
+            setRelatedDepartmentIds([]);
             setParentGoalOptions([]);
             setPermissionDebug({ ...debugState });
           }
@@ -178,6 +181,7 @@ export default function NewGoalPage() {
             setPermissionError("Không tìm thấy role Leader để xác thực quyền tạo mục tiêu.");
             setRootDepartments([]);
             setAllDepartments([]);
+            setRelatedDepartmentIds([]);
             setParentGoalOptions([]);
             setPermissionDebug({ ...debugState });
           }
@@ -207,6 +211,7 @@ export default function NewGoalPage() {
             setPermissionError("Bạn chưa có quyền tạo mục tiêu ở phòng ban gốc.");
             setRootDepartments([]);
             setAllDepartments([]);
+            setRelatedDepartmentIds([]);
             setParentGoalOptions([]);
             setPermissionDebug({ ...debugState });
           }
@@ -226,6 +231,7 @@ export default function NewGoalPage() {
             setPermissionError("Không tải được danh sách phòng ban.");
             setRootDepartments([]);
             setAllDepartments([]);
+            setRelatedDepartmentIds([]);
             setParentGoalOptions([]);
             setPermissionDebug({ ...debugState });
           }
@@ -258,6 +264,7 @@ export default function NewGoalPage() {
           setPermissionError("Bạn không có quyền tạo mục tiêu ở phòng ban cấp gốc.");
           setRootDepartments([]);
           setAllDepartments([]);
+          setRelatedDepartmentIds([]);
           setParentGoalOptions([]);
           setPermissionDebug({ ...debugState });
           return;
@@ -301,15 +308,15 @@ export default function NewGoalPage() {
           );
         }
 
-        setForm((prev) => {
-          const matchedFromQuery = queryDepartmentId
-            ? departmentOptions.find((department) => department.id === queryDepartmentId)
-            : null;
-          return {
-            ...prev,
-            departmentId: matchedFromQuery?.id ?? departmentOptions[0]?.id ?? "",
-          };
-        });
+        const matchedFromQuery = queryDepartmentId
+          ? departmentOptions.find((department) => department.id === queryDepartmentId)
+          : null;
+        const nextDepartmentId = matchedFromQuery?.id ?? departmentOptions[0]?.id ?? "";
+        setRelatedDepartmentIds(nextDepartmentId ? [nextDepartmentId] : []);
+        setForm((prev) => ({
+          ...prev,
+          departmentId: nextDepartmentId,
+        }));
       } catch {
         debugState.error = "Lỗi không xác định khi kiểm tra quyền tạo mục tiêu";
         debugState.step = "failed.exception";
@@ -318,6 +325,7 @@ export default function NewGoalPage() {
           setPermissionError("Có lỗi khi kiểm tra quyền tạo mục tiêu.");
           setRootDepartments([]);
           setAllDepartments([]);
+          setRelatedDepartmentIds([]);
           setParentGoalOptions([]);
           setPermissionDebug({ ...debugState });
         }
@@ -358,6 +366,10 @@ export default function NewGoalPage() {
   }, [departmentsById, form.departmentId, parentGoalOptions]);
 
   const hasParentGoal = form.parentGoalId.trim().length > 0;
+  const selectedDepartment = useMemo(
+    () => allDepartments.find((department) => department.id === form.departmentId) ?? null,
+    [allDepartments, form.departmentId],
+  );
 
   const isFormValid = useMemo(() => {
     return (
@@ -372,6 +384,20 @@ export default function NewGoalPage() {
       form.year >= 2000
     );
   }, [form]);
+
+  const toggleRelatedDepartment = (departmentId: string) => {
+    setRelatedDepartmentIds((prev) => {
+      if (departmentId === form.departmentId) {
+        return Array.from(new Set([form.departmentId, ...prev.filter(Boolean)]));
+      }
+
+      if (prev.includes(departmentId)) {
+        return prev.filter((item) => item !== departmentId);
+      }
+
+      return Array.from(new Set([...prev, departmentId, form.departmentId].filter(Boolean)));
+    });
+  };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -403,17 +429,41 @@ export default function NewGoalPage() {
         parent_goal_id: form.parentGoalId || null,
       };
 
-      const { error } = await supabase.from("goals").insert(payload);
+      const { data: createdGoal, error } = await supabase
+        .from("goals")
+        .insert(payload)
+        .select("id")
+        .maybeSingle();
 
-      if (error) {
-        if (error.code === "42501") {
+      if (error || !createdGoal) {
+        if (error?.code === "42501") {
           setSubmitError(
             "Bạn không có quyền tạo mục tiêu (RLS). Vui lòng kiểm tra lại policy INSERT bảng goals.",
           );
         } else {
-          setSubmitError(error.message || "Không thể tạo mục tiêu.");
+          setSubmitError(error?.message || "Không thể tạo mục tiêu.");
         }
         return;
+      }
+
+      const departmentLinks = Array.from(
+        new Set([form.departmentId, ...relatedDepartmentIds].filter(Boolean)),
+      ).map((departmentId) => ({
+        goal_id: String(createdGoal.id),
+        department_id: departmentId,
+      }));
+
+      if (departmentLinks.length > 0) {
+        const { error: goalDepartmentsError } = await supabase
+          .from("goal_departments")
+          .upsert(departmentLinks, { onConflict: "goal_id,department_id" });
+
+        if (goalDepartmentsError) {
+          setSubmitError(
+            "Mục tiêu đã được tạo nhưng chưa lưu được danh sách team phối hợp. Mở chi tiết mục tiêu để kiểm tra lại.",
+          );
+          return;
+        }
       }
 
       router.push("/goals");
@@ -559,9 +609,12 @@ export default function NewGoalPage() {
                     </label>
                     <Select
                       value={form.departmentId || undefined}
-                      onValueChange={(value) =>
-                        setForm((prev) => ({ ...prev, departmentId: value, parentGoalId: "" }))
-                      }
+                      onValueChange={(value) => {
+                        setForm((prev) => ({ ...prev, departmentId: value, parentGoalId: "" }));
+                        setRelatedDepartmentIds((prev) =>
+                          Array.from(new Set([value, ...prev.filter((item) => item !== form.departmentId)])),
+                        );
+                      }}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Chọn phòng ban" />
@@ -575,6 +628,53 @@ export default function NewGoalPage() {
                       </SelectContent>
                     </Select>
                   </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <label className="text-sm font-semibold text-slate-700">
+                        Team phối hợp (`goal_departments`)
+                      </label>
+                      <span className="text-xs text-slate-500">
+                        {relatedDepartmentIds.length} phòng ban tham gia
+                      </span>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <div className="flex flex-wrap gap-2">
+                        {allDepartments.map((department) => {
+                          const isPrimary = department.id === form.departmentId;
+                          const isSelected = relatedDepartmentIds.includes(department.id) || isPrimary;
+                          return (
+                            <button
+                              key={department.id}
+                              type="button"
+                              onClick={() => toggleRelatedDepartment(department.id)}
+                              className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+                                isSelected
+                                  ? "border-blue-200 bg-blue-50 text-blue-700"
+                                  : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                              }`}
+                            >
+                              {department.name}
+                              {isPrimary ? " · chính" : ""}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="mt-3 text-xs text-slate-500">
+                        Goal vẫn có `department_id` là đơn vị chính. Danh sách này dùng để lưu thêm các team cùng tham gia thực thi.
+                      </p>
+                    </div>
+                  </div>
+
+                  {selectedDepartment ? (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                      <p className="font-semibold text-slate-800">Đơn vị chính: {selectedDepartment.name}</p>
+                      <p className="mt-1">
+                        Mục tiêu mới sẽ được tạo theo cấu trúc `goal -&gt; key_results -&gt; tasks`.
+                        Sau khi tạo goal, bạn có thể vào trang chi tiết để thêm key result và phân công task theo từng key result.
+                      </p>
+                    </div>
+                  ) : null}
 
                   <div className="space-y-1.5">
                     <label className="text-sm font-semibold text-slate-700">

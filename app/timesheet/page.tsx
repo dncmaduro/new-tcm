@@ -3,6 +3,11 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import {
+  getTimeRequestReason,
+  getTimeRequestTypeLabel,
+  type TimeRequestType,
+} from "@/lib/constants/time-requests";
 import { supabase } from "@/lib/supabase";
 
 type AttendanceStatus = "ontime" | "late" | "missing";
@@ -20,11 +25,11 @@ type CorrectionRequest = {
   requestDateISO: string;
   correctionDateISO: string;
   type: string;
+  typeValue: TimeRequestType | null;
+  minutes: number;
   reason: string;
   status: "pending" | "approved" | "rejected";
 };
-
-type TimeRequestType = "leave" | "late" | "overtime";
 
 type TimeRequestReviewerRow = {
   is_approved: boolean | null;
@@ -37,6 +42,7 @@ type TimeRequestRow = {
   date: string | null;
   type: TimeRequestType | null;
   minutes: number | null;
+  reason: string | null;
   created_at: string | null;
   time_request_reviewers?: TimeRequestReviewerRow[] | null;
 };
@@ -66,6 +72,7 @@ const BREAK_END_MINUTES = 13 * 60 + 30;
 const REQUIRED_WORK_MINUTES =
   WORK_END_MINUTES - WORK_START_MINUTES - (BREAK_END_MINUTES - BREAK_START_MINUTES);
 const ABSENT_NO_DATA_MISSING_MINUTES = 8 * 60;
+const REQUESTS_PAGE_SIZE = 10;
 
 function getMonthDateRange(value: Date) {
   const start = new Date(value.getFullYear(), value.getMonth(), 1);
@@ -197,33 +204,6 @@ function toDateOnlyIso(value: string | null | undefined) {
   return value.slice(0, 10);
 }
 
-function toTimeRequestTypeLabel(type: TimeRequestType | null | undefined) {
-  if (type === "leave") {
-    return "Xin nghỉ";
-  }
-  if (type === "late") {
-    return "Đi muộn";
-  }
-  if (type === "overtime") {
-    return "Tăng ca";
-  }
-  return "Khác";
-}
-
-function toTimeRequestReason(type: TimeRequestType | null | undefined, minutes: number | null | undefined) {
-  const safeMinutes = typeof minutes === "number" && Number.isFinite(minutes) ? minutes : 0;
-  if (type === "leave") {
-    return `Điều chỉnh nghỉ ${safeMinutes} phút.`;
-  }
-  if (type === "late") {
-    return `Điều chỉnh đi muộn ${safeMinutes} phút.`;
-  }
-  if (type === "overtime") {
-    return `Điều chỉnh tăng ca ${safeMinutes} phút.`;
-  }
-  return "Yêu cầu điều chỉnh thời gian làm việc.";
-}
-
 function toRequestStatus(reviewers: TimeRequestReviewerRow[] | null | undefined): CorrectionRequest["status"] {
   if (!reviewers || reviewers.length === 0) {
     return "pending";
@@ -279,6 +259,7 @@ export default function TimesheetPage() {
   const [attendanceError, setAttendanceError] = useState<string>("");
   const [correctionRequests, setCorrectionRequests] = useState<CorrectionRequest[]>([]);
   const [requestFilter, setRequestFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
+  const [requestPage, setRequestPage] = useState(1);
   const [isLoadingRequests, setIsLoadingRequests] = useState<boolean>(true);
   const [requestsError, setRequestsError] = useState<string>("");
   const [openedFormDateIso, setOpenedFormDateIso] = useState<string | null>(null);
@@ -348,10 +329,16 @@ export default function TimesheetPage() {
       setRequestsError("");
 
       try {
+        const { start, end } = getMonthDateRange(selectedMonth);
+        const startIso = toIsoDate(start.getFullYear(), start.getMonth() + 1, start.getDate());
+        const endIso = toIsoDate(end.getFullYear(), end.getMonth() + 1, end.getDate());
+
         const { data, error } = await supabase
           .from("time_requests")
-          .select("id,date,type,minutes,created_at,time_request_reviewers(is_approved,reviewed_at,created_at)")
+          .select("id,date,type,minutes,reason,created_at,time_request_reviewers(is_approved,reviewed_at,created_at)")
           .eq("profile_id", profileId)
+          .gte("date", startIso)
+          .lt("date", endIso)
           .order("created_at", { ascending: false });
 
         if (error) {
@@ -366,8 +353,10 @@ export default function TimesheetPage() {
           id: item.id,
           requestDateISO: toDateOnlyIso(item.created_at),
           correctionDateISO: toDateOnlyIso(item.date),
-          type: toTimeRequestTypeLabel(item.type),
-          reason: toTimeRequestReason(item.type, item.minutes),
+          type: getTimeRequestTypeLabel(item.type),
+          typeValue: item.type ?? null,
+          minutes: typeof item.minutes === "number" && Number.isFinite(item.minutes) ? Math.max(0, item.minutes) : 0,
+          reason: item.reason?.trim() ? item.reason.trim() : getTimeRequestReason(item.type, item.minutes),
           status: toRequestStatus(item.time_request_reviewers),
         }));
 
@@ -391,7 +380,7 @@ export default function TimesheetPage() {
     return () => {
       isActive = false;
     };
-  }, [profileId]);
+  }, [profileId, selectedMonth]);
 
   useEffect(() => {
     if (!profileId) {
@@ -543,12 +532,73 @@ export default function TimesheetPage() {
   const totalDays = new Date(calendarYear, calendarMonth, 0).getDate();
   const cellCount = Math.ceil((firstWeekdayIndex + totalDays) / 7) * 7;
 
+  const approvedLeaveMinutesByDate = useMemo(() => {
+    return correctionRequests.reduce<Record<string, number>>((acc, item) => {
+      if (item.status !== "approved" || item.typeValue !== "approved_leave" || !item.correctionDateISO) {
+        return acc;
+      }
+
+      acc[item.correctionDateISO] = (acc[item.correctionDateISO] ?? 0) + item.minutes;
+      return acc;
+    }, {});
+  }, [correctionRequests]);
+
+  const adjustedCalendarDays = useMemo(() => {
+    return calendarDays.map((day) => {
+      const dateIso = toIsoDate(calendarYear, calendarMonth, day.day);
+      const approvedLeaveMinutes = approvedLeaveMinutesByDate[dateIso] ?? 0;
+      const originalMissingMinutes =
+        typeof day.missingMinutes === "number" && Number.isFinite(day.missingMinutes) ? Math.max(0, day.missingMinutes) : 0;
+
+      if (approvedLeaveMinutes <= 0 || originalMissingMinutes <= 0) {
+        return day;
+      }
+
+      const adjustedMissingMinutes = Math.max(0, originalMissingMinutes - approvedLeaveMinutes);
+      const adjustedStatus =
+        day.status && adjustedMissingMinutes === 0
+          ? ("ontime" as AttendanceStatus)
+          : day.status;
+
+      return {
+        ...day,
+        status: adjustedStatus,
+        missingMinutes: adjustedMissingMinutes,
+      };
+    });
+  }, [approvedLeaveMinutesByDate, calendarDays, calendarMonth, calendarYear]);
+
+  const adjustedAttendanceStats = useMemo(() => {
+    return adjustedCalendarDays.reduce<AttendanceStats>(
+      (acc, day) => {
+        const missingMinutes =
+          typeof day.missingMinutes === "number" && Number.isFinite(day.missingMinutes) ? Math.max(0, day.missingMinutes) : 0;
+
+        if (day.status === "missing") {
+          acc.absentDays += 1;
+        }
+        if (day.status === "ontime" || day.status === "late") {
+          acc.totalWorkDays += 1;
+        }
+
+        acc.missingMinutes += missingMinutes;
+        return acc;
+      },
+      {
+        totalWorkDays: 0,
+        absentDays: 0,
+        missingMinutes: 0,
+        overtimeMinutes: attendanceStats.overtimeMinutes,
+      },
+    );
+  }, [adjustedCalendarDays, attendanceStats.overtimeMinutes]);
+
   const dayMap = useMemo(() => {
-    return calendarDays.reduce<Record<number, CalendarDay>>((acc, day) => {
+    return adjustedCalendarDays.reduce<Record<number, CalendarDay>>((acc, day) => {
       acc[day.day] = day;
       return acc;
     }, {});
-  }, [calendarDays]);
+  }, [adjustedCalendarDays]);
 
   const monthCells = Array.from({ length: cellCount }, (_, index) => {
     const day = index - firstWeekdayIndex + 1;
@@ -564,16 +614,72 @@ export default function TimesheetPage() {
     }
     return correctionRequests.filter((item) => item.status === requestFilter);
   }, [correctionRequests, requestFilter]);
+  const totalRequestPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredCorrectionRequests.length / REQUESTS_PAGE_SIZE)),
+    [filteredCorrectionRequests.length],
+  );
+  const safeRequestPage = Math.min(requestPage, totalRequestPages);
+  const paginatedCorrectionRequests = useMemo(() => {
+    const start = (safeRequestPage - 1) * REQUESTS_PAGE_SIZE;
+    return filteredCorrectionRequests.slice(start, start + REQUESTS_PAGE_SIZE);
+  }, [filteredCorrectionRequests, safeRequestPage]);
+
+  useEffect(() => {
+    setRequestPage(1);
+  }, [requestFilter, selectedMonth]);
 
   const activeRequests = openedFormDateIso
     ? correctionRequests.filter((item) => item.correctionDateISO === openedFormDateIso)
     : [];
   const activeDateLabel = openedFormDateIso ? formatDateVi(openedFormDateIso) : "";
+  const requestDurationSummary = useMemo(() => {
+    const selectedYear = selectedMonth.getFullYear();
+    const selectedMonthIndex = selectedMonth.getMonth();
+    let approvedLeaveMinutes = 0;
+    let unauthorizedLeaveMinutes = 0;
+    let remoteMinutes = 0;
+    let requestedOvertimeMinutes = 0;
+
+    correctionRequests.forEach((item) => {
+      if (item.status !== "approved" || !item.correctionDateISO) {
+        return;
+      }
+      const date = new Date(`${item.correctionDateISO}T00:00:00`);
+      if (Number.isNaN(date.getTime())) {
+        return;
+      }
+      if (date.getFullYear() !== selectedYear || date.getMonth() !== selectedMonthIndex) {
+        return;
+      }
+
+      if (item.typeValue === "approved_leave") {
+        approvedLeaveMinutes += item.minutes;
+        return;
+      }
+      if (item.typeValue === "unauthorized_leave") {
+        unauthorizedLeaveMinutes += item.minutes;
+        return;
+      }
+      if (item.typeValue === "remote") {
+        remoteMinutes += item.minutes;
+        return;
+      }
+      if (item.typeValue === "overtime") {
+        requestedOvertimeMinutes += item.minutes;
+      }
+    });
+
+    return { approvedLeaveMinutes, unauthorizedLeaveMinutes, remoteMinutes, requestedOvertimeMinutes };
+  }, [correctionRequests, selectedMonth]);
   const statCards = [
-    { label: "Tổng ngày làm việc", value: String(attendanceStats.totalWorkDays), accent: "text-blue-600" },
-    { label: "Ngày vắng mặt", value: String(attendanceStats.absentDays), accent: "text-rose-500" },
-    { label: "Thiếu giờ", value: formatDurationLabel(attendanceStats.missingMinutes), accent: "text-amber-500" },
-    { label: "Tổng tăng ca", value: formatDurationLabel(attendanceStats.overtimeMinutes), accent: "text-emerald-500" },
+    { label: "Tổng ngày làm việc", value: String(adjustedAttendanceStats.totalWorkDays), accent: "text-blue-600" },
+    { label: "Ngày vắng mặt", value: String(adjustedAttendanceStats.absentDays), accent: "text-rose-500" },
+    { label: "Thiếu giờ", value: formatDurationLabel(adjustedAttendanceStats.missingMinutes), accent: "text-amber-500" },
+    { label: "Tổng tăng ca", value: formatDurationLabel(adjustedAttendanceStats.overtimeMinutes), accent: "text-emerald-500" },
+    { label: "Thiếu có phép", value: formatDurationLabel(requestDurationSummary.approvedLeaveMinutes), accent: "text-orange-500" },
+    { label: "Thiếu không phép", value: formatDurationLabel(requestDurationSummary.unauthorizedLeaveMinutes), accent: "text-red-500" },
+    { label: "Tổng remote", value: formatDurationLabel(requestDurationSummary.remoteMinutes), accent: "text-indigo-500" },
+    { label: "Tăng ca đã duyệt", value: formatDurationLabel(requestDurationSummary.requestedOvertimeMinutes), accent: "text-cyan-600" },
   ];
 
   return (
@@ -858,7 +964,7 @@ export default function TimesheetPage() {
                         </td>
                       </tr>
                     ) : (
-                      filteredCorrectionRequests.map((item) => (
+                      paginatedCorrectionRequests.map((item) => (
                         <tr key={item.id} className="border-t border-slate-100">
                           <td className="px-5 py-4 text-sm font-medium text-slate-700">
                             {formatDateVi(item.requestDateISO)}
@@ -882,6 +988,31 @@ export default function TimesheetPage() {
                   </tbody>
                 </table>
               </div>
+              {filteredCorrectionRequests.length > 0 ? (
+                <div className="flex items-center justify-between border-t border-slate-100 px-5 py-3 text-sm">
+                  <p className="text-slate-500">
+                    Trang {safeRequestPage}/{totalRequestPages} · {filteredCorrectionRequests.length} yêu cầu
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setRequestPage((prev) => Math.max(1, prev - 1))}
+                      disabled={safeRequestPage <= 1}
+                      className="h-9 rounded-lg border border-slate-200 bg-white px-3 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Trước
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRequestPage((prev) => Math.min(totalRequestPages, prev + 1))}
+                      disabled={safeRequestPage >= totalRequestPages}
+                      className="h-9 rounded-lg border border-slate-200 bg-white px-3 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Sau
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </section>
           </main>
         </div>

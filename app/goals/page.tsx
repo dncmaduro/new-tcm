@@ -14,10 +14,17 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { GOAL_STATUSES, GOAL_TYPES } from "@/lib/constants/goals";
-import { TASK_STATUSES } from "@/lib/constants/tasks";
+import { getTaskProgressByType, TASK_STATUSES } from "@/lib/constants/tasks";
 import { supabase } from "@/lib/supabase";
 
 type Mode = "canvas" | "list";
+const GOALS_LIST_PAGE_SIZE = 10;
+
+type GoalKeyResultPreview = {
+  id: string;
+  name: string;
+  progress: number;
+};
 
 type GoalNode = {
   id: string;
@@ -35,6 +42,8 @@ type GoalNode = {
   status: string;
   createdAt: string | null;
   parentGoalId: string | null;
+  keyResultCount: number;
+  keyResultsPreview: GoalKeyResultPreview[];
   x: number;
   y: number;
   mau: "blue" | "indigo" | "emerald" | "orange";
@@ -60,6 +69,13 @@ type GoalRow = {
   created_at: string | null;
 };
 
+type KeyResultRow = {
+  id: string;
+  goal_id: string;
+  name: string;
+  progress: number | null;
+};
+
 type DepartmentOption = {
   id: string;
   name: string;
@@ -68,17 +84,21 @@ type DepartmentOption = {
 type GoalTaskRow = {
   id: string;
   name: string;
+  type: string | null;
   status: string | null;
   progress: number | null;
   profile_id: string | null;
+  key_result_id: string | null;
 };
 
 type GoalTaskItem = {
   id: string;
   tieuDe: string;
+  loai: string;
   trangThai: string;
   nguoiPhuTrach: string;
   tienDo: number;
+  keyResultName: string;
 };
 
 type GoalLogAction =
@@ -123,7 +143,7 @@ type GoalCreatePermissionDebug = {
 };
 
 const CARD_WIDTH = 320;
-const CARD_HEIGHT = 158;
+const CARD_HEIGHT = 232;
 const WORLD_WIDTH = 3200;
 const WORLD_HEIGHT = 2200;
 const WORLD_INITIAL_SCALE = 0.86;
@@ -288,6 +308,7 @@ const toGoalLogSummary = (
 const buildGoalGraph = (
   rows: GoalRow[],
   departmentsById: Record<string, string>,
+  keyResultsByGoalId: Record<string, GoalKeyResultPreview[]>,
 ): { nodes: GoalNode[]; edges: GoalEdge[] } => {
   if (!rows.length) {
     return { nodes: [], edges: [] };
@@ -398,6 +419,8 @@ const buildGoalGraph = (
         status: row.status ?? "draft",
         createdAt: row.created_at ?? null,
         parentGoalId: row.parent_goal_id,
+        keyResultCount: keyResultsByGoalId[row.id]?.length ?? 0,
+        keyResultsPreview: (keyResultsByGoalId[row.id] ?? []).slice(0, 3),
         x: Math.min(
           WORLD_WIDTH - CARD_WIDTH - 24,
           Math.max(24, startX + index * horizontalGap),
@@ -470,6 +493,7 @@ export default function GoalsPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [quarterFilter, setQuarterFilter] = useState("all");
   const [yearFilter, setYearFilter] = useState("all");
+  const [goalsListPage, setGoalsListPage] = useState(1);
 
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
@@ -528,6 +552,15 @@ export default function GoalsPage() {
       return true;
     });
   }, [departmentFilter, keywordFilter, nodes, quarterFilter, statusFilter, typeFilter, yearFilter]);
+  const totalGoalPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredNodes.length / GOALS_LIST_PAGE_SIZE)),
+    [filteredNodes.length],
+  );
+  const safeGoalsListPage = Math.min(goalsListPage, totalGoalPages);
+  const paginatedFilteredNodes = useMemo(() => {
+    const start = (safeGoalsListPage - 1) * GOALS_LIST_PAGE_SIZE;
+    return filteredNodes.slice(start, start + GOALS_LIST_PAGE_SIZE);
+  }, [filteredNodes, safeGoalsListPage]);
 
   const displayedNodes = mode === "list" ? filteredNodes : nodes;
   const validGoalIds = useMemo(() => new Set(displayedNodes.map((node) => node.id)), [displayedNodes]);
@@ -542,6 +575,10 @@ export default function GoalsPage() {
     () => displayedNodes.find((node) => node.id === selectedId) ?? null,
     [displayedNodes, selectedId],
   );
+
+  useEffect(() => {
+    setGoalsListPage(1);
+  }, [keywordFilter, departmentFilter, typeFilter, statusFilter, quarterFilter, yearFilter, mode]);
 
   const nodeMap = useMemo(
     () =>
@@ -564,7 +601,11 @@ export default function GoalsPage() {
       setIsLoadingGoals(true);
       setGoalsError(null);
 
-      const [{ data: goalsData, error: goalsLoadError }, { data: departmentsData, error: departmentsLoadError }] =
+      const [
+        { data: goalsData, error: goalsLoadError },
+        { data: departmentsData, error: departmentsLoadError },
+        { data: keyResultsData, error: keyResultsLoadError },
+      ] =
         await Promise.all([
           supabase
             .from("goals")
@@ -573,6 +614,7 @@ export default function GoalsPage() {
             )
             .order("created_at", { ascending: true }),
           supabase.from("departments").select("id,name"),
+          supabase.from("key_results").select("id,goal_id,name,progress"),
         ]);
 
       if (!isActive) {
@@ -595,13 +637,36 @@ export default function GoalsPage() {
         return;
       }
 
+      if (keyResultsLoadError) {
+        setGoalsError("Không tải được danh sách key result.");
+        setNodes([]);
+        setEdges([]);
+        setIsLoadingGoals(false);
+        return;
+      }
+
       const departmentsById = (departmentsData ?? []).reduce<Record<string, string>>((acc, department) => {
         const departmentId = String(department.id);
         acc[departmentId] = String(department.name);
         return acc;
       }, {});
 
-      const graph = buildGoalGraph((goalsData as GoalRow[]) ?? [], departmentsById);
+      const keyResultsByGoalId = ((keyResultsData ?? []) as KeyResultRow[]).reduce<
+        Record<string, GoalKeyResultPreview[]>
+      >((acc, keyResult) => {
+        const goalId = String(keyResult.goal_id);
+        if (!acc[goalId]) {
+          acc[goalId] = [];
+        }
+        acc[goalId].push({
+          id: String(keyResult.id),
+          name: String(keyResult.name),
+          progress: clampProgress(keyResult.progress),
+        });
+        return acc;
+      }, {});
+
+      const graph = buildGoalGraph((goalsData as GoalRow[]) ?? [], departmentsById, keyResultsByGoalId);
       setNodes(graph.nodes);
       setEdges(graph.edges);
       setIsLoadingGoals(false);
@@ -808,7 +873,7 @@ export default function GoalsPage() {
 
       const { data: tasksData, error: tasksError } = await supabase
         .from("tasks")
-        .select("id,name,status,progress,profile_id")
+        .select("id,name,type,status,progress,profile_id,key_result_id")
         .eq("goal_id", selectedGoal.id)
         .order("created_at", { ascending: false });
 
@@ -818,20 +883,26 @@ export default function GoalsPage() {
 
       if (tasksError) {
         setSelectedGoalTasks([]);
-        setSelectedGoalTasksError("Không tải được phân rã công việc.");
+        setSelectedGoalTasksError("Không tải được phân bổ công việc.");
         setIsLoadingSelectedGoalTasks(false);
         return;
       }
 
       const typedTasks = (tasksData ?? []) as GoalTaskRow[];
+      const keyResultIds = [...new Set(typedTasks.map((task) => task.key_result_id).filter(Boolean))] as string[];
       const profileIds = [...new Set(typedTasks.map((task) => task.profile_id).filter(Boolean))] as string[];
       let profileNameById: Record<string, string> = {};
+      let keyResultNameById: Record<string, string> = {};
 
-      if (profileIds.length > 0) {
-        const { data: profilesData } = await supabase
-          .from("profiles")
-          .select("id,name")
-          .in("id", profileIds);
+      if (profileIds.length > 0 || keyResultIds.length > 0) {
+        const [{ data: profilesData }, { data: keyResultsData }] = await Promise.all([
+          profileIds.length > 0
+            ? supabase.from("profiles").select("id,name").in("id", profileIds)
+            : Promise.resolve({ data: [] }),
+          keyResultIds.length > 0
+            ? supabase.from("key_results").select("id,name").in("id", keyResultIds)
+            : Promise.resolve({ data: [] }),
+        ]);
 
         if (!isActive) {
           return;
@@ -842,14 +913,30 @@ export default function GoalsPage() {
           acc[profileId] = profile.name ? String(profile.name) : "Chưa gán";
           return acc;
         }, {});
+
+        keyResultNameById = (keyResultsData ?? []).reduce<Record<string, string>>((acc, keyResult) => {
+          const keyResultId = String(keyResult.id);
+          acc[keyResultId] = keyResult.name ? String(keyResult.name) : "Task cấp goal";
+          return acc;
+        }, {});
       }
 
       const mappedTasks: GoalTaskItem[] = typedTasks.map((task) => ({
         id: task.id,
         tieuDe: task.name,
+        loai: task.type === "okr" ? "OKR" : "KPI",
         trangThai: task.status ? taskStatusLabelMap[task.status] ?? task.status : "Chưa cập nhật",
         nguoiPhuTrach: task.profile_id ? profileNameById[task.profile_id] ?? "Chưa gán" : "Chưa gán",
-        tienDo: clampProgress(task.progress),
+        tienDo: getTaskProgressByType(
+          task.type ? String(task.type) : null,
+          task.status === "doing" || task.status === "done" || task.status === "cancelled"
+            ? task.status
+            : "todo",
+          task.progress,
+        ),
+        keyResultName: task.key_result_id
+          ? keyResultNameById[task.key_result_id] ?? "Task cấp goal"
+          : "Task cấp goal",
       }));
 
       setSelectedGoalTasks(mappedTasks);
@@ -1403,6 +1490,48 @@ export default function GoalsPage() {
                         <p className="line-clamp-2 text-2xl font-semibold leading-tight tracking-[-0.02em] text-slate-900">
                           {goal.tieuDe}
                         </p>
+                        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-500 uppercase">
+                              Key result
+                            </span>
+                            <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                              {goal.keyResultCount}
+                            </span>
+                          </div>
+                          {goal.keyResultsPreview.length > 0 ? (
+                            <div className="space-y-2">
+                              {goal.keyResultsPreview.map((keyResult) => (
+                                <div
+                                  key={keyResult.id}
+                                  className="rounded-lg border border-white/80 bg-white px-2.5 py-2"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className="line-clamp-1 text-xs font-semibold text-slate-700">
+                                      {keyResult.name}
+                                    </p>
+                                    <span className="text-[11px] font-semibold text-blue-700">
+                                      {keyResult.progress}%
+                                    </span>
+                                  </div>
+                                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                                    <div
+                                      className="h-full rounded-full bg-blue-600"
+                                      style={{ width: `${keyResult.progress}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                              {goal.keyResultCount > goal.keyResultsPreview.length ? (
+                                <p className="text-[11px] font-medium text-slate-500">
+                                  +{goal.keyResultCount - goal.keyResultsPreview.length} key result khác
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-slate-500">Chưa có key result.</p>
+                          )}
+                        </div>
                         <div className="mt-4 space-y-1">
                           <div className="flex items-center justify-between text-sm text-slate-500">
                             <span>Tiến độ</span>
@@ -1550,7 +1679,7 @@ export default function GoalsPage() {
                           </thead>
                           <tbody>
                             {filteredNodes.length > 0 ? (
-                              filteredNodes.map((goal) => (
+                              paginatedFilteredNodes.map((goal) => (
                                 <tr
                                   key={goal.id}
                                   className={`group cursor-pointer border-t border-slate-100 transition ${
@@ -1600,6 +1729,31 @@ export default function GoalsPage() {
                           </tbody>
                         </table>
                       </div>
+                      {filteredNodes.length > 0 ? (
+                        <div className="flex items-center justify-between border-t border-slate-100 px-5 py-3 text-sm">
+                          <p className="text-slate-500">
+                            Trang {safeGoalsListPage}/{totalGoalPages} · {filteredNodes.length} mục tiêu
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setGoalsListPage((prev) => Math.max(1, prev - 1))}
+                              disabled={safeGoalsListPage <= 1}
+                              className="h-9 rounded-lg border border-slate-200 bg-white px-3 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Trước
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setGoalsListPage((prev) => Math.min(totalGoalPages, prev + 1))}
+                              disabled={safeGoalsListPage >= totalGoalPages}
+                              className="h-9 rounded-lg border border-slate-200 bg-white px-3 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Sau
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                     </article>
                   </div>
                 )}
@@ -1669,7 +1823,7 @@ export default function GoalsPage() {
                 <div className="rounded-2xl border border-slate-200 bg-slate-50">
                   <div className="border-b border-slate-200 px-4 py-3">
                     <h3 className="text-base font-semibold text-slate-900">
-                      Phân rã công việc
+                      Task theo key result
                     </h3>
                   </div>
                   <div className="divide-y divide-slate-200">
@@ -1684,7 +1838,17 @@ export default function GoalsPage() {
                     ) : selectedGoalTasks.length > 0 ? (
                       selectedGoalTasks.map((task) => (
                         <div key={task.id} className="space-y-2 px-4 py-3">
-                          <p className="text-sm font-medium text-slate-800">{task.tieuDe}</p>
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm font-medium text-slate-800">{task.tieuDe}</p>
+                            <div className="flex flex-col items-end gap-1">
+                              <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                                {task.keyResultName}
+                              </span>
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                                {task.loai}
+                              </span>
+                            </div>
+                          </div>
                           <div className="flex items-center justify-between text-xs text-slate-500">
                             <span>{task.trangThai}</span>
                             <span>{task.nguoiPhuTrach}</span>
@@ -1700,13 +1864,19 @@ export default function GoalsPage() {
                       ))
                     ) : (
                       <p className="px-4 py-5 text-sm text-slate-500">
-                        Chưa có công việc nào liên kết với mục tiêu này.
+                        Chưa có công việc nào liên kết với goal này.
                       </p>
                     )}
                   </div>
                 </div>
 
                 <div className="space-y-3 border-t border-slate-200 pt-5">
+                  <Link
+                    href={`/goals/${selectedGoal.id}?createKr=1`}
+                    className="flex h-11 w-full items-center justify-center rounded-xl border border-slate-200 bg-white text-base font-semibold text-slate-700"
+                  >
+                    Thêm KR
+                  </Link>
                   <Link
                     href={`/goals/${selectedGoal.id}`}
                     className="flex h-11 w-full items-center justify-center rounded-xl bg-blue-600 text-base font-semibold text-white"

@@ -11,16 +11,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { TASK_STATUSES, type TaskStatusValue } from "@/lib/constants/tasks";
+import { getTaskProgressByType, TASK_STATUSES, type TaskStatusValue } from "@/lib/constants/tasks";
+import { formatKeyResultMetric, formatKeyResultUnit } from "@/lib/constants/key-results";
 import { supabase } from "@/lib/supabase";
 
 type TaskMode = "list" | "kanban";
+const TASKS_PAGE_SIZE = 10;
 
 type TaskRow = {
   id: string;
   name: string;
   goal_id: string | null;
+  key_result_id: string | null;
   profile_id: string | null;
+  type: string | null;
   status: string | null;
   progress: number | null;
   deadline?: string | null;
@@ -34,6 +38,15 @@ type GoalLiteRow = {
   name: string;
 };
 
+type KeyResultLiteRow = {
+  id: string;
+  goal_id: string;
+  name: string;
+  current: number | null;
+  target: number | null;
+  unit: string | null;
+};
+
 type ProfileLiteRow = {
   id: string;
   name: string | null;
@@ -45,6 +58,10 @@ type TaskItem = {
   name: string;
   goalId: string | null;
   goalName: string;
+  keyResultId: string | null;
+  keyResultName: string;
+  keyResultMetric: string;
+  type: string | null;
   profileId: string | null;
   assignee: string;
   assigneeShort: string;
@@ -91,11 +108,6 @@ const normalizeTaskStatus = (value: string | null): TaskStatusValue => {
     return "cancelled";
   }
   return "todo";
-};
-
-const clampProgress = (value: number | null) => {
-  const safe = Number.isFinite(value) ? Number(value) : 0;
-  return Math.min(100, Math.max(0, Math.round(safe)));
 };
 
 const resolveDeadline = (task: TaskRow) =>
@@ -201,12 +213,15 @@ export default function TasksPage() {
   const [isLoadingTasks, setIsLoadingTasks] = useState(true);
   const [taskLoadError, setTaskLoadError] = useState<string | null>(null);
   const [goalFilters, setGoalFilters] = useState<Array<{ id: string; name: string }>>([]);
+  const [keyResultFilters, setKeyResultFilters] = useState<Array<{ id: string; name: string; goalId: string }>>([]);
   const [assigneeFilters, setAssigneeFilters] = useState<Array<{ id: string; name: string }>>([]);
 
   const [searchKeyword, setSearchKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | TaskStatusValue>("all");
   const [goalFilter, setGoalFilter] = useState<"all" | string>("all");
+  const [keyResultFilter, setKeyResultFilter] = useState<"all" | string>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<"all" | string>("all");
+  const [taskPage, setTaskPage] = useState(1);
 
   const mode: TaskMode =
     searchParams.get("mode") === "kanban"
@@ -229,13 +244,19 @@ export default function TasksPage() {
       setTaskLoadError(null);
 
       try {
-        const [{ data: taskRows, error: taskError }, { data: goalRows, error: goalError }, { data: profileRows, error: profileError }] =
+        const [
+          { data: taskRows, error: taskError },
+          { data: goalRows, error: goalError },
+          { data: keyResultRows, error: keyResultError },
+          { data: profileRows, error: profileError },
+        ] =
           await Promise.all([
             supabase
               .from("tasks")
               .select("*")
               .order("created_at", { ascending: false }),
             supabase.from("goals").select("id,name"),
+            supabase.from("key_results").select("id,goal_id,name,current,target,unit"),
             supabase.from("profiles").select("id,name,email"),
           ]);
 
@@ -247,6 +268,7 @@ export default function TasksPage() {
           setTaskLoadError(taskError.message || "Không tải được danh sách công việc.");
           setTasks([]);
           setGoalFilters([]);
+          setKeyResultFilters([]);
           setAssigneeFilters([]);
           return;
         }
@@ -256,6 +278,14 @@ export default function TasksPage() {
           return acc;
         }, {});
 
+        const keyResultsById = (keyResultRows ?? []).reduce<Record<string, KeyResultLiteRow>>(
+          (acc, item: KeyResultLiteRow) => {
+            acc[String(item.id)] = item;
+            return acc;
+          },
+          {},
+        );
+
         const profilesById = (profileRows ?? []).reduce<Record<string, string>>((acc, item: ProfileLiteRow) => {
           acc[String(item.id)] = String(item.name ?? item.email ?? "Chưa có tên");
           return acc;
@@ -264,17 +294,36 @@ export default function TasksPage() {
         const mappedTasks = (taskRows ?? []).map((row: TaskRow) => {
           const assignee = row.profile_id ? profilesById[String(row.profile_id)] ?? "Chưa gán" : "Chưa gán";
           const goalName = row.goal_id ? goalsById[String(row.goal_id)] ?? "Chưa có mục tiêu" : "Chưa có mục tiêu";
+          const keyResult = row.key_result_id ? keyResultsById[String(row.key_result_id)] ?? null : null;
+          const keyResultName = keyResult?.name ? String(keyResult.name) : "Chưa gắn key result";
+          const keyResultMetric = keyResult
+            ? `${formatKeyResultMetric(
+                typeof keyResult.current === "number" ? keyResult.current : Number(keyResult.current ?? 0),
+                keyResult.unit,
+              )}/${formatKeyResultMetric(
+                typeof keyResult.target === "number" ? keyResult.target : Number(keyResult.target ?? 0),
+                keyResult.unit,
+              )} ${formatKeyResultUnit(keyResult.unit)}`
+            : "Task cấp goal";
 
           return {
             id: String(row.id),
             name: String(row.name),
             goalId: row.goal_id ? String(row.goal_id) : null,
             goalName,
+            keyResultId: row.key_result_id ? String(row.key_result_id) : null,
+            keyResultName,
+            keyResultMetric,
+            type: row.type ? String(row.type) : null,
             profileId: row.profile_id ? String(row.profile_id) : null,
             assignee,
             assigneeShort: toShortName(assignee),
             status: normalizeTaskStatus(row.status),
-            progress: clampProgress(row.progress),
+            progress: getTaskProgressByType(
+              row.type ? String(row.type) : null,
+              normalizeTaskStatus(row.status),
+              row.progress,
+            ),
             deadlineAt: resolveDeadline(row),
             createdAt: row.created_at,
           } as TaskItem;
@@ -288,6 +337,13 @@ export default function TasksPage() {
         }));
         setGoalFilters(mappedGoalFilters);
 
+        const mappedKeyResultFilters = (keyResultRows ?? []).map((item: KeyResultLiteRow) => ({
+          id: String(item.id),
+          name: String(item.name),
+          goalId: String(item.goal_id),
+        }));
+        setKeyResultFilters(mappedKeyResultFilters);
+
         const mappedAssigneeFilters = (profileRows ?? []).map((item: ProfileLiteRow) => ({
           id: String(item.id),
           name: String(item.name ?? item.email ?? "Chưa có tên"),
@@ -297,6 +353,9 @@ export default function TasksPage() {
         const nonFatalErrors: string[] = [];
         if (goalError) {
           nonFatalErrors.push("Không tải được danh sách mục tiêu.");
+        }
+        if (keyResultError) {
+          nonFatalErrors.push("Không tải được danh sách key result.");
         }
         if (profileError) {
           nonFatalErrors.push("Không tải được danh sách người phụ trách.");
@@ -309,6 +368,7 @@ export default function TasksPage() {
         setTaskLoadError("Có lỗi khi tải dữ liệu công việc.");
         setTasks([]);
         setGoalFilters([]);
+        setKeyResultFilters([]);
         setAssigneeFilters([]);
       } finally {
         if (isActive) {
@@ -510,6 +570,9 @@ export default function TasksPage() {
       if (goalFilter !== "all" && task.goalId !== goalFilter) {
         return false;
       }
+      if (keyResultFilter !== "all" && task.keyResultId !== keyResultFilter) {
+        return false;
+      }
       if (assigneeFilter !== "all" && task.profileId !== assigneeFilter) {
         return false;
       }
@@ -522,7 +585,28 @@ export default function TasksPage() {
       const haystack = `${task.name} ${task.goalName} ${task.assignee}`.toLowerCase();
       return haystack.includes(keyword);
     });
-  }, [assigneeFilter, goalFilter, searchKeyword, statusFilter, tasks]);
+  }, [assigneeFilter, goalFilter, keyResultFilter, searchKeyword, statusFilter, tasks]);
+
+  const totalTaskPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredTasks.length / TASKS_PAGE_SIZE)),
+    [filteredTasks.length],
+  );
+  const safeTaskPage = Math.min(taskPage, totalTaskPages);
+  const paginatedTasks = useMemo(() => {
+    const start = (safeTaskPage - 1) * TASKS_PAGE_SIZE;
+    return filteredTasks.slice(start, start + TASKS_PAGE_SIZE);
+  }, [filteredTasks, safeTaskPage]);
+
+  useEffect(() => {
+    setTaskPage(1);
+  }, [searchKeyword, statusFilter, goalFilter, keyResultFilter, assigneeFilter, mode]);
+
+  const filteredKeyResultFilters = useMemo(() => {
+    if (goalFilter === "all") {
+      return keyResultFilters;
+    }
+    return keyResultFilters.filter((keyResult) => keyResult.goalId === goalFilter);
+  }, [goalFilter, keyResultFilters]);
 
   const todo = filteredTasks.filter((task) => task.status === "todo");
   const doing = filteredTasks.filter((task) => task.status === "doing");
@@ -587,7 +671,7 @@ export default function TasksPage() {
             ) : null}
 
             <section className="rounded-2xl border border-slate-200 bg-white p-4">
-              <div className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_auto]">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto]">
                 <Select
                   value={statusFilter}
                   onValueChange={(value) => setStatusFilter(value as "all" | TaskStatusValue)}
@@ -607,7 +691,10 @@ export default function TasksPage() {
 
                 <Select
                   value={goalFilter}
-                  onValueChange={(value) => setGoalFilter(value as "all" | string)}
+                  onValueChange={(value) => {
+                    setGoalFilter(value as "all" | string);
+                    setKeyResultFilter("all");
+                  }}
                 >
                   <SelectTrigger className="h-10">
                     <SelectValue placeholder="Tất cả mục tiêu" />
@@ -617,6 +704,23 @@ export default function TasksPage() {
                     {goalFilters.map((goal) => (
                       <SelectItem key={goal.id} value={goal.id}>
                         {goal.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select
+                  value={keyResultFilter}
+                  onValueChange={(value) => setKeyResultFilter(value as "all" | string)}
+                >
+                  <SelectTrigger className="h-10">
+                    <SelectValue placeholder="Tất cả key result" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Tất cả key result</SelectItem>
+                    {filteredKeyResultFilters.map((keyResult) => (
+                      <SelectItem key={keyResult.id} value={keyResult.id}>
+                        {keyResult.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -645,6 +749,7 @@ export default function TasksPage() {
                     setSearchKeyword("");
                     setStatusFilter("all");
                     setGoalFilter("all");
+                    setKeyResultFilter("all");
                     setAssigneeFilter("all");
                   }}
                   className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
@@ -680,11 +785,12 @@ export default function TasksPage() {
             {!isLoadingTasks && mode === "list" ? (
               <section className="rounded-2xl border border-slate-200 bg-white">
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[900px] text-left">
+                  <table className="w-full min-w-[1120px] text-left">
                     <thead>
                       <tr className="text-xs tracking-[0.08em] text-slate-400 uppercase">
                         <th className="px-6 py-4 font-semibold">Tên công việc</th>
                         <th className="px-4 py-4 font-semibold">Mục tiêu</th>
+                        <th className="px-4 py-4 font-semibold">Key result</th>
                         <th className="px-4 py-4 font-semibold">Người phụ trách</th>
                         <th className="px-4 py-4 font-semibold">Trạng thái</th>
                         <th className="px-4 py-4 font-semibold">Tiến độ</th>
@@ -693,7 +799,7 @@ export default function TasksPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredTasks.map((task) => (
+                      {paginatedTasks.map((task) => (
                         <tr key={task.id} className="border-t border-slate-100">
                           <td className="px-6 py-4">
                             <Link
@@ -704,6 +810,12 @@ export default function TasksPage() {
                             </Link>
                           </td>
                           <td className="px-4 py-4 text-sm text-slate-600">{task.goalName}</td>
+                          <td className="px-4 py-4">
+                            <div className="space-y-1">
+                              <p className="text-sm font-medium text-slate-700">{task.keyResultName}</p>
+                              <p className="text-xs text-slate-500">{task.keyResultMetric}</p>
+                            </div>
+                          </td>
                           <td className="px-4 py-4">
                             <div className="flex items-center gap-2">
                               <span className="grid h-7 w-7 place-items-center rounded-full bg-blue-100 text-[11px] font-semibold text-blue-700">
@@ -728,7 +840,7 @@ export default function TasksPage() {
 
                       {filteredTasks.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="px-6 py-10 text-center text-sm text-slate-500">
+                          <td colSpan={8} className="px-6 py-10 text-center text-sm text-slate-500">
                             Không có công việc phù hợp bộ lọc hiện tại.
                           </td>
                         </tr>
@@ -736,6 +848,31 @@ export default function TasksPage() {
                     </tbody>
                   </table>
                 </div>
+                {filteredTasks.length > 0 ? (
+                  <div className="flex items-center justify-between border-t border-slate-100 px-6 py-3 text-sm">
+                    <p className="text-slate-500">
+                      Trang {safeTaskPage}/{totalTaskPages} · {filteredTasks.length} công việc
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setTaskPage((prev) => Math.max(1, prev - 1))}
+                        disabled={safeTaskPage <= 1}
+                        className="h-9 rounded-lg border border-slate-200 bg-white px-3 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Trước
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTaskPage((prev) => Math.min(totalTaskPages, prev + 1))}
+                        disabled={safeTaskPage >= totalTaskPages}
+                        className="h-9 rounded-lg border border-slate-200 bg-white px-3 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Sau
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </section>
             ) : null}
 
@@ -764,6 +901,7 @@ export default function TasksPage() {
                             {task.name}
                           </Link>
                           <p className="mt-1 text-xs text-slate-500">{task.goalName}</p>
+                          <p className="mt-1 text-xs text-slate-500">{task.keyResultName}</p>
                           <div className="mt-3">
                             <ProgressBar value={task.progress} />
                           </div>
