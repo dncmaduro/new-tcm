@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { GOAL_STATUSES, GOAL_TYPES, GoalStatusValue, GoalTypeValue } from "@/lib/constants/goals";
+import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
 import {
   Select,
@@ -28,6 +29,15 @@ type ParentGoalOption = {
   year: number | null;
 };
 
+type GoalDepartmentRole = "owner" | "participant" | "supporter";
+
+type DepartmentParticipationFormState = {
+  departmentId: string;
+  role: GoalDepartmentRole;
+  goalWeight: number;
+  krWeight: number;
+};
+
 type GoalCreatePermissionDebug = {
   checkedAt: string;
   step: string;
@@ -48,237 +58,145 @@ type GoalFormState = {
   description: string;
   type: GoalTypeValue;
   departmentId: string;
-  progress: number;
   status: GoalStatusValue;
   quarter: number;
   year: number;
   note: string;
   parentGoalId: string;
+  startDate: string;
+  endDate: string;
 };
 
 const now = new Date();
 const initialQuarter = Math.floor(now.getMonth() / 3) + 1;
 const NO_PARENT_GOAL_VALUE = "__no_parent_goal__";
+const quarterStartDate = new Date(now.getFullYear(), (initialQuarter - 1) * 3, 1);
+const quarterEndDate = new Date(now.getFullYear(), initialQuarter * 3, 0);
+const toDateInputValue = (value: Date) =>
+  `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+const defaultStartDate = toDateInputValue(quarterStartDate);
+const defaultEndDate = toDateInputValue(quarterEndDate);
 
 const defaultForm: GoalFormState = {
   name: "",
   description: "",
   type: GOAL_TYPES[0].value,
   departmentId: "",
-  progress: 0,
   status: GOAL_STATUSES[0].value,
   quarter: initialQuarter,
   year: now.getFullYear(),
   note: "",
   parentGoalId: "",
+  startDate: defaultStartDate,
+  endDate: defaultEndDate,
+};
+
+const DEFAULT_GOAL_WEIGHT = 0.5;
+const DEFAULT_KR_WEIGHT = 0.5;
+
+const createDepartmentParticipation = (
+  departmentId: string,
+  role: GoalDepartmentRole,
+): DepartmentParticipationFormState => ({
+  departmentId,
+  role,
+  goalWeight: DEFAULT_GOAL_WEIGHT,
+  krWeight: DEFAULT_KR_WEIGHT,
+});
+
+const normalizeDepartmentParticipations = (
+  rows: DepartmentParticipationFormState[],
+  ownerDepartmentId: string,
+) => {
+  const uniqueRows = rows.reduce<DepartmentParticipationFormState[]>((acc, row) => {
+    if (!row.departmentId || acc.some((item) => item.departmentId === row.departmentId)) {
+      return acc;
+    }
+    acc.push(row);
+    return acc;
+  }, []);
+
+  const withOwner =
+    uniqueRows.find((row) => row.departmentId === ownerDepartmentId) ??
+    createDepartmentParticipation(ownerDepartmentId, "owner");
+
+  return uniqueRows
+    .filter((row) => row.departmentId !== ownerDepartmentId)
+    .concat({
+      ...withOwner,
+      departmentId: ownerDepartmentId,
+      role: "owner",
+    });
 };
 
 export default function NewGoalPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const workspaceAccess = useWorkspaceAccess();
 
   const [form, setForm] = useState<GoalFormState>(defaultForm);
-  const [rootDepartments, setRootDepartments] = useState<DepartmentOption[]>([]);
   const [allDepartments, setAllDepartments] = useState<DepartmentOption[]>([]);
-  const [relatedDepartmentIds, setRelatedDepartmentIds] = useState<string[]>([]);
+  const [departmentParticipations, setDepartmentParticipations] = useState<DepartmentParticipationFormState[]>([]);
   const [parentGoalOptions, setParentGoalOptions] = useState<ParentGoalOption[]>([]);
-  const [isCheckingPermission, setIsCheckingPermission] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [permissionError, setPermissionError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [permissionDebug, setPermissionDebug] = useState<GoalCreatePermissionDebug | null>(null);
 
   const showPermissionDebug = searchParams.get("debugPermission") === "1";
   const queryDepartmentId = searchParams.get("departmentId");
-
-  const canCreateGoal = rootDepartments.length > 0 && !permissionError;
+  const rootDepartments = workspaceAccess.managedDepartments;
+  const isCheckingPermission = workspaceAccess.isLoading;
+  const canCreateGoal = workspaceAccess.canManage && !workspaceAccess.error;
+  const permissionError =
+    workspaceAccess.error ??
+    (!isCheckingPermission && !workspaceAccess.canManage
+      ? "Bạn không có quyền tạo mục tiêu ở phòng ban cấp gốc."
+      : null);
+  const permissionDebug: GoalCreatePermissionDebug = useMemo(
+    () => ({
+      ...buildWorkspaceAccessDebug({
+        authUserId: workspaceAccess.authUserId,
+        profileId: workspaceAccess.profileId,
+        profileName: workspaceAccess.profileName,
+        leaderRoleIds: workspaceAccess.leaderRoleIds,
+        roles: workspaceAccess.roles,
+        memberships: workspaceAccess.memberships,
+        departments: workspaceAccess.departments,
+        managedDepartments: workspaceAccess.managedDepartments,
+        canManage: workspaceAccess.canManage,
+        error: workspaceAccess.error,
+        lastLoadedAt: workspaceAccess.lastLoadedAt,
+      }),
+      canCreateGoal: workspaceAccess.canManage,
+    }),
+    [workspaceAccess],
+  );
 
   useEffect(() => {
+    if (isCheckingPermission) {
+      return;
+    }
+
+    if (!canCreateGoal) {
+      setAllDepartments([]);
+      setDepartmentParticipations([]);
+      setParentGoalOptions([]);
+      return;
+    }
+
     let isActive = true;
 
-    const loadCreatePermission = async () => {
-      setIsCheckingPermission(true);
-      setPermissionError(null);
+    const loadFormData = async () => {
+      const { data: allDepartmentsData, error: allDepartmentsError } = await supabase
+        .from("departments")
+        .select("id,name,parent_department_id")
+        .order("name", { ascending: true });
 
-      const debugState: GoalCreatePermissionDebug = {
-        checkedAt: new Date().toISOString(),
-        step: "start",
-        authUserId: null,
-        profileId: null,
-        profileName: null,
-        leaderRoleIds: [],
-        leaderRolesRaw: [],
-        userRoleRows: [],
-        departments: [],
-        rootDepartments: [],
-        canCreateGoal: false,
-        error: null,
-      };
+      if (!isActive) {
+        return;
+      }
 
-      try {
-        debugState.step = "auth.getUser";
-        const { data: authData, error: authError } = await supabase.auth.getUser();
-        if (authError || !authData.user) {
-          debugState.error = authError?.message ?? "Không lấy được auth user";
-          debugState.step = "failed.auth";
-          if (isActive) {
-            setPermissionError("Không xác thực được người dùng hiện tại.");
-            setRootDepartments([]);
-            setAllDepartments([]);
-            setRelatedDepartmentIds([]);
-            setParentGoalOptions([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-        debugState.authUserId = authData.user.id;
-
-        debugState.step = "profiles.by_user_id";
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("id,name")
-          .eq("user_id", authData.user.id)
-          .maybeSingle();
-
-        if (profileError || !profile?.id) {
-          debugState.error = profileError?.message ?? "Không tìm thấy profile theo user_id";
-          debugState.step = "failed.profile";
-          if (isActive) {
-            setPermissionError("Không tìm thấy hồ sơ người dùng.");
-            setRootDepartments([]);
-            setAllDepartments([]);
-            setRelatedDepartmentIds([]);
-            setParentGoalOptions([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-
-        debugState.profileId = profile.id;
-        debugState.profileName = profile.name ?? null;
-
-        debugState.step = "roles.list";
-        const { data: rolesData, error: roleError } = await supabase.from("roles").select("id,name");
-
-        debugState.leaderRolesRaw = (rolesData ?? []).map((role) => ({
-          id: String(role.id),
-          name: typeof role.name === "string" ? role.name : null,
-        }));
-
-        const leaderRoleIds = (rolesData ?? [])
-          .filter((role) => {
-            const roleName = typeof role.name === "string" ? role.name.trim().toLowerCase() : "";
-            return roleName === "leader" || roleName.includes("leader");
-          })
-          .map((role) => role.id)
-          .filter(Boolean) as string[];
-
-        debugState.leaderRoleIds = leaderRoleIds;
-        if (roleError || leaderRoleIds.length === 0) {
-          debugState.error = roleError?.message ?? "Không tìm thấy role Leader";
-          debugState.step = "failed.role";
-          if (isActive) {
-            setPermissionError("Không tìm thấy role Leader để xác thực quyền tạo mục tiêu.");
-            setRootDepartments([]);
-            setAllDepartments([]);
-            setRelatedDepartmentIds([]);
-            setParentGoalOptions([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-
-        debugState.step = "user_role_in_department.by_profile";
-        const { data: userRolesData, error: userRolesError } = await supabase
-          .from("user_role_in_department")
-          .select("department_id,role_id")
-          .eq("profile_id", profile.id)
-          .in("role_id", leaderRoleIds);
-
-        debugState.userRoleRows = (userRolesData ?? []).map((item) => ({
-          department_id: item.department_id ?? null,
-          role_id: item.role_id ?? null,
-        }));
-
-        const departmentIds = [
-          ...new Set((userRolesData ?? []).map((item) => item.department_id).filter(Boolean)),
-        ];
-
-        if (userRolesError || departmentIds.length === 0) {
-          debugState.error = userRolesError?.message ?? "Không có role Leader gắn với phòng ban";
-          debugState.step = "failed.user_role_in_department";
-          if (isActive) {
-            setPermissionError("Bạn chưa có quyền tạo mục tiêu ở phòng ban gốc.");
-            setRootDepartments([]);
-            setAllDepartments([]);
-            setRelatedDepartmentIds([]);
-            setParentGoalOptions([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-
-        debugState.step = "departments.by_ids";
-        const { data: departmentsData, error: departmentsError } = await supabase
-          .from("departments")
-          .select("id,name,parent_department_id")
-          .in("id", departmentIds);
-
-        if (departmentsError || !departmentsData?.length) {
-          debugState.error = departmentsError?.message ?? "Không lấy được phòng ban";
-          debugState.step = "failed.departments";
-          if (isActive) {
-            setPermissionError("Không tải được danh sách phòng ban.");
-            setRootDepartments([]);
-            setAllDepartments([]);
-            setRelatedDepartmentIds([]);
-            setParentGoalOptions([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-
-        debugState.departments = departmentsData.map((department) => ({
-          id: String(department.id),
-          name: String(department.name),
-          parent_department_id: department.parent_department_id ?? null,
-        }));
-
-        const roots = departmentsData
-          .filter((department) => !department.parent_department_id)
-          .map((department) => ({
-            id: String(department.id),
-            name: String(department.name),
-            parentDepartmentId: null,
-          }));
-
-        debugState.rootDepartments = roots;
-        debugState.canCreateGoal = roots.length > 0;
-        debugState.step = "done";
-
-        if (!isActive) {
-          return;
-        }
-
-        if (roots.length === 0) {
-          setPermissionError("Bạn không có quyền tạo mục tiêu ở phòng ban cấp gốc.");
-          setRootDepartments([]);
-          setAllDepartments([]);
-          setRelatedDepartmentIds([]);
-          setParentGoalOptions([]);
-          setPermissionDebug({ ...debugState });
-          return;
-        }
-
-        setRootDepartments(roots);
-        setPermissionDebug({ ...debugState });
-
-        const { data: allDepartmentsData, error: allDepartmentsError } = await supabase
-          .from("departments")
-          .select("id,name,parent_department_id")
-          .order("name", { ascending: true });
-
-        const departmentOptions = !allDepartmentsError && (allDepartmentsData?.length ?? 0) > 0
+      const departmentOptions =
+        !allDepartmentsError && (allDepartmentsData?.length ?? 0) > 0
           ? allDepartmentsData.map((department) => ({
               id: String(department.id),
               name: String(department.name),
@@ -286,66 +204,51 @@ export default function NewGoalPage() {
                 ? String(department.parent_department_id)
                 : null,
             }))
-          : roots.map((department) => ({ ...department, parentDepartmentId: null }));
-        setAllDepartments(departmentOptions);
+          : rootDepartments.map((department) => ({ ...department }));
+      setAllDepartments(departmentOptions);
 
-        const { data: existingGoals, error: existingGoalsError } = await supabase
-          .from("goals")
-          .select("id,name,department_id,quarter,year")
-          .order("created_at", { ascending: false });
+      const { data: existingGoals, error: existingGoalsError } = await supabase
+        .from("goals")
+        .select("id,name,department_id,quarter,year")
+        .order("created_at", { ascending: false });
 
-        if (existingGoalsError) {
-          setParentGoalOptions([]);
-        } else {
-          setParentGoalOptions(
-            (existingGoals ?? []).map((goal) => ({
-              id: String(goal.id),
-              name: String(goal.name),
-              departmentId: goal.department_id ? String(goal.department_id) : null,
-              quarter: typeof goal.quarter === "number" ? goal.quarter : null,
-              year: typeof goal.year === "number" ? goal.year : null,
-            })),
-          );
-        }
-
-        const matchedFromQuery = queryDepartmentId
-          ? departmentOptions.find((department) => department.id === queryDepartmentId)
-          : null;
-        const nextDepartmentId = matchedFromQuery?.id ?? departmentOptions[0]?.id ?? "";
-        setRelatedDepartmentIds(nextDepartmentId ? [nextDepartmentId] : []);
-        setForm((prev) => ({
-          ...prev,
-          departmentId: nextDepartmentId,
-        }));
-      } catch {
-        debugState.error = "Lỗi không xác định khi kiểm tra quyền tạo mục tiêu";
-        debugState.step = "failed.exception";
-
-        if (isActive) {
-          setPermissionError("Có lỗi khi kiểm tra quyền tạo mục tiêu.");
-          setRootDepartments([]);
-          setAllDepartments([]);
-          setRelatedDepartmentIds([]);
-          setParentGoalOptions([]);
-          setPermissionDebug({ ...debugState });
-        }
-      } finally {
-        if (isActive) {
-          setIsCheckingPermission(false);
-        }
-
-        console.groupCollapsed("[goals/new] Debug quyền tạo mục tiêu");
-        console.log(debugState);
-        console.groupEnd();
+      if (!isActive) {
+        return;
       }
+
+      if (existingGoalsError) {
+        setParentGoalOptions([]);
+      } else {
+        setParentGoalOptions(
+          (existingGoals ?? []).map((goal) => ({
+            id: String(goal.id),
+            name: String(goal.name),
+            departmentId: goal.department_id ? String(goal.department_id) : null,
+            quarter: typeof goal.quarter === "number" ? goal.quarter : null,
+            year: typeof goal.year === "number" ? goal.year : null,
+          })),
+        );
+      }
+
+      const matchedFromQuery = queryDepartmentId
+        ? departmentOptions.find((department) => department.id === queryDepartmentId)
+        : null;
+      const nextDepartmentId = matchedFromQuery?.id ?? departmentOptions[0]?.id ?? "";
+      setDepartmentParticipations(
+        nextDepartmentId ? [createDepartmentParticipation(nextDepartmentId, "owner")] : [],
+      );
+      setForm((prev) => ({
+        ...prev,
+        departmentId: nextDepartmentId,
+      }));
     };
 
-    void loadCreatePermission();
+    void loadFormData();
 
     return () => {
       isActive = false;
     };
-  }, [queryDepartmentId]);
+  }, [canCreateGoal, isCheckingPermission, queryDepartmentId, rootDepartments]);
 
   const departmentsById = useMemo(() => {
     return allDepartments.reduce<Record<string, DepartmentOption>>((acc, department) => {
@@ -372,6 +275,21 @@ export default function NewGoalPage() {
   );
 
   const isFormValid = useMemo(() => {
+    const hasValidDepartmentParticipations =
+      departmentParticipations.length > 0 &&
+      departmentParticipations.every((item) => {
+        const goalWeight = Number(item.goalWeight);
+        const krWeight = Number(item.krWeight);
+        return (
+          item.departmentId.trim().length > 0 &&
+          Number.isFinite(goalWeight) &&
+          Number.isFinite(krWeight) &&
+          goalWeight >= 0 &&
+          krWeight >= 0 &&
+          Math.abs(goalWeight + krWeight - 1) <= 0.001
+        );
+      });
+
     return (
       form.name.trim().length > 0 &&
       form.departmentId.trim().length > 0 &&
@@ -381,21 +299,28 @@ export default function NewGoalPage() {
       form.quarter >= 1 &&
       form.quarter <= 4 &&
       Number.isFinite(form.year) &&
-      form.year >= 2000
+      form.year >= 2000 &&
+      form.startDate.trim().length > 0 &&
+      form.endDate.trim().length > 0 &&
+      new Date(form.startDate).getTime() <= new Date(form.endDate).getTime() &&
+      hasValidDepartmentParticipations
     );
-  }, [form]);
+  }, [departmentParticipations, form]);
 
   const toggleRelatedDepartment = (departmentId: string) => {
-    setRelatedDepartmentIds((prev) => {
+    setDepartmentParticipations((prev) => {
       if (departmentId === form.departmentId) {
-        return Array.from(new Set([form.departmentId, ...prev.filter(Boolean)]));
+        return normalizeDepartmentParticipations(prev, form.departmentId);
       }
 
-      if (prev.includes(departmentId)) {
-        return prev.filter((item) => item !== departmentId);
+      if (prev.some((item) => item.departmentId === departmentId)) {
+        return prev.filter((item) => item.departmentId !== departmentId);
       }
 
-      return Array.from(new Set([...prev, departmentId, form.departmentId].filter(Boolean)));
+      return normalizeDepartmentParticipations(
+        [...prev, createDepartmentParticipation(departmentId, "participant")],
+        form.departmentId,
+      );
     });
   };
 
@@ -412,6 +337,28 @@ export default function NewGoalPage() {
       return;
     }
 
+    const normalizedParticipations = normalizeDepartmentParticipations(
+      departmentParticipations,
+      form.departmentId,
+    );
+    const invalidParticipation = normalizedParticipations.find((item) => {
+      const goalWeight = Number(item.goalWeight);
+      const krWeight = Number(item.krWeight);
+      return (
+        !item.departmentId ||
+        !Number.isFinite(goalWeight) ||
+        !Number.isFinite(krWeight) ||
+        goalWeight < 0 ||
+        krWeight < 0 ||
+        Math.abs(goalWeight + krWeight - 1) > 0.001
+      );
+    });
+
+    if (invalidParticipation) {
+      setSubmitError("Mỗi phòng ban tham gia phải có trọng số hợp lệ và tổng goal_weight + kr_weight = 1.");
+      return;
+    }
+
     setSubmitError(null);
     setIsSubmitting(true);
 
@@ -421,12 +368,13 @@ export default function NewGoalPage() {
         description: form.description.trim() || null,
         type: form.type,
         department_id: form.departmentId,
-        progress: 0,
         status: form.status,
         quarter: Math.round(form.quarter),
         year: Math.round(form.year),
         note: form.note.trim() || null,
         parent_goal_id: form.parentGoalId || null,
+        start_date: form.startDate || null,
+        end_date: form.endDate || null,
       };
 
       const { data: createdGoal, error } = await supabase
@@ -446,11 +394,12 @@ export default function NewGoalPage() {
         return;
       }
 
-      const departmentLinks = Array.from(
-        new Set([form.departmentId, ...relatedDepartmentIds].filter(Boolean)),
-      ).map((departmentId) => ({
+      const departmentLinks = normalizedParticipations.map((item) => ({
         goal_id: String(createdGoal.id),
-        department_id: departmentId,
+        department_id: item.departmentId,
+        role: item.role,
+        goal_weight: Number(item.goalWeight),
+        kr_weight: Number(item.krWeight),
       }));
 
       if (departmentLinks.length > 0) {
@@ -611,8 +560,15 @@ export default function NewGoalPage() {
                       value={form.departmentId || undefined}
                       onValueChange={(value) => {
                         setForm((prev) => ({ ...prev, departmentId: value, parentGoalId: "" }));
-                        setRelatedDepartmentIds((prev) =>
-                          Array.from(new Set([value, ...prev.filter((item) => item !== form.departmentId)])),
+                        setDepartmentParticipations((prev) =>
+                          normalizeDepartmentParticipations(
+                            prev.map((item) =>
+                              item.departmentId === form.departmentId
+                                ? { ...item, departmentId: value }
+                                : item,
+                            ),
+                            value,
+                          ),
                         );
                       }}
                     >
@@ -635,14 +591,15 @@ export default function NewGoalPage() {
                         Team phối hợp (`goal_departments`)
                       </label>
                       <span className="text-xs text-slate-500">
-                        {relatedDepartmentIds.length} phòng ban tham gia
+                        {departmentParticipations.length} phòng ban tham gia
                       </span>
                     </div>
                     <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                       <div className="flex flex-wrap gap-2">
                         {allDepartments.map((department) => {
                           const isPrimary = department.id === form.departmentId;
-                          const isSelected = relatedDepartmentIds.includes(department.id) || isPrimary;
+                          const isSelected =
+                            departmentParticipations.some((item) => item.departmentId === department.id) || isPrimary;
                           return (
                             <button
                               key={department.id}
@@ -661,9 +618,132 @@ export default function NewGoalPage() {
                         })}
                       </div>
                       <p className="mt-3 text-xs text-slate-500">
-                        Goal vẫn có `department_id` là đơn vị chính. Danh sách này dùng để lưu thêm các team cùng tham gia thực thi.
+                        Goal vẫn có `department_id` là đơn vị chính. Mỗi phòng ban tham gia có `role`, `goal_weight` và
+                        `kr_weight` để phục vụ chấm hiệu suất theo goal.
                       </p>
                     </div>
+                    {departmentParticipations.length > 0 ? (
+                      <div className="mt-3 space-y-3">
+                        {departmentParticipations
+                          .slice()
+                          .sort((a, b) => (a.departmentId === form.departmentId ? -1 : b.departmentId === form.departmentId ? 1 : 0))
+                          .map((item) => {
+                            const departmentName =
+                              allDepartments.find((department) => department.id === item.departmentId)?.name ??
+                              "Phòng ban";
+                            const totalWeight = Number(item.goalWeight) + Number(item.krWeight);
+                            const isPrimary = item.departmentId === form.departmentId;
+
+                            return (
+                              <div
+                                key={item.departmentId}
+                                className="grid gap-3 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-[minmax(0,1.2fr)_160px_140px_140px_auto]"
+                              >
+                                <div>
+                                  <p className="text-sm font-semibold text-slate-800">{departmentName}</p>
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    {isPrimary ? "Đơn vị chính của goal" : "Đơn vị tham gia thực thi"}
+                                  </p>
+                                </div>
+
+                                <label className="space-y-1 text-xs font-medium text-slate-600">
+                                  <span>Vai trò</span>
+                                  <select
+                                    value={item.role}
+                                    disabled={isPrimary}
+                                    onChange={(event) =>
+                                      setDepartmentParticipations((prev) =>
+                                        prev.map((row) =>
+                                          row.departmentId === item.departmentId
+                                            ? {
+                                                ...row,
+                                                role: event.target.value as GoalDepartmentRole,
+                                              }
+                                            : row,
+                                        ),
+                                      )
+                                    }
+                                    className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
+                                  >
+                                    <option value="owner">Owner</option>
+                                    <option value="participant">Participant</option>
+                                    <option value="supporter">Supporter</option>
+                                  </select>
+                                </label>
+
+                                <label className="space-y-1 text-xs font-medium text-slate-600">
+                                  <span>goal_weight</span>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={1}
+                                    step="0.1"
+                                    value={item.goalWeight}
+                                    onChange={(event) =>
+                                      setDepartmentParticipations((prev) =>
+                                        prev.map((row) =>
+                                          row.departmentId === item.departmentId
+                                            ? {
+                                                ...row,
+                                                goalWeight: Number(event.target.value),
+                                              }
+                                            : row,
+                                        ),
+                                      )
+                                    }
+                                    className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                  />
+                                </label>
+
+                                <label className="space-y-1 text-xs font-medium text-slate-600">
+                                  <span>kr_weight</span>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={1}
+                                    step="0.1"
+                                    value={item.krWeight}
+                                    onChange={(event) =>
+                                      setDepartmentParticipations((prev) =>
+                                        prev.map((row) =>
+                                          row.departmentId === item.departmentId
+                                            ? {
+                                                ...row,
+                                                krWeight: Number(event.target.value),
+                                              }
+                                            : row,
+                                        ),
+                                      )
+                                    }
+                                    className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                  />
+                                </label>
+
+                                <div className="flex items-end justify-between gap-2 md:justify-end">
+                                  <span
+                                    className={`inline-flex h-10 items-center rounded-lg px-3 text-xs font-semibold ${
+                                      Math.abs(totalWeight - 1) <= 0.001
+                                        ? "bg-emerald-50 text-emerald-700"
+                                        : "bg-rose-50 text-rose-700"
+                                    }`}
+                                  >
+                                    Tổng {totalWeight.toFixed(1)}
+                                  </span>
+                                  {!isPrimary ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleRelatedDepartment(item.departmentId)}
+                                      className="inline-flex h-10 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                                    >
+                                      Bỏ
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    ) : null}
                   </div>
 
                   {selectedDepartment ? (
@@ -727,7 +807,7 @@ export default function NewGoalPage() {
                   <div className="grid gap-4 md:grid-cols-3">
                     <div className="space-y-1.5">
                       <label htmlFor="goal-progress" className="text-sm font-semibold text-slate-700">
-                        Tiến độ (%) - mặc định
+                        Tiến độ (%)
                       </label>
                       <input
                         id="goal-progress"
@@ -779,6 +859,45 @@ export default function NewGoalPage() {
                       />
                     </div>
                   </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <label htmlFor="goal-start-date" className="text-sm font-semibold text-slate-700">
+                        Ngày bắt đầu *
+                      </label>
+                      <input
+                        id="goal-start-date"
+                        type="date"
+                        value={form.startDate}
+                        onChange={(event) =>
+                          setForm((prev) => ({ ...prev, startDate: event.target.value }))
+                        }
+                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label htmlFor="goal-end-date" className="text-sm font-semibold text-slate-700">
+                        Ngày kết thúc *
+                      </label>
+                      <input
+                        id="goal-end-date"
+                        type="date"
+                        min={form.startDate || undefined}
+                        value={form.endDate}
+                        onChange={(event) =>
+                          setForm((prev) => ({ ...prev, endDate: event.target.value }))
+                        }
+                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      />
+                    </div>
+                  </div>
+
+                  {form.startDate && form.endDate && new Date(form.startDate).getTime() > new Date(form.endDate).getTime() ? (
+                    <p className="-mt-2 text-xs text-rose-600">
+                      Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.
+                    </p>
+                  ) : null}
 
                   {hasParentGoal ? (
                     <p className="-mt-2 text-xs text-slate-500">

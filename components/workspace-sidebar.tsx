@@ -13,8 +13,9 @@ import {
   ChevronDownIcon,
   ChevronUpIcon,
 } from "@radix-ui/react-icons";
-import { ComponentType, useEffect, useRef, useState } from "react";
+import { ComponentType, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useWorkspaceAccess, useWorkspaceAccessStore } from "@/lib/stores/workspace-access-store";
 
 type SidebarKey =
   | "dashboard"
@@ -24,6 +25,7 @@ type SidebarKey =
   | "timeRequestManagement"
   | "reports"
   | "departments"
+  | "departmentPerformance"
   | "profile";
 
 type WorkspaceSidebarProps = {
@@ -32,27 +34,6 @@ type WorkspaceSidebarProps = {
 
 type SidebarIcon = ComponentType<{ className?: string }>;
 
-type ProfileRow = {
-  id: string;
-  name: string | null;
-  email?: string | null;
-};
-
-type UserRoleRow = {
-  department_id: string | null;
-  role_id: string | null;
-};
-
-type DepartmentRow = {
-  id: string;
-  name: string | null;
-};
-
-type RoleRow = {
-  id: string;
-  name: string | null;
-};
-
 const sidebarItems: Array<{ key: SidebarKey; label: string; href: string; icon: SidebarIcon }> = [
   { key: "dashboard", label: "Bảng điều khiển", href: "/dashboard", icon: DashboardIcon },
   { key: "goals", label: "Mục tiêu", href: "/goals", icon: TargetIcon },
@@ -60,6 +41,7 @@ const sidebarItems: Array<{ key: SidebarKey; label: string; href: string; icon: 
   { key: "timesheet", label: "Chấm công", href: "/timesheet", icon: ClockIcon },
   { key: "timeRequestManagement", label: "Quản lý yêu cầu thời gian", href: "/time-request-management", icon: ClockIcon },
   { key: "reports", label: "Báo cáo", href: "/reports", icon: BarChartIcon },
+  { key: "departmentPerformance", label: "Hiệu suất phòng ban", href: "/department-performance", icon: BarChartIcon },
   { key: "departments", label: "Phòng ban", href: "/departments", icon: GroupIcon },
 ];
 
@@ -94,13 +76,12 @@ const toRolePriority = (roleName: string) => {
 
 export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   const router = useRouter();
+  const workspaceAccess = useWorkspaceAccess();
+  const { canManage } = workspaceAccess;
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
-  const [sidebarName, setSidebarName] = useState("Người dùng");
-  const [sidebarRole, setSidebarRole] = useState("Chưa có vai trò");
-  const [sidebarDepartment, setSidebarDepartment] = useState("Chưa có phòng ban");
 
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
@@ -119,124 +100,56 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
     };
   }, []);
 
-  useEffect(() => {
-    let isActive = true;
+  const visibleSidebarItems = sidebarItems.filter((item) => {
+    if (item.key === "departmentPerformance") {
+      return canManage;
+    }
+    return true;
+  });
 
-    const loadSidebarProfile = async () => {
-      try {
-        const { data: authData, error: authError } = await supabase.auth.getUser();
-        if (authError || !authData.user) {
-          return;
+  const sidebarName = useMemo(() => {
+    const profileName = workspaceAccess.profileName?.trim();
+    if (profileName) {
+      return profileName;
+    }
+    if (workspaceAccess.authEmail) {
+      return String(workspaceAccess.authEmail).split("@")[0];
+    }
+    return "Người dùng";
+  }, [workspaceAccess.authEmail, workspaceAccess.profileName]);
+
+  const primaryAssignment = useMemo(() => {
+    const roleNameById = workspaceAccess.roles.reduce<Record<string, string>>((acc, role) => {
+      acc[role.id] = role.name?.trim() || "Chưa gán vai trò";
+      return acc;
+    }, {});
+    const departmentNameById = workspaceAccess.departments.reduce<Record<string, string>>((acc, department) => {
+      acc[department.id] = department.name || "Không rõ phòng ban";
+      return acc;
+    }, {});
+
+    return workspaceAccess.memberships
+      .map((membership) => ({
+        roleName: membership.roleId ? roleNameById[membership.roleId] ?? "Chưa gán vai trò" : "Chưa gán vai trò",
+        departmentName: membership.departmentId
+          ? departmentNameById[membership.departmentId] ?? "Không rõ phòng ban"
+          : "Không thuộc phòng ban",
+      }))
+      .sort((a, b) => {
+        const byPriority = toRolePriority(a.roleName) - toRolePriority(b.roleName);
+        if (byPriority !== 0) {
+          return byPriority;
         }
-
-        const authUser = authData.user;
-        const fallbackName =
-          typeof authUser.user_metadata?.name === "string" && authUser.user_metadata.name.trim()
-            ? authUser.user_metadata.name.trim()
-            : authUser.email
-              ? String(authUser.email).split("@")[0]
-              : "Người dùng";
-
-        const { data: profileData } = await supabase
-          .from("profiles")
-          .select("id,name,email")
-          .eq("user_id", authUser.id)
-          .maybeSingle();
-
-        if (!isActive) {
-          return;
+        const byRole = a.roleName.localeCompare(b.roleName, "vi");
+        if (byRole !== 0) {
+          return byRole;
         }
+        return a.departmentName.localeCompare(b.departmentName, "vi");
+      })[0];
+  }, [workspaceAccess.departments, workspaceAccess.memberships, workspaceAccess.roles]);
 
-        const profile = (profileData ?? null) as ProfileRow | null;
-        const profileId = profile?.id ? String(profile.id) : null;
-        const profileName = profile?.name ? String(profile.name) : fallbackName;
-        setSidebarName(profileName);
-
-        if (!profileId) {
-          setSidebarRole("Chưa có vai trò");
-          setSidebarDepartment("Chưa có phòng ban");
-          return;
-        }
-
-        const { data: userRoleData, error: userRoleError } = await supabase
-          .from("user_role_in_department")
-          .select("department_id,role_id")
-          .eq("profile_id", profileId);
-
-        if (!isActive) {
-          return;
-        }
-
-        if (userRoleError || !userRoleData || userRoleData.length === 0) {
-          setSidebarRole("Chưa có vai trò");
-          setSidebarDepartment("Chưa có phòng ban");
-          return;
-        }
-
-        const typedRows = (userRoleData ?? []) as UserRoleRow[];
-        const departmentIds = [...new Set(typedRows.map((row) => row.department_id).filter(Boolean))] as string[];
-        const roleIds = [...new Set(typedRows.map((row) => row.role_id).filter(Boolean))] as string[];
-
-        const [departmentResult, roleResult] = await Promise.all([
-          departmentIds.length
-            ? supabase.from("departments").select("id,name").in("id", departmentIds)
-            : Promise.resolve({ data: [], error: null }),
-          roleIds.length
-            ? supabase.from("roles").select("id,name").in("id", roleIds)
-            : Promise.resolve({ data: [], error: null }),
-        ]);
-
-        if (!isActive) {
-          return;
-        }
-
-        const departmentNameById = ((departmentResult.data ?? []) as DepartmentRow[]).reduce<Record<string, string>>(
-          (acc, row) => {
-            acc[String(row.id)] = row.name ? String(row.name) : "Không rõ phòng ban";
-            return acc;
-          },
-          {},
-        );
-
-        const roleNameById = ((roleResult.data ?? []) as RoleRow[]).reduce<Record<string, string>>((acc, row) => {
-          acc[String(row.id)] = row.name ? String(row.name) : "Chưa gán vai trò";
-          return acc;
-        }, {});
-
-        const assignments = typedRows
-          .map((row) => {
-            const roleName = row.role_id ? roleNameById[String(row.role_id)] ?? "Chưa gán vai trò" : "Chưa gán vai trò";
-            const departmentName = row.department_id
-              ? departmentNameById[String(row.department_id)] ?? "Không rõ phòng ban"
-              : "Không thuộc phòng ban";
-            return { roleName, departmentName };
-          })
-          .sort((a, b) => {
-            const byPriority = toRolePriority(a.roleName) - toRolePriority(b.roleName);
-            if (byPriority !== 0) {
-              return byPriority;
-            }
-            const byRole = a.roleName.localeCompare(b.roleName, "vi");
-            if (byRole !== 0) {
-              return byRole;
-            }
-            return a.departmentName.localeCompare(b.departmentName, "vi");
-          });
-
-        const primaryAssignment = assignments[0];
-        setSidebarRole(primaryAssignment?.roleName ?? "Chưa có vai trò");
-        setSidebarDepartment(primaryAssignment?.departmentName ?? "Chưa có phòng ban");
-      } catch {
-        // ignore sidebar profile errors to avoid blocking navigation.
-      }
-    };
-
-    void loadSidebarProfile();
-
-    return () => {
-      isActive = false;
-    };
-  }, []);
+  const sidebarRole = primaryAssignment?.roleName ?? "Chưa có vai trò";
+  const sidebarDepartment = primaryAssignment?.departmentName ?? "Chưa có phòng ban";
 
   const handleLogout = async () => {
     setIsLoggingOut(true);
@@ -249,6 +162,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
         return;
       }
 
+      useWorkspaceAccessStore.getState().reset();
       setIsUserMenuOpen(false);
       router.replace("/");
       router.refresh();
@@ -271,7 +185,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
         </div>
   
         <nav className="space-y-2">
-          {sidebarItems.map((item) => {
+            {visibleSidebarItems.map((item) => {
             const Icon = item.icon;
             return (
               <Link

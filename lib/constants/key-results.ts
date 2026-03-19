@@ -41,10 +41,10 @@ export const formatKeyResultMetric = (value: number | null, unit: string | null)
 
 export const getKeyResultProgressHint = (unit: string | null) => {
   if (unit === "percent") {
-    return "Tiến độ KR = current / target theo phần trăm mục tiêu.";
+    return "Tiến độ KR = trung bình có trọng số của các task thuộc KR. Unit phần trăm chỉ dùng để hiển thị chỉ số.";
   }
   if (unit === "currency") {
-    return "Tiến độ KR = current / target theo giá trị doanh thu.";
+    return "Tiến độ KR = trung bình có trọng số của các task thuộc KR. Unit doanh thu dùng để hiển thị giá trị theo tiền.";
   }
-  return "Tiến độ KR = current / target theo số lượng hoàn thành.";
+  return "Tiến độ KR = trung bình có trọng số của các task thuộc KR. Unit số lượng chỉ dùng để hiển thị chỉ số.";
 };

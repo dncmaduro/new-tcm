@@ -12,17 +12,18 @@ import {
 import {
   getTaskProgressByType,
   getTaskProgressHint,
+  normalizeTaskStatus,
   TASK_STATUSES,
   TASK_TYPES,
   type TaskStatusValue,
   type TaskTypeValue,
 } from "@/lib/constants/tasks";
+import { buildKeyResultProgressMap, getComputedTaskProgress } from "@/lib/okr";
 import { supabase } from "@/lib/supabase";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type TaskRow = {
   id: string;
-  goal_id: string | null;
   key_result_id: string | null;
   profile_id: string | null;
   creator_profile_id: string | null;
@@ -30,25 +31,31 @@ type TaskRow = {
   name: string;
   description: string | null;
   progress: number | null;
+  weight: number | null;
   status: string | null;
   note: string | null;
   created_at: string | null;
   updated_at: string | null;
+  key_result?: KeyResultLiteRow | null;
 };
 
 type GoalLiteRow = {
   id: string;
   name: string;
+  start_date?: string | null;
+  end_date?: string | null;
 };
 
 type KeyResultLiteRow = {
   id: string;
-  goal_id: string;
+  goal_id: string | null;
   name: string;
-  progress: number | null;
   current: number | null;
+  start_value: number | null;
   target: number | null;
   unit: string | null;
+  weight: number | null;
+  goal?: GoalLiteRow | null;
 };
 
 type ProfileLiteRow = {
@@ -64,26 +71,13 @@ type TaskFormState = {
   type: TaskTypeValue;
   status: TaskStatusValue;
   progress: number;
+  weight: number;
 };
 
 const statusLabelMap = TASK_STATUSES.reduce<Record<string, string>>((acc, status) => {
   acc[status.value] = status.label;
   return acc;
 }, {});
-
-const normalizeTaskStatus = (value: string | null): TaskStatusValue => {
-  const raw = (value ?? "").trim().toLowerCase();
-  if (raw === "done" || raw === "completed") {
-    return "done";
-  }
-  if (raw === "doing" || raw === "inprogress" || raw === "review") {
-    return "doing";
-  }
-  if (raw === "cancelled" || raw === "canceled") {
-    return "cancelled";
-  }
-  return "todo";
-};
 
 const clampProgress = (value: number | null) => {
   const safe = Number.isFinite(value) ? Number(value) : 0;
@@ -104,6 +98,20 @@ const formatDateTime = (value: string | null) => {
   }).format(date);
 };
 
+const normalizeGoalLite = (value: unknown): GoalLiteRow | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  return {
+    id: String(record.id),
+    name: String(record.name),
+    start_date: record.start_date ? String(record.start_date) : null,
+    end_date: record.end_date ? String(record.end_date) : null,
+  };
+};
+
 export default function TaskDetailPage() {
   const params = useParams<{ taskId: string }>();
   const taskId = typeof params.taskId === "string" ? params.taskId : "";
@@ -111,6 +119,7 @@ export default function TaskDetailPage() {
   const [task, setTask] = useState<TaskRow | null>(null);
   const [goalName, setGoalName] = useState<string>("Chưa có mục tiêu");
   const [keyResult, setKeyResult] = useState<KeyResultLiteRow | null>(null);
+  const [keyResultProgress, setKeyResultProgress] = useState(0);
   const [creatorName, setCreatorName] = useState<string>("Chưa rõ");
   const [assigneeName, setAssigneeName] = useState<string>("Chưa gán");
   const [form, setForm] = useState<TaskFormState>({
@@ -120,6 +129,7 @@ export default function TaskDetailPage() {
     type: "kpi",
     status: "todo",
     progress: 0,
+    weight: 1,
   });
 
   const [isLoading, setIsLoading] = useState(true);
@@ -137,6 +147,7 @@ export default function TaskDetailPage() {
     if (!taskId) {
       setTask(null);
       setKeyResult(null);
+      setKeyResultProgress(0);
       setLoadError("Liên kết công việc không hợp lệ.");
       setIsLoading(false);
       return;
@@ -153,7 +164,41 @@ export default function TaskDetailPage() {
       setIsEditingExecution(false);
 
       try {
-        const { data: taskData, error: taskError } = await supabase.from("tasks").select("*").eq("id", taskId).maybeSingle();
+        const { data: taskData, error: taskError } = await supabase
+          .from("tasks")
+          .select(`
+            id,
+            key_result_id,
+            profile_id,
+            creator_profile_id,
+            type,
+            name,
+            description,
+            progress,
+            weight,
+            status,
+            note,
+            created_at,
+            updated_at,
+            key_result:key_results!tasks_key_result_id_fkey(
+              id,
+              goal_id,
+              name,
+              current,
+              start_value,
+              target,
+              unit,
+              weight,
+              goal:goals!key_results_goal_id_fkey(
+                id,
+                name,
+                start_date,
+                end_date
+              )
+            )
+          `)
+          .eq("id", taskId)
+          .maybeSingle();
 
         if (!isActive) {
           return;
@@ -178,6 +223,37 @@ export default function TaskDetailPage() {
           ...typedTask,
           creator_profile_id: explicitCreatorProfileId,
         };
+        const rawKeyResult = Array.isArray((normalizedTask as unknown as { key_result?: unknown }).key_result)
+          ? ((normalizedTask as unknown as { key_result?: Array<Record<string, unknown>> }).key_result?.[0] ?? null)
+          : (((normalizedTask as unknown as { key_result?: Record<string, unknown> | null }).key_result) ?? null);
+        const normalizedKeyResult = rawKeyResult
+          ? {
+              id: String(rawKeyResult.id),
+              goal_id: rawKeyResult.goal_id ? String(rawKeyResult.goal_id) : null,
+              name: String(rawKeyResult.name),
+              current:
+                typeof rawKeyResult.current === "number"
+                  ? rawKeyResult.current
+                  : Number(rawKeyResult.current ?? 0),
+              start_value:
+                typeof rawKeyResult.start_value === "number"
+                  ? rawKeyResult.start_value
+                  : Number(rawKeyResult.start_value ?? 0),
+              target:
+                typeof rawKeyResult.target === "number"
+                  ? rawKeyResult.target
+                  : Number(rawKeyResult.target ?? 0),
+              unit: rawKeyResult.unit ? String(rawKeyResult.unit) : null,
+              weight:
+                typeof rawKeyResult.weight === "number"
+                  ? rawKeyResult.weight
+                  : Number(rawKeyResult.weight ?? 1),
+              goal: Array.isArray(rawKeyResult.goal)
+                ? normalizeGoalLite(rawKeyResult.goal[0] ?? null)
+                : normalizeGoalLite(rawKeyResult.goal),
+            }
+          : null;
+        normalizedTask.key_result = normalizedKeyResult;
 
         setTask(normalizedTask);
         setForm({
@@ -186,39 +262,24 @@ export default function TaskDetailPage() {
           note: normalizedTask.note ?? "",
           type: normalizedTask.type === "okr" ? "okr" : "kpi",
           status: normalizeTaskStatus(normalizedTask.status),
-          progress: getTaskProgressByType(
-            normalizedTask.type,
-            normalizeTaskStatus(normalizedTask.status),
-            normalizedTask.progress,
-          ),
+          progress: getComputedTaskProgress(normalizedTask),
+          weight: typeof normalizedTask.weight === "number" ? normalizedTask.weight : Number(normalizedTask.weight ?? 1),
         });
-        setProgressInput(
-          String(
-            getTaskProgressByType(
-              normalizedTask.type,
-              normalizeTaskStatus(normalizedTask.status),
-              normalizedTask.progress,
-            ),
-          ),
-        );
+        setProgressInput(String(getComputedTaskProgress(normalizedTask)));
 
         const creatorProfileId = explicitCreatorProfileId ?? normalizedTask.profile_id;
         const profileIds = [normalizedTask.profile_id, creatorProfileId].filter(Boolean) as string[];
         const uniqueProfileIds = [...new Set(profileIds)];
 
-        const [goalResult, keyResultResult, profilesResult] = await Promise.all([
-          normalizedTask.goal_id
-            ? supabase.from("goals").select("id,name").eq("id", normalizedTask.goal_id).maybeSingle()
-            : Promise.resolve({ data: null, error: null }),
-          normalizedTask.key_result_id
-            ? supabase
-                .from("key_results")
-                .select("id,goal_id,name,progress,current,target,unit")
-                .eq("id", normalizedTask.key_result_id)
-                .maybeSingle()
-            : Promise.resolve({ data: null, error: null }),
+        const [profilesResult, relatedTasksResult] = await Promise.all([
           uniqueProfileIds.length > 0
             ? supabase.from("profiles").select("id,name,email").in("id", uniqueProfileIds)
+            : Promise.resolve({ data: [], error: null }),
+          normalizedTask.key_result_id
+            ? supabase
+                .from("tasks")
+                .select("id,key_result_id,type,status,progress,weight")
+                .eq("key_result_id", normalizedTask.key_result_id)
             : Promise.resolve({ data: [], error: null }),
         ]);
 
@@ -226,16 +287,32 @@ export default function TaskDetailPage() {
           return;
         }
 
-        if (goalResult.error) {
-          throw new Error(goalResult.error.message || "Không tải được mục tiêu của công việc.");
-        }
-        if (keyResultResult.error) {
-          throw new Error(keyResultResult.error.message || "Không tải được key result của công việc.");
+        if (relatedTasksResult.error) {
+          throw new Error(relatedTasksResult.error.message || "Không tải được tiến độ key result của công việc.");
         }
 
-        const goalData = (goalResult.data ?? null) as GoalLiteRow | null;
-        setGoalName(goalData?.name ? String(goalData.name) : "Chưa có mục tiêu");
-        setKeyResult((keyResultResult.data ?? null) as KeyResultLiteRow | null);
+        const nestedKeyResult = normalizedKeyResult;
+        setGoalName(nestedKeyResult?.goal?.name ? String(nestedKeyResult.goal.name) : "Chưa có mục tiêu");
+        setKeyResult(nestedKeyResult);
+        const computedKeyResultProgress = nestedKeyResult
+          ? buildKeyResultProgressMap(
+              [{ id: String(nestedKeyResult.id), goal_id: nestedKeyResult.goal_id ? String(nestedKeyResult.goal_id) : null }],
+              ((relatedTasksResult.data ?? []) as Array<{
+                key_result_id: string | null;
+                type: string | null;
+                status: string | null;
+                progress: number | null;
+                weight: number | null;
+              }>).map((item) => ({
+                key_result_id: item.key_result_id ? String(item.key_result_id) : null,
+                type: item.type ? String(item.type) : null,
+                status: item.status ? String(item.status) : null,
+                progress: item.progress,
+                weight: item.weight,
+              })),
+            )[String(nestedKeyResult.id)] ?? 0
+          : 0;
+        setKeyResultProgress(computedKeyResultProgress);
 
         const profilesData = (profilesResult.data ?? []) as ProfileLiteRow[];
         const profileNameById = profilesData.reduce<Record<string, string>>((acc, profile) => {
@@ -254,6 +331,7 @@ export default function TaskDetailPage() {
         setTask(null);
         setGoalName("Chưa có mục tiêu");
         setKeyResult(null);
+        setKeyResultProgress(0);
         setCreatorName("Chưa rõ");
         setAssigneeName("Chưa gán");
         setLoadError(error instanceof Error ? error.message : "Không tải được chi tiết công việc.");
@@ -282,9 +360,10 @@ export default function TaskDetailPage() {
       form.name.trim() !== task.name ||
       form.description.trim() !== (task.description ?? "") ||
       form.note.trim() !== (task.note ?? "") ||
-      form.type !== (task.type === "okr" ? "okr" : "kpi")
+      form.type !== (task.type === "okr" ? "okr" : "kpi") ||
+      Math.round(form.weight) !== Math.round(Number(task.weight ?? 1))
     );
-  }, [form.description, form.name, form.note, form.type, task]);
+  }, [form.description, form.name, form.note, form.type, form.weight, task]);
 
   const hasExecutionChanges = useMemo(() => {
     if (!task) {
@@ -292,10 +371,43 @@ export default function TaskDetailPage() {
     }
     return (
       form.status !== normalizeTaskStatus(task.status) ||
-      form.progress !==
-        getTaskProgressByType(task.type, normalizeTaskStatus(task.status), task.progress)
+      form.progress !== getComputedTaskProgress(task)
     );
   }, [form.progress, form.status, task]);
+
+  const refreshLinkedKeyResultProgress = async (targetKeyResultId: string | null | undefined) => {
+    if (!targetKeyResultId || !keyResult) {
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("tasks")
+      .select("id,key_result_id,type,status,progress,weight")
+      .eq("key_result_id", targetKeyResultId);
+
+    if (error) {
+      return;
+    }
+
+    const nextProgress = buildKeyResultProgressMap(
+      [{ id: String(keyResult.id), goal_id: keyResult.goal_id ? String(keyResult.goal_id) : null }],
+      ((data ?? []) as Array<{
+        key_result_id: string | null;
+        type: string | null;
+        status: string | null;
+        progress: number | null;
+        weight: number | null;
+      }>).map((item) => ({
+        key_result_id: item.key_result_id ? String(item.key_result_id) : null,
+        type: item.type ? String(item.type) : null,
+        status: item.status ? String(item.status) : null,
+        progress: item.progress,
+        weight: item.weight,
+      })),
+    )[String(keyResult.id)] ?? 0;
+
+    setKeyResultProgress(nextProgress);
+  };
 
   const handleSaveTaskInfo = async () => {
     if (!task || !canEditTaskInfo || !hasTaskInfoChanges) {
@@ -312,6 +424,7 @@ export default function TaskDetailPage() {
         description: form.description.trim() || null,
         note: form.note.trim() || null,
         type: form.type,
+        weight: Math.round(form.weight),
       };
 
       const { data: updatedTask, error } = await supabase
@@ -345,7 +458,11 @@ export default function TaskDetailPage() {
         description: normalizedTask.description ?? "",
         note: normalizedTask.note ?? "",
         type: normalizedTask.type === "okr" ? "okr" : "kpi",
+        progress: getComputedTaskProgress(normalizedTask),
+        weight: typeof normalizedTask.weight === "number" ? normalizedTask.weight : Number(normalizedTask.weight ?? 1),
       }));
+      setProgressInput(String(getComputedTaskProgress(normalizedTask)));
+      await refreshLinkedKeyResultProgress(normalizedTask.key_result_id);
       setIsEditingTaskInfo(false);
       setNotice("Đã lưu thông tin công việc.");
     } catch (error) {
@@ -398,41 +515,16 @@ export default function TaskDetailPage() {
         creator_profile_id: task.creator_profile_id ?? null,
       };
 
-      let goalSyncError: string | null = null;
-      if (normalizedTask.goal_id) {
-        const { error: recalculateError } = await supabase.rpc("recalculate_goal_progress", {
-          target_goal_id: normalizedTask.goal_id,
-        });
-        if (recalculateError) {
-          goalSyncError = recalculateError.message || "Không thể đồng bộ tiến độ mục tiêu.";
-        }
-      }
-
       setTask(normalizedTask);
       setForm((prev) => ({
         ...prev,
         status: normalizeTaskStatus(normalizedTask.status),
-        progress: getTaskProgressByType(
-          normalizedTask.type,
-          normalizeTaskStatus(normalizedTask.status),
-          normalizedTask.progress,
-        ),
+        progress: getComputedTaskProgress(normalizedTask),
       }));
-      setProgressInput(
-        String(
-          getTaskProgressByType(
-            normalizedTask.type,
-            normalizeTaskStatus(normalizedTask.status),
-            normalizedTask.progress,
-          ),
-        ),
-      );
+      setProgressInput(String(getComputedTaskProgress(normalizedTask)));
+      await refreshLinkedKeyResultProgress(normalizedTask.key_result_id);
       setIsEditingExecution(false);
-      setNotice(
-        goalSyncError
-          ? "Đã cập nhật task nhưng chưa đồng bộ tiến độ mục tiêu. Hãy chạy migration trigger mới."
-          : "Đã cập nhật trạng thái và tiến độ.",
-      );
+      setNotice("Đã cập nhật trạng thái và tiến độ.");
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Không thể cập nhật trạng thái hoặc tiến độ.");
     } finally {
@@ -480,6 +572,8 @@ export default function TaskDetailPage() {
                             name: task.name,
                             description: task.description ?? "",
                             note: task.note ?? "",
+                            type: task.type === "okr" ? "okr" : "kpi",
+                            weight: typeof task.weight === "number" ? task.weight : Number(task.weight ?? 1),
                           }));
                           setIsEditingTaskInfo(false);
                           setActionError(null);
@@ -613,6 +707,22 @@ export default function TaskDetailPage() {
                             </SelectContent>
                           </Select>
                         </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-sm font-semibold text-slate-700">Trọng số task</label>
+                          <input
+                            type="number"
+                            min={1}
+                            value={form.weight}
+                            onChange={(event) =>
+                              setForm((prev) => ({
+                                ...prev,
+                                weight: Number(event.target.value) || 1,
+                              }))
+                            }
+                            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          />
+                        </div>
                       </div>
                     ) : (
                       <>
@@ -622,6 +732,8 @@ export default function TaskDetailPage() {
                           {TASK_TYPES.find((item) => item.value === form.type)?.label ?? "KPI"}
                         </p>
                         <p className="mt-2 text-xs text-slate-500">{getTaskProgressHint(form.type)}</p>
+                        <p className="mt-3 text-sm text-slate-500">Trọng số task</p>
+                        <p className="mt-1 text-base font-semibold text-slate-800">{Math.round(form.weight)}</p>
                         <p className="mt-3 text-sm text-slate-500">Mô tả</p>
                         <p className="mt-1 whitespace-pre-wrap text-base text-slate-700">
                           {task.description?.trim() || "Chưa có mô tả."}
@@ -660,13 +772,26 @@ export default function TaskDetailPage() {
                           <p className="mt-1 text-xl font-semibold tracking-[-0.02em] text-slate-900">
                             {keyResult.name}
                           </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {keyResult.goal?.start_date || keyResult.goal?.end_date
+                              ? `Khung mục tiêu: ${keyResult.goal?.start_date ?? "?"} đến ${keyResult.goal?.end_date ?? "?"}`
+                              : "Mục tiêu chưa có ngày bắt đầu/kết thúc."}
+                          </p>
                         </div>
                         <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-blue-700">
-                          {clampProgress(keyResult.progress)}%
+                          {keyResultProgress}%
                         </span>
                       </div>
 
-                      <div className="mt-4 grid gap-3 md:grid-cols-3">
+                      <div className="mt-4 grid gap-3 md:grid-cols-4">
+                        <div className="rounded-xl bg-white px-4 py-3">
+                          <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                            Bắt đầu
+                          </p>
+                          <p className="mt-2 text-lg font-semibold text-slate-900">
+                            {formatKeyResultMetric(keyResult.start_value, keyResult.unit)}
+                          </p>
+                        </div>
                         <div className="rounded-xl bg-white px-4 py-3">
                           <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
                             Hiện tại
@@ -691,6 +816,14 @@ export default function TaskDetailPage() {
                             {formatKeyResultUnit(keyResult.unit)}
                           </p>
                         </div>
+                        <div className="rounded-xl bg-white px-4 py-3">
+                          <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                            KR weight
+                          </p>
+                          <p className="mt-2 text-lg font-semibold text-slate-900">
+                            {Math.round(Number(keyResult.weight ?? 1))}
+                          </p>
+                        </div>
                       </div>
                       <p className="mt-3 text-xs text-slate-500">{getKeyResultProgressHint(keyResult.unit)}</p>
                     </article>
@@ -708,6 +841,13 @@ export default function TaskDetailPage() {
                           <p className="inline-block rounded-lg bg-slate-100 px-2 py-1 font-semibold text-slate-700">
                             {TASK_TYPES.find((item) => item.value === form.type)?.label ?? "KPI"}
                           </p>
+                        )}
+                      </div>
+
+                      <div className="space-y-1">
+                        <p className="text-slate-500">Trọng số</p>
+                        {isEditingTaskInfo ? null : (
+                          <p className="font-semibold text-slate-700">{Math.round(form.weight)}</p>
                         )}
                       </div>
 
@@ -810,21 +950,9 @@ export default function TaskDetailPage() {
                                 setForm((prev) => ({
                                   ...prev,
                                   status: normalizeTaskStatus(task.status),
-                                  progress: getTaskProgressByType(
-                                    task.type,
-                                    normalizeTaskStatus(task.status),
-                                    task.progress,
-                                  ),
+                                  progress: getComputedTaskProgress(task),
                                 }));
-                                setProgressInput(
-                                  String(
-                                    getTaskProgressByType(
-                                      task.type,
-                                      normalizeTaskStatus(task.status),
-                                      task.progress,
-                                    ),
-                                  ),
-                                );
+                                setProgressInput(String(getComputedTaskProgress(task)));
                                 setIsEditingExecution(false);
                                 setActionError(null);
                                 setNotice(null);

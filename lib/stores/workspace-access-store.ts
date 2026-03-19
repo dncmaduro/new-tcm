@@ -1,0 +1,284 @@
+"use client";
+
+import { useEffect } from "react";
+import { create } from "zustand";
+import { supabase } from "@/lib/supabase";
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+export type WorkspaceRole = {
+  id: string;
+  name: string | null;
+};
+
+export type WorkspaceDepartment = {
+  id: string;
+  name: string;
+  parentDepartmentId: string | null;
+};
+
+export type WorkspaceMembership = {
+  profileId: string;
+  departmentId: string | null;
+  roleId: string | null;
+};
+
+export type ManagedDepartment = {
+  id: string;
+  name: string;
+  parentDepartmentId: string | null;
+};
+
+type WorkspaceProfile = {
+  id: string;
+  name: string | null;
+};
+
+type ProfileRow = {
+  id: string;
+  name: string | null;
+};
+
+type RoleRow = {
+  id: string;
+  name: string | null;
+};
+
+type UserRoleRow = {
+  profile_id: string | null;
+  department_id: string | null;
+  role_id: string | null;
+};
+
+type DepartmentRow = {
+  id: string;
+  name: string;
+  parent_department_id: string | null;
+};
+
+type WorkspaceAccessStore = {
+  isLoading: boolean;
+  isLoaded: boolean;
+  error: string | null;
+  lastLoadedAt: number | null;
+  authUserId: string | null;
+  authEmail: string | null;
+  profile: WorkspaceProfile | null;
+  roles: WorkspaceRole[];
+  memberships: WorkspaceMembership[];
+  departments: WorkspaceDepartment[];
+  managedDepartments: ManagedDepartment[];
+  load: (options?: { force?: boolean }) => Promise<void>;
+  reset: () => void;
+};
+
+const defaultState = {
+  isLoading: false,
+  isLoaded: false,
+  error: null,
+  lastLoadedAt: null,
+  authUserId: null,
+  authEmail: null,
+  profile: null,
+  roles: [],
+  memberships: [],
+  departments: [],
+  managedDepartments: [],
+} satisfies Omit<WorkspaceAccessStore, "load" | "reset">;
+
+let inFlightLoad: Promise<void> | null = null;
+
+const getLeaderRoleIds = (roles: WorkspaceRole[]) =>
+  roles
+    .filter((role) => {
+      const roleName = typeof role.name === "string" ? role.name.trim().toLowerCase() : "";
+      return roleName === "leader" || roleName.includes("leader");
+    })
+    .map((role) => role.id);
+
+const buildManagedDepartments = (
+  memberships: WorkspaceMembership[],
+  departments: WorkspaceDepartment[],
+  leaderRoleIds: string[],
+) => {
+  const departmentIds = new Set(
+    memberships
+      .filter((membership) => membership.departmentId && membership.roleId && leaderRoleIds.includes(membership.roleId))
+      .map((membership) => membership.departmentId as string),
+  );
+
+  return departments.filter((department) => !department.parentDepartmentId && departmentIds.has(department.id));
+};
+
+export const useWorkspaceAccessStore = create<WorkspaceAccessStore>((set, get) => ({
+  ...defaultState,
+  async load(options) {
+    const force = options?.force ?? false;
+    const current = get();
+    const isFresh =
+      current.isLoaded &&
+      current.lastLoadedAt !== null &&
+      Date.now() - current.lastLoadedAt < CACHE_TTL_MS;
+
+    if (!force && isFresh) {
+      return;
+    }
+
+    if (inFlightLoad) {
+      return inFlightLoad;
+    }
+
+    inFlightLoad = (async () => {
+      set((state) => ({ ...state, isLoading: true, error: null }));
+
+      try {
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+        if (authError || !authData.user) {
+          throw new Error(authError?.message || "Không xác thực được người dùng.");
+        }
+
+        const [profileResult, rolesResult] = await Promise.all([
+          supabase.from("profiles").select("id,name").eq("user_id", authData.user.id).maybeSingle(),
+          supabase.from("roles").select("id,name"),
+        ]);
+
+        if (profileResult.error || !profileResult.data?.id) {
+          throw new Error(profileResult.error?.message || "Không tìm thấy hồ sơ người dùng.");
+        }
+
+        const roles = ((rolesResult.data ?? []) as RoleRow[]).map((role) => ({
+          id: String(role.id),
+          name: typeof role.name === "string" ? role.name : null,
+        }));
+        const leaderRoleIds = getLeaderRoleIds(roles);
+
+        const profile = profileResult.data as ProfileRow;
+        let memberships: WorkspaceMembership[] = [];
+        let departments: WorkspaceDepartment[] = [];
+
+        const membershipResult = await supabase
+          .from("user_role_in_department")
+          .select("profile_id,department_id,role_id")
+          .eq("profile_id", profile.id);
+
+        if (membershipResult.error) {
+          throw new Error(membershipResult.error.message || "Không tải được vai trò phòng ban.");
+        }
+
+        memberships = ((membershipResult.data ?? []) as UserRoleRow[]).map((item) => ({
+          profileId: item.profile_id ? String(item.profile_id) : String(profile.id),
+          departmentId: item.department_id ? String(item.department_id) : null,
+          roleId: item.role_id ? String(item.role_id) : null,
+        }));
+
+        const departmentIds = [
+          ...new Set(memberships.map((item) => item.departmentId).filter((value): value is string => Boolean(value))),
+        ];
+
+        if (departmentIds.length > 0) {
+          const departmentResult = await supabase
+            .from("departments")
+            .select("id,name,parent_department_id")
+            .in("id", departmentIds);
+
+          if (departmentResult.error) {
+            throw new Error(departmentResult.error.message || "Không tải được danh sách phòng ban.");
+          }
+
+          departments = ((departmentResult.data ?? []) as DepartmentRow[]).map((department) => ({
+            id: String(department.id),
+            name: String(department.name),
+            parentDepartmentId: department.parent_department_id ? String(department.parent_department_id) : null,
+          }));
+        }
+
+        set({
+          isLoading: false,
+          isLoaded: true,
+          error: null,
+          lastLoadedAt: Date.now(),
+          authUserId: authData.user.id,
+          authEmail: authData.user.email ? String(authData.user.email) : null,
+          profile: {
+            id: String(profile.id),
+            name: profile.name?.trim() || null,
+          },
+          roles,
+          memberships,
+          departments,
+          managedDepartments: buildManagedDepartments(memberships, departments, leaderRoleIds),
+        });
+      } catch (error) {
+        set((state) => ({
+          ...state,
+          isLoading: false,
+          isLoaded: true,
+          error: error instanceof Error ? error.message : "Không tải được quyền truy cập.",
+        }));
+      } finally {
+        inFlightLoad = null;
+      }
+    })();
+
+    return inFlightLoad;
+  },
+  reset() {
+    inFlightLoad = null;
+    set(defaultState);
+  },
+}));
+
+export function useWorkspaceAccess() {
+  const state = useWorkspaceAccessStore();
+  const load = useWorkspaceAccessStore((snapshot) => snapshot.load);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return {
+    ...state,
+    profileId: state.profile?.id ?? null,
+    profileName: state.profile?.name ?? null,
+    leaderRoleIds: getLeaderRoleIds(state.roles),
+    canManage: state.managedDepartments.length > 0,
+  };
+}
+
+export function buildWorkspaceAccessDebug(params: {
+  authUserId: string | null;
+  profileId: string | null;
+  profileName: string | null;
+  leaderRoleIds: string[];
+  roles: WorkspaceRole[];
+  memberships: WorkspaceMembership[];
+  departments: WorkspaceDepartment[];
+  managedDepartments: ManagedDepartment[];
+  canManage: boolean;
+  error: string | null;
+  lastLoadedAt: number | null;
+}) {
+  return {
+    checkedAt: params.lastLoadedAt ? new Date(params.lastLoadedAt).toISOString() : new Date().toISOString(),
+    step: params.error ? "failed.cached" : params.canManage ? "done.cached" : "done.no_access",
+    authUserId: params.authUserId,
+    profileId: params.profileId,
+    profileName: params.profileName,
+    leaderRoleIds: params.leaderRoleIds,
+    leaderRolesRaw: params.roles.map((role) => ({ id: role.id, name: role.name })),
+    userRoleRows: params.memberships.map((membership) => ({
+      department_id: membership.departmentId,
+      role_id: membership.roleId,
+    })),
+    departments: params.departments.map((department) => ({
+      id: department.id,
+      name: department.name,
+      parent_department_id: department.parentDepartmentId,
+    })),
+    rootDepartments: params.managedDepartments.map((department) => ({
+      id: department.id,
+      name: department.name,
+    })),
+    error: params.error,
+  };
+}

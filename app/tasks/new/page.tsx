@@ -18,6 +18,8 @@ import {
   formatKeyResultUnit,
   getKeyResultProgressHint,
 } from "@/lib/constants/key-results";
+import { buildKeyResultProgressMap } from "@/lib/okr";
+import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import {
   Select,
   SelectContent,
@@ -26,17 +28,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-type DepartmentOption = {
-  id: string;
-  name: string;
-  parentDepartmentId: string | null;
-};
-
 type GoalOption = {
   id: string;
   name: string;
   departmentId: string | null;
   departmentName: string | null;
+  startDate: string | null;
+  endDate: string | null;
 };
 
 type ProfileOption = {
@@ -47,12 +45,15 @@ type ProfileOption = {
 
 type KeyResultOption = {
   id: string;
-  goalId: string;
+  goalId: string | null;
+  goalName: string;
   name: string;
   progress: number;
+  startValue: number;
   target: number;
   current: number;
   unit: string | null;
+  weight: number;
 };
 
 type TaskCreatePermissionDebug = {
@@ -80,6 +81,7 @@ type TaskFormState = {
   progress: number;
   status: TaskStatusValue;
   note: string;
+  weight: number;
 };
 
 const defaultForm: TaskFormState = {
@@ -92,24 +94,21 @@ const defaultForm: TaskFormState = {
   progress: 0,
   status: TASK_STATUSES[0].value,
   note: "",
+  weight: 1,
 };
 
 export default function NewTaskPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const workspaceAccess = useWorkspaceAccess();
 
   const [form, setForm] = useState<TaskFormState>(defaultForm);
-  const [rootDepartments, setRootDepartments] = useState<DepartmentOption[]>([]);
   const [goalOptions, setGoalOptions] = useState<GoalOption[]>([]);
   const [keyResultOptions, setKeyResultOptions] = useState<KeyResultOption[]>([]);
   const [profileOptions, setProfileOptions] = useState<ProfileOption[]>([]);
-  const [isCheckingPermission, setIsCheckingPermission] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [permissionError, setPermissionError] = useState<string | null>(null);
   const [dataLoadError, setDataLoadError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [creatorProfileId, setCreatorProfileId] = useState<string | null>(null);
-  const [permissionDebug, setPermissionDebug] = useState<TaskCreatePermissionDebug | null>(null);
   const [profileSearchKeyword, setProfileSearchKeyword] = useState("");
   const [isProfileSelectOpen, setIsProfileSelectOpen] = useState(false);
 
@@ -117,212 +116,94 @@ export default function NewTaskPage() {
   const queryGoalId = searchParams.get("goalId");
   const queryKeyResultId = searchParams.get("keyResultId");
   const queryDepartmentId = searchParams.get("departmentId");
-
-  const canCreateTask = rootDepartments.length > 0 && !permissionError;
+  const isCheckingPermission = workspaceAccess.isLoading;
+  const creatorProfileId = workspaceAccess.profileId;
+  const canCreateTask = workspaceAccess.canManage && !workspaceAccess.error;
+  const permissionError =
+    workspaceAccess.error ??
+    (!isCheckingPermission && !workspaceAccess.canManage
+      ? "Bạn chưa có quyền tạo công việc ở phòng ban gốc."
+      : null);
+  const permissionDebug: TaskCreatePermissionDebug = useMemo(
+    () => ({
+      ...buildWorkspaceAccessDebug({
+        authUserId: workspaceAccess.authUserId,
+        profileId: workspaceAccess.profileId,
+        profileName: workspaceAccess.profileName,
+        leaderRoleIds: workspaceAccess.leaderRoleIds,
+        roles: workspaceAccess.roles,
+        memberships: workspaceAccess.memberships,
+        departments: workspaceAccess.departments,
+        managedDepartments: workspaceAccess.managedDepartments,
+        canManage: workspaceAccess.canManage,
+        error: workspaceAccess.error,
+        lastLoadedAt: workspaceAccess.lastLoadedAt,
+      }),
+      canCreateTask: workspaceAccess.canManage,
+    }),
+    [workspaceAccess],
+  );
 
   useEffect(() => {
+    if (isCheckingPermission) {
+      return;
+    }
+
+    if (!canCreateTask) {
+      setGoalOptions([]);
+      setKeyResultOptions([]);
+      setProfileOptions([]);
+      setDataLoadError(null);
+      return;
+    }
+
     let isActive = true;
 
-    const loadPermissionAndFormData = async () => {
-      setIsCheckingPermission(true);
-      setPermissionError(null);
-      setDataLoadError(null);
-      setCreatorProfileId(null);
-
-      const debugState: TaskCreatePermissionDebug = {
-        checkedAt: new Date().toISOString(),
-        step: "start",
-        authUserId: null,
-        profileId: null,
-        profileName: null,
-        leaderRoleIds: [],
-        leaderRolesRaw: [],
-        userRoleRows: [],
-        departments: [],
-        rootDepartments: [],
-        canCreateTask: false,
-        error: null,
-      };
-
+    const loadFormData = async () => {
       try {
-        debugState.step = "auth.getUser";
-        const { data: authData, error: authError } = await supabase.auth.getUser();
-        if (authError || !authData.user) {
-          debugState.error = authError?.message ?? "Không lấy được auth user";
-          debugState.step = "failed.auth";
-          if (isActive) {
-            setPermissionError("Không xác thực được người dùng hiện tại.");
-            setRootDepartments([]);
-            setGoalOptions([]);
-            setKeyResultOptions([]);
-            setProfileOptions([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-        debugState.authUserId = authData.user.id;
-
-        debugState.step = "profiles.by_user_id";
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("id,name")
-          .eq("user_id", authData.user.id)
-          .maybeSingle();
-
-        if (profileError || !profile?.id) {
-          debugState.error = profileError?.message ?? "Không tìm thấy profile theo user_id";
-          debugState.step = "failed.profile";
-          if (isActive) {
-            setPermissionError("Không tìm thấy hồ sơ người dùng.");
-            setRootDepartments([]);
-            setGoalOptions([]);
-            setKeyResultOptions([]);
-            setProfileOptions([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-
-        debugState.profileId = profile.id;
-        debugState.profileName = profile.name ?? null;
-        if (isActive) {
-          setCreatorProfileId(String(profile.id));
-        }
-
-        debugState.step = "roles.list";
-        const { data: rolesData, error: roleError } = await supabase.from("roles").select("id,name");
-
-        debugState.leaderRolesRaw = (rolesData ?? []).map((role) => ({
-          id: String(role.id),
-          name: typeof role.name === "string" ? role.name : null,
-        }));
-
-        const leaderRoleIds = (rolesData ?? [])
-          .filter((role) => {
-            const roleName = typeof role.name === "string" ? role.name.trim().toLowerCase() : "";
-            return roleName === "leader" || roleName.includes("leader");
-          })
-          .map((role) => role.id)
-          .filter(Boolean) as string[];
-
-        debugState.leaderRoleIds = leaderRoleIds;
-        if (roleError || leaderRoleIds.length === 0) {
-          debugState.error = roleError?.message ?? "Không tìm thấy role Leader";
-          debugState.step = "failed.role";
-          if (isActive) {
-            setPermissionError("Không tìm thấy role Leader để xác thực quyền tạo công việc.");
-            setRootDepartments([]);
-            setGoalOptions([]);
-            setKeyResultOptions([]);
-            setProfileOptions([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-
-        debugState.step = "user_role_in_department.by_profile";
-        const { data: userRolesData, error: userRolesError } = await supabase
-          .from("user_role_in_department")
-          .select("department_id,role_id")
-          .eq("profile_id", profile.id)
-          .in("role_id", leaderRoleIds);
-
-        debugState.userRoleRows = (userRolesData ?? []).map((item) => ({
-          department_id: item.department_id ?? null,
-          role_id: item.role_id ?? null,
-        }));
-
-        const departmentIds = [
-          ...new Set((userRolesData ?? []).map((item) => item.department_id).filter(Boolean)),
-        ];
-
-        if (userRolesError || departmentIds.length === 0) {
-          debugState.error = userRolesError?.message ?? "Không có role Leader gắn với phòng ban";
-          debugState.step = "failed.user_role_in_department";
-          if (isActive) {
-            setPermissionError("Bạn chưa có quyền tạo công việc ở phòng ban gốc.");
-            setRootDepartments([]);
-            setGoalOptions([]);
-            setKeyResultOptions([]);
-            setProfileOptions([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-
-        debugState.step = "departments.by_ids";
-        const { data: departmentsData, error: departmentsError } = await supabase
-          .from("departments")
-          .select("id,name,parent_department_id")
-          .in("id", departmentIds);
-
-        if (departmentsError || !departmentsData?.length) {
-          debugState.error = departmentsError?.message ?? "Không lấy được phòng ban";
-          debugState.step = "failed.departments";
-          if (isActive) {
-            setPermissionError("Không tải được danh sách phòng ban.");
-            setRootDepartments([]);
-            setGoalOptions([]);
-            setKeyResultOptions([]);
-            setProfileOptions([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-
-        debugState.departments = departmentsData.map((department) => ({
-          id: String(department.id),
-          name: String(department.name),
-          parent_department_id: department.parent_department_id ?? null,
-        }));
-
-        const roots = departmentsData
-          .filter((department) => !department.parent_department_id)
-          .map((department) => ({
-            id: String(department.id),
-            name: String(department.name),
-            parentDepartmentId: null,
-          }));
-
-        debugState.rootDepartments = roots;
-        debugState.canCreateTask = roots.length > 0;
-        debugState.step = "done";
-
-        if (!isActive) {
-          return;
-        }
-
-        if (roots.length === 0) {
-          setPermissionError("Bạn không có quyền tạo công việc ở phòng ban cấp gốc.");
-          setRootDepartments([]);
-          setGoalOptions([]);
-          setKeyResultOptions([]);
-          setProfileOptions([]);
-          setPermissionDebug({ ...debugState });
-          return;
-        }
-
-        setRootDepartments(roots);
-        setPermissionDebug({ ...debugState });
+        setDataLoadError(null);
 
         const [
           { data: goalsData, error: goalsError },
           { data: keyResultsData, error: keyResultsError },
+          { data: taskRows, error: taskRowsError },
           { data: allDepartmentsData },
           { data: profilesData, error: profilesError },
         ] =
           await Promise.all([
             supabase
               .from("goals")
-              .select("id,name,department_id,created_at")
+              .select("id,name,department_id,start_date,end_date,created_at")
               .order("created_at", { ascending: false }),
             supabase
               .from("key_results")
-              .select("id,goal_id,name,progress,target,current,unit,created_at")
+              .select(`
+                id,
+                goal_id,
+                name,
+                start_value,
+                target,
+                current,
+                unit,
+                weight,
+                created_at,
+                goal:goals!key_results_goal_id_fkey(
+                  id,
+                  name,
+                  department_id,
+                  start_date,
+                  end_date
+                )
+              `)
               .order("created_at", { ascending: false }),
+            supabase.from("tasks").select("id,key_result_id,type,status,progress,weight"),
             supabase.from("departments").select("id,name"),
             supabase.from("profiles").select("id,name,email").order("name", { ascending: true }),
           ]);
+
+        if (!isActive) {
+          return;
+        }
 
         const departmentsById = (allDepartmentsData ?? []).reduce<Record<string, string>>((acc, department) => {
           acc[String(department.id)] = String(department.name);
@@ -336,20 +217,54 @@ export default function NewTaskPage() {
             name: String(goal.name),
             departmentId,
             departmentName: departmentId ? departmentsById[departmentId] ?? null : null,
+            startDate: goal.start_date ? String(goal.start_date) : null,
+            endDate: goal.end_date ? String(goal.end_date) : null,
           };
         });
-        setGoalOptions(mappedGoals);
+        const taskProgressByKeyResultId = buildKeyResultProgressMap(
+          ((keyResultsData ?? []) as Array<{ id: string; goal_id: string | null }>).map((keyResult) => ({
+            id: String(keyResult.id),
+            goal_id: keyResult.goal_id ? String(keyResult.goal_id) : null,
+          })),
+          ((taskRows ?? []) as Array<{
+            key_result_id: string | null;
+            type: string | null;
+            status: string | null;
+            progress: number | null;
+            weight: number | null;
+          }>).map((task) => ({
+            key_result_id: task.key_result_id ? String(task.key_result_id) : null,
+            type: task.type ? String(task.type) : null,
+            status: task.status ? String(task.status) : null,
+            progress: task.progress,
+            weight: task.weight,
+          })),
+        );
 
-        const mappedKeyResults: KeyResultOption[] = (keyResultsData ?? []).map((keyResult) => ({
-          id: String(keyResult.id),
-          goalId: String(keyResult.goal_id),
-          name: String(keyResult.name),
-          progress: typeof keyResult.progress === "number" ? Math.round(keyResult.progress) : 0,
-          target: typeof keyResult.target === "number" ? keyResult.target : Number(keyResult.target ?? 0),
-          current: typeof keyResult.current === "number" ? keyResult.current : Number(keyResult.current ?? 0),
-          unit: keyResult.unit ? String(keyResult.unit) : null,
-        }));
+        const mappedKeyResults: KeyResultOption[] = ((keyResultsData ?? []) as Array<Record<string, unknown>>).map((keyResult) => {
+          const goalRow = Array.isArray(keyResult.goal) ? keyResult.goal[0] ?? null : keyResult.goal ?? null;
+          return {
+            id: String(keyResult.id),
+            goalId: keyResult.goal_id ? String(keyResult.goal_id) : null,
+            goalName: goalRow?.name ? String(goalRow.name) : "Chưa có mục tiêu",
+            name: String(keyResult.name),
+            progress: taskProgressByKeyResultId[String(keyResult.id)] ?? 0,
+            startValue:
+              typeof keyResult.start_value === "number"
+                ? keyResult.start_value
+                : Number(keyResult.start_value ?? 0),
+            target: typeof keyResult.target === "number" ? keyResult.target : Number(keyResult.target ?? 0),
+            current: typeof keyResult.current === "number" ? keyResult.current : Number(keyResult.current ?? 0),
+            unit: keyResult.unit ? String(keyResult.unit) : null,
+            weight: typeof keyResult.weight === "number" ? keyResult.weight : Number(keyResult.weight ?? 1),
+          };
+        });
         setKeyResultOptions(mappedKeyResults);
+
+        const goalIdsWithKr = new Set(
+          mappedKeyResults.map((keyResult) => keyResult.goalId).filter((goalId): goalId is string => Boolean(goalId)),
+        );
+        setGoalOptions(mappedGoals.filter((goal) => goalIdsWithKr.has(goal.id)));
 
         let mappedProfiles: ProfileOption[] = [];
         if (!profilesError) {
@@ -367,6 +282,9 @@ export default function NewTaskPage() {
         }
         if (keyResultsError) {
           loadErrorMessages.push("Không tải được danh sách key result.");
+        }
+        if (taskRowsError) {
+          loadErrorMessages.push("Không tải được tiến độ task để tính progress cho key result.");
         }
         if (profilesError) {
           loadErrorMessages.push(
@@ -404,39 +322,30 @@ export default function NewTaskPage() {
           profileId: mappedProfiles[0]?.id ?? "",
         }));
       } catch {
-        debugState.error = "Lỗi không xác định khi kiểm tra quyền tạo công việc";
-        debugState.step = "failed.exception";
         if (isActive) {
-          setPermissionError("Có lỗi khi kiểm tra quyền tạo công việc.");
-          setRootDepartments([]);
           setGoalOptions([]);
           setKeyResultOptions([]);
           setProfileOptions([]);
-          setPermissionDebug({ ...debugState });
+          setDataLoadError("Có lỗi khi tải dữ liệu tạo công việc.");
         }
-      } finally {
-        if (isActive) {
-          setIsCheckingPermission(false);
-        }
-
-        console.groupCollapsed("[tasks/new] Debug quyền tạo công việc");
-        console.log(debugState);
-        console.groupEnd();
       }
     };
 
-    void loadPermissionAndFormData();
+    void loadFormData();
 
     return () => {
       isActive = false;
     };
-  }, [queryGoalId, queryKeyResultId, queryDepartmentId]);
+  }, [canCreateTask, isCheckingPermission, queryGoalId, queryKeyResultId, queryDepartmentId]);
 
   const isFormValid = useMemo(
     () =>
       form.name.trim().length > 0 &&
+      form.keyResultId.trim().length > 0 &&
       form.profileId.trim().length > 0 &&
-      form.status.trim().length > 0,
+      form.status.trim().length > 0 &&
+      Number.isFinite(form.weight) &&
+      form.weight > 0,
     [form],
   );
   const filteredProfileOptions = useMemo(() => {
@@ -450,7 +359,10 @@ export default function NewTaskPage() {
   }, [profileOptions, profileSearchKeyword]);
 
   const availableKeyResults = useMemo(
-    () => keyResultOptions.filter((keyResult) => keyResult.goalId === form.goalId),
+    () =>
+      form.goalId
+        ? keyResultOptions.filter((keyResult) => keyResult.goalId === form.goalId)
+        : keyResultOptions,
     [form.goalId, keyResultOptions],
   );
 
@@ -486,8 +398,7 @@ export default function NewTaskPage() {
 
     try {
       const payload = {
-        goal_id: form.goalId.trim() ? form.goalId : null,
-        key_result_id: form.keyResultId.trim() ? form.keyResultId : null,
+        key_result_id: form.keyResultId.trim(),
         profile_id: form.profileId,
         creator_profile_id: creatorProfileId,
         type: form.type,
@@ -496,6 +407,7 @@ export default function NewTaskPage() {
         progress: getTaskProgressByType(form.type, form.status, form.progress),
         status: form.status,
         note: form.note.trim() || null,
+        weight: Math.round(form.weight),
       };
 
       const { error } = await supabase.from("tasks").insert(payload);
@@ -613,6 +525,7 @@ export default function NewTaskPage() {
                         value={form.goalId || "__no_goal__"}
                         onValueChange={(value) => {
                           const nextGoalId = value === "__no_goal__" ? "" : value;
+                          const nextGoalKeyResults = keyResultOptions.filter((keyResult) => keyResult.goalId === nextGoalId);
                           setForm((prev) => ({
                             ...prev,
                             goalId: nextGoalId,
@@ -621,8 +534,8 @@ export default function NewTaskPage() {
                                 ? keyResultOptions.find(
                                     (keyResult) =>
                                       keyResult.id === prev.keyResultId && keyResult.goalId === nextGoalId,
-                                  )?.id ?? ""
-                                : "",
+                                  )?.id ?? nextGoalKeyResults[0]?.id ?? ""
+                                : nextGoalKeyResults[0]?.id ?? "",
                           }));
                         }}
                       >
@@ -630,7 +543,7 @@ export default function NewTaskPage() {
                           <SelectValue placeholder="Chọn mục tiêu" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="__no_goal__">Không gắn mục tiêu</SelectItem>
+                          <SelectItem value="__no_goal__">Chọn theo key result</SelectItem>
                           {goalOptions.map((goal) => (
                             <SelectItem key={goal.id} value={goal.id}>
                               {goal.name}
@@ -644,13 +557,8 @@ export default function NewTaskPage() {
                     <div className="space-y-1.5">
                       <label className="text-sm font-semibold text-slate-700">Key result</label>
                       <Select
-                        value={form.keyResultId || "__no_key_result__"}
+                        value={form.keyResultId || undefined}
                         onValueChange={(value) => {
-                          if (value === "__no_key_result__") {
-                            setForm((prev) => ({ ...prev, keyResultId: "" }));
-                            return;
-                          }
-
                           const matchedKeyResult =
                             keyResultOptions.find((keyResult) => keyResult.id === value) ?? null;
                           setForm((prev) => ({
@@ -664,7 +572,6 @@ export default function NewTaskPage() {
                           <SelectValue placeholder="Chọn key result" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="__no_key_result__">Chưa gắn key result</SelectItem>
                           {availableKeyResults.map((keyResult) => (
                             <SelectItem key={keyResult.id} value={keyResult.id}>
                               {keyResult.name}
@@ -685,7 +592,11 @@ export default function NewTaskPage() {
                         {" "}
                         {availableKeyResults.length > 0
                           ? `Có ${availableKeyResults.length} key result để gắn công việc.`
-                          : "Mục tiêu này chưa có key result, task sẽ nằm ở cấp goal."}
+                          : "Mục tiêu này chưa có key result nên chưa thể tạo task theo schema mới."}
+                        {" "}
+                        {selectedGoal.startDate || selectedGoal.endDate
+                          ? `Khung thời gian: ${selectedGoal.startDate ?? "?"} đến ${selectedGoal.endDate ?? "?"}.`
+                          : "Mục tiêu này chưa có ngày bắt đầu/kết thúc."}
                       </p>
                     </div>
                   ) : null}
@@ -696,6 +607,8 @@ export default function NewTaskPage() {
                         <div>
                           <p className="text-sm font-semibold text-slate-900">{selectedKeyResult.name}</p>
                           <p className="mt-1 text-xs text-slate-600">
+                            Start {formatKeyResultMetric(selectedKeyResult.startValue, selectedKeyResult.unit)}
+                            {" · "}
                             Tiến độ {selectedKeyResult.progress}% · {formatKeyResultMetric(selectedKeyResult.current, selectedKeyResult.unit)}
                             {" / "}
                             {formatKeyResultMetric(selectedKeyResult.target, selectedKeyResult.unit)} · {formatKeyResultUnit(selectedKeyResult.unit)}
@@ -705,7 +618,7 @@ export default function NewTaskPage() {
                           </p>
                         </div>
                         <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-blue-700">
-                          Task sẽ được gắn vào key result này
+                          KR weight {selectedKeyResult.weight}
                         </span>
                       </div>
                     </div>
@@ -765,6 +678,25 @@ export default function NewTaskPage() {
                   </div>
 
                   <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <label htmlFor="task-weight" className="text-sm font-semibold text-slate-700">
+                        Trọng số task *
+                      </label>
+                      <input
+                        id="task-weight"
+                        type="number"
+                        min={1}
+                        value={form.weight}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            weight: Number(event.target.value) || 1,
+                          }))
+                        }
+                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      />
+                    </div>
+
                     <div className="space-y-1.5">
                       <label className="text-sm font-semibold text-slate-700">Loại task</label>
                       <Select
@@ -845,7 +777,7 @@ export default function NewTaskPage() {
                       <div className="flex h-11 items-center rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700">
                         {form.type === "okr"
                           ? `${TASK_STATUSES.find((item) => item.value === form.status)?.label ?? "Cần làm"} = ${getTaskProgressByType(form.type, form.status, form.progress)}%`
-                          : "Nhập trực tiếp theo % hoàn thành"}
+                          : "Nhập trực tiếp theo % hoàn thành, sau đó KR sẽ lấy trung bình có trọng số từ các task"}
                       </div>
                     </div>
                   </div>

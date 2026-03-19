@@ -14,7 +14,9 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { GOAL_STATUSES, GOAL_TYPES } from "@/lib/constants/goals";
-import { getTaskProgressByType, TASK_STATUSES } from "@/lib/constants/tasks";
+import { TASK_STATUSES } from "@/lib/constants/tasks";
+import { buildGoalProgressMap, buildKeyResultProgressMap, getComputedTaskProgress } from "@/lib/okr";
+import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
 
 type Mode = "canvas" | "list";
@@ -32,18 +34,26 @@ type GoalNode = {
   loai: string;
   tieuDe: string;
   phongBan: string;
+  teamSummary: string;
+  teamNames: string[];
+  departmentCount: number;
   quy: string;
   quarter: number | null;
   year: number | null;
-  owner: string;
-  vaiTro: string;
+  ownerName: string;
+  ownerAvatar: string | null;
+  statusLabel: string;
   moTa: string;
   progress: number;
   status: string;
   createdAt: string | null;
   parentGoalId: string | null;
   keyResultCount: number;
+  taskCount: number;
   keyResultsPreview: GoalKeyResultPreview[];
+  ownerId: string | null;
+  endDate: string | null;
+  healthStatus: "on_track" | "at_risk" | "off_track";
   x: number;
   y: number;
   mau: "blue" | "indigo" | "emerald" | "orange";
@@ -60,25 +70,27 @@ type GoalRow = {
   description: string | null;
   type: string | null;
   department_id: string | null;
-  progress: number | null;
   status: string | null;
   quarter: number | null;
   year: number | null;
   note: string | null;
   parent_goal_id: string | null;
+  owner_id: string | null;
   created_at: string | null;
+  start_date: string | null;
+  end_date: string | null;
 };
 
 type KeyResultRow = {
   id: string;
   goal_id: string;
   name: string;
-  progress: number | null;
+  weight: number | null;
 };
 
-type DepartmentOption = {
-  id: string;
-  name: string;
+type GoalDepartmentParticipationRow = {
+  goal_id: string | null;
+  department_id: string | null;
 };
 
 type GoalTaskRow = {
@@ -87,8 +99,10 @@ type GoalTaskRow = {
   type: string | null;
   status: string | null;
   progress: number | null;
+  weight: number | null;
   profile_id: string | null;
   key_result_id: string | null;
+  key_result?: { id: string; name: string; goal_id: string | null; goal?: { id: string; name: string } | null } | null;
 };
 
 type GoalTaskItem = {
@@ -98,30 +112,48 @@ type GoalTaskItem = {
   trangThai: string;
   nguoiPhuTrach: string;
   tienDo: number;
-  keyResultName: string;
 };
 
-type GoalLogAction =
+type GoalKeyResultPanelItem = {
+  id: string;
+  name: string;
+  progress: number;
+  current: number;
+  target: number;
+  unit: string | null;
+  tasks: GoalTaskItem[];
+};
+
+type GoalOwnerProfileRow = {
+  id: string;
+  name: string | null;
+  avatar: string | null;
+  email: string | null;
+};
+
+type ActivityLogAction =
   | "goal_created"
   | "goal_updated"
   | "goal_status_changed"
   | "goal_progress_updated"
   | "goal_deleted";
 
-type GoalLogRow = {
+type ActivityLogRow = {
   id: string;
-  goal_id: string | null;
+  entity_id: string | null;
+  entity_type: string | null;
   profile_id: string | null;
   old_value: Record<string, unknown> | null;
   new_value: Record<string, unknown> | null;
   created_at: string | null;
-  action: GoalLogAction | string | null;
+  action: ActivityLogAction | string | null;
 };
 
-type GoalLogItem = {
+type ActivityLogItem = {
   id: string;
   profileName: string;
-  action: GoalLogAction | string | null;
+  action: ActivityLogAction | string | null;
+  entityType: string | null;
   createdAt: string | null;
   oldValue: Record<string, unknown> | null;
   newValue: Record<string, unknown> | null;
@@ -143,7 +175,7 @@ type GoalCreatePermissionDebug = {
 };
 
 const CARD_WIDTH = 320;
-const CARD_HEIGHT = 232;
+const CARD_HEIGHT = 286;
 const WORLD_WIDTH = 3200;
 const WORLD_HEIGHT = 2200;
 const WORLD_INITIAL_SCALE = 0.86;
@@ -165,7 +197,7 @@ const taskStatusLabelMap = TASK_STATUSES.reduce<Record<string, string>>((acc, it
   return acc;
 }, {});
 
-const goalLogActionLabelMap: Record<GoalLogAction, string> = {
+const goalLogActionLabelMap: Record<ActivityLogAction, string> = {
   goal_created: "Tạo mục tiêu",
   goal_updated: "Cập nhật mục tiêu",
   goal_status_changed: "Thay đổi trạng thái",
@@ -184,6 +216,14 @@ const goalLogFieldLabelMap: Record<string, string> = {
   year: "Năm",
   note: "Ghi chú",
   parent_goal_id: "Mục tiêu cha",
+  start_date: "Ngày bắt đầu",
+  end_date: "Ngày kết thúc",
+};
+
+const goalHealthLabelMap: Record<GoalNode["healthStatus"], string> = {
+  on_track: "Đúng tiến độ",
+  at_risk: "Có rủi ro",
+  off_track: "Chậm tiến độ",
 };
 
 const getColorByStatus = (status: string | null): GoalNode["mau"] => {
@@ -209,9 +249,65 @@ const formatQuarterYear = (quarter: number | null, year: number | null) => {
   return "Chưa đặt quý";
 };
 
-const clampProgress = (value: number | null) => {
-  const safe = Number.isFinite(value) ? Number(value) : 0;
-  return Math.min(100, Math.max(0, Math.round(safe)));
+const formatDateVi = (value: string | null) => {
+  if (!value) {
+    return "Chưa đặt";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Không hợp lệ";
+  }
+  return new Intl.DateTimeFormat("vi-VN", { dateStyle: "short" }).format(date);
+};
+
+const toShortName = (name: string) => {
+  const parts = name
+    .split(" ")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (!parts.length) {
+    return "--";
+  }
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+  return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
+};
+
+const getGoalHealthStatus = ({
+  endDate,
+  hasKeyResults,
+  progress,
+}: {
+  endDate: string | null;
+  hasKeyResults: boolean;
+  progress: number;
+}): GoalNode["healthStatus"] => {
+  if (!hasKeyResults) {
+    return "off_track";
+  }
+
+  const normalizedProgress = Math.max(0, Math.min(100, Math.round(progress)));
+  const deadline = endDate ? new Date(endDate) : null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (deadline && !Number.isNaN(deadline.getTime())) {
+    deadline.setHours(0, 0, 0, 0);
+    const diffDays = Math.ceil((deadline.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    if (diffDays < 0 && normalizedProgress < 100) {
+      return "off_track";
+    }
+    if (diffDays <= 14 && normalizedProgress < 70) {
+      return "at_risk";
+    }
+  }
+
+  if (normalizedProgress < 35) {
+    return "at_risk";
+  }
+
+  return "on_track";
 };
 
 const formatDateTimeVi = (value: string | null) => {
@@ -228,12 +324,12 @@ const formatDateTimeVi = (value: string | null) => {
   }).format(date);
 };
 
-const toGoalLogActionLabel = (action: GoalLogAction | string | null) => {
+const toGoalLogActionLabel = (action: ActivityLogAction | string | null) => {
   if (!action) {
     return "Cập nhật";
   }
   if (action in goalLogActionLabelMap) {
-    return goalLogActionLabelMap[action as GoalLogAction];
+    return goalLogActionLabelMap[action as ActivityLogAction];
   }
   return action;
 };
@@ -262,7 +358,7 @@ const toGoalLogValueText = (value: unknown) => {
 };
 
 const toGoalLogSummary = (
-  action: GoalLogAction | string | null,
+  action: ActivityLogAction | string | null,
   oldValue: Record<string, unknown> | null,
   newValue: Record<string, unknown> | null,
 ) => {
@@ -308,7 +404,11 @@ const toGoalLogSummary = (
 const buildGoalGraph = (
   rows: GoalRow[],
   departmentsById: Record<string, string>,
+  goalDepartmentNamesByGoalId: Record<string, string[]>,
   keyResultsByGoalId: Record<string, GoalKeyResultPreview[]>,
+  taskCountByGoalId: Record<string, number>,
+  goalProgressById: Record<string, number>,
+  ownerProfilesById: Record<string, { name: string; avatar: string | null }>,
 ): { nodes: GoalNode[]; edges: GoalEdge[] } => {
   if (!rows.length) {
     return { nodes: [], edges: [] };
@@ -402,25 +502,50 @@ const buildGoalGraph = (
     levelRows.forEach((row, index) => {
       const statusLabel = row.status ? statusLabelMap[row.status] ?? row.status : "Nháp";
       const typeLabel = row.type ? typeLabelMap[row.type] ?? row.type.toUpperCase() : "KPI";
+      const progress = goalProgressById[row.id] ?? 0;
+      const ownerProfile = row.owner_id ? ownerProfilesById[row.owner_id] ?? null : null;
+      const participatingDepartmentNames = goalDepartmentNamesByGoalId[row.id] ?? [];
+      const primaryDepartmentName = row.department_id
+        ? departmentsById[row.department_id] ?? "Chưa có phòng ban"
+        : participatingDepartmentNames[0] ?? "Chưa có phòng ban";
+      const mergedDepartmentNames = Array.from(
+        new Set([primaryDepartmentName, ...participatingDepartmentNames].filter(Boolean)),
+      );
+      const healthStatus = getGoalHealthStatus({
+        endDate: row.end_date ?? null,
+        hasKeyResults: (keyResultsByGoalId[row.id]?.length ?? 0) > 0,
+        progress,
+      });
 
       positionedNodes.push({
         id: row.id,
         nhom: typeLabel,
         loai: row.type ?? "stats",
         tieuDe: row.name,
-        phongBan: row.department_id ? departmentsById[row.department_id] ?? "Chưa có phòng ban" : "Chưa có phòng ban",
+        phongBan: primaryDepartmentName,
+        teamSummary:
+          mergedDepartmentNames.length > 1
+            ? `${primaryDepartmentName} +${mergedDepartmentNames.length - 1}`
+            : primaryDepartmentName,
+        teamNames: mergedDepartmentNames,
+        departmentCount: mergedDepartmentNames.length,
         quy: formatQuarterYear(row.quarter, row.year),
         quarter: row.quarter ?? null,
         year: row.year ?? null,
-        owner: statusLabel,
-        vaiTro: `Loại ${typeLabel}`,
+        ownerName: ownerProfile?.name ?? "Chưa gán owner",
+        ownerAvatar: ownerProfile?.avatar ?? null,
+        statusLabel,
         moTa: row.description || row.note || "Chưa có mô tả",
-        progress: clampProgress(row.progress),
+        progress,
         status: row.status ?? "draft",
         createdAt: row.created_at ?? null,
         parentGoalId: row.parent_goal_id,
         keyResultCount: keyResultsByGoalId[row.id]?.length ?? 0,
+        taskCount: taskCountByGoalId[row.id] ?? 0,
         keyResultsPreview: (keyResultsByGoalId[row.id] ?? []).slice(0, 3),
+        ownerId: row.owner_id ? String(row.owner_id) : null,
+        endDate: row.end_date ?? null,
+        healthStatus,
         x: Math.min(
           WORLD_WIDTH - CARD_WIDTH - 24,
           Math.max(24, startX + index * horizontalGap),
@@ -455,6 +580,12 @@ const badgeMap: Record<GoalNode["mau"], string> = {
   orange: "bg-orange-50 text-orange-700",
 };
 
+const healthBadgeMap: Record<GoalNode["healthStatus"], string> = {
+  on_track: "bg-emerald-50 text-emerald-700",
+  at_risk: "bg-amber-50 text-amber-700",
+  off_track: "bg-rose-50 text-rose-700",
+};
+
 function ProgressBar({ value }: { value: number }) {
   return (
     <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
@@ -467,6 +598,7 @@ export default function GoalsPage() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const workspaceAccess = useWorkspaceAccess();
 
   const [nodes, setNodes] = useState<GoalNode[]>([]);
   const [edges, setEdges] = useState<GoalEdge[]>([]);
@@ -476,17 +608,15 @@ export default function GoalsPage() {
   const [isPanning, setIsPanning] = useState(false);
   const [isLoadingGoals, setIsLoadingGoals] = useState(true);
   const [goalsError, setGoalsError] = useState<string | null>(null);
-  const [canCreateGoal, setCanCreateGoal] = useState(false);
-  const [isCheckingCreatePermission, setIsCheckingCreatePermission] = useState(true);
-  const [rootDepartments, setRootDepartments] = useState<DepartmentOption[]>([]);
-  const [permissionDebug, setPermissionDebug] = useState<GoalCreatePermissionDebug | null>(null);
-  const [selectedGoalTasks, setSelectedGoalTasks] = useState<GoalTaskItem[]>([]);
+  const [selectedGoalKeyResults, setSelectedGoalKeyResults] = useState<GoalKeyResultPanelItem[]>([]);
   const [isLoadingSelectedGoalTasks, setIsLoadingSelectedGoalTasks] = useState(false);
   const [selectedGoalTasksError, setSelectedGoalTasksError] = useState<string | null>(null);
-  const [goalLogs, setGoalLogs] = useState<GoalLogItem[]>([]);
+  const [goalLogs, setGoalLogs] = useState<ActivityLogItem[]>([]);
   const [isGoalLogsOpen, setIsGoalLogsOpen] = useState(false);
   const [isLoadingGoalLogs, setIsLoadingGoalLogs] = useState(false);
   const [goalLogsError, setGoalLogsError] = useState<string | null>(null);
+  const [activeGoalMenuId, setActiveGoalMenuId] = useState<string | null>(null);
+  const [deletingGoalId, setDeletingGoalId] = useState<string | null>(null);
   const [keywordFilter, setKeywordFilter] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -502,10 +632,32 @@ export default function GoalsPage() {
 
   const mode: Mode = searchParams.get("mode") === "list" ? "list" : "canvas";
   const showPermissionDebug = searchParams.get("debugPermission") === "1";
+  const canCreateGoal = workspaceAccess.canManage && !workspaceAccess.error;
+  const isCheckingCreatePermission = workspaceAccess.isLoading;
+  const rootDepartments = workspaceAccess.managedDepartments;
+  const permissionDebug: GoalCreatePermissionDebug = useMemo(
+    () => ({
+      ...buildWorkspaceAccessDebug({
+        authUserId: workspaceAccess.authUserId,
+        profileId: workspaceAccess.profileId,
+        profileName: workspaceAccess.profileName,
+        leaderRoleIds: workspaceAccess.leaderRoleIds,
+        roles: workspaceAccess.roles,
+        memberships: workspaceAccess.memberships,
+        departments: workspaceAccess.departments,
+        managedDepartments: workspaceAccess.managedDepartments,
+        canManage: workspaceAccess.canManage,
+        error: workspaceAccess.error,
+        lastLoadedAt: workspaceAccess.lastLoadedAt,
+      }),
+      canCreateGoal: workspaceAccess.canManage,
+    }),
+    [workspaceAccess],
+  );
 
   const departmentFilterOptions = useMemo(
     () =>
-      [...new Set(nodes.map((node) => node.phongBan))]
+      [...new Set(nodes.flatMap((node) => node.teamNames))]
         .filter(Boolean)
         .sort((a, b) => a.localeCompare(b, "vi")),
     [nodes],
@@ -523,13 +675,13 @@ export default function GoalsPage() {
     const keyword = keywordFilter.trim().toLowerCase();
     return nodes.filter((goal) => {
       if (keyword) {
-        const haystack = `${goal.tieuDe} ${goal.moTa} ${goal.phongBan}`.toLowerCase();
+        const haystack = `${goal.tieuDe} ${goal.moTa} ${goal.teamNames.join(" ")}`.toLowerCase();
         if (!haystack.includes(keyword)) {
           return false;
         }
       }
 
-      if (departmentFilter !== "all" && goal.phongBan !== departmentFilter) {
+      if (departmentFilter !== "all" && !goal.teamNames.includes(departmentFilter)) {
         return false;
       }
 
@@ -604,17 +756,21 @@ export default function GoalsPage() {
       const [
         { data: goalsData, error: goalsLoadError },
         { data: departmentsData, error: departmentsLoadError },
+        { data: goalDepartmentsData, error: goalDepartmentsLoadError },
         { data: keyResultsData, error: keyResultsLoadError },
+        { data: tasksData, error: tasksLoadError },
       ] =
         await Promise.all([
           supabase
             .from("goals")
             .select(
-              "id,name,description,type,department_id,progress,status,quarter,year,note,parent_goal_id,created_at",
+              "id,name,description,type,department_id,status,quarter,year,note,parent_goal_id,owner_id,start_date,end_date,created_at",
             )
             .order("created_at", { ascending: true }),
           supabase.from("departments").select("id,name"),
-          supabase.from("key_results").select("id,goal_id,name,progress"),
+          supabase.from("goal_departments").select("goal_id,department_id"),
+          supabase.from("key_results").select("id,goal_id,name,weight"),
+          supabase.from("tasks").select("id,key_result_id,type,status,progress,weight"),
         ]);
 
       if (!isActive) {
@@ -636,9 +792,23 @@ export default function GoalsPage() {
         setIsLoadingGoals(false);
         return;
       }
+      if (goalDepartmentsLoadError) {
+        setGoalsError("Không tải được cấu trúc phòng ban tham gia mục tiêu.");
+        setNodes([]);
+        setEdges([]);
+        setIsLoadingGoals(false);
+        return;
+      }
 
       if (keyResultsLoadError) {
         setGoalsError("Không tải được danh sách key result.");
+        setNodes([]);
+        setEdges([]);
+        setIsLoadingGoals(false);
+        return;
+      }
+      if (tasksLoadError) {
+        setGoalsError("Không tải được dữ liệu task để tính tiến độ mục tiêu.");
         setNodes([]);
         setEdges([]);
         setIsLoadingGoals(false);
@@ -650,8 +820,57 @@ export default function GoalsPage() {
         acc[departmentId] = String(department.name);
         return acc;
       }, {});
+      const goalDepartmentNamesByGoalId = ((goalDepartmentsData ?? []) as GoalDepartmentParticipationRow[]).reduce<
+        Record<string, string[]>
+      >((acc, item) => {
+        const goalId = item.goal_id ? String(item.goal_id) : null;
+        const departmentId = item.department_id ? String(item.department_id) : null;
+        if (!goalId || !departmentId) {
+          return acc;
+        }
+        const departmentName = departmentsById[departmentId];
+        if (!departmentName) {
+          return acc;
+        }
+        if (!acc[goalId]) {
+          acc[goalId] = [];
+        }
+        if (!acc[goalId].includes(departmentName)) {
+          acc[goalId].push(departmentName);
+        }
+        return acc;
+      }, {});
+      const ownerIds = [
+        ...new Set(
+          ((goalsData ?? []) as GoalRow[])
+            .map((goal) => goal.owner_id)
+            .filter((ownerId): ownerId is string => Boolean(ownerId)),
+        ),
+      ];
+      let ownerProfilesById: Record<string, { name: string; avatar: string | null }> = {};
 
-      const keyResultsByGoalId = ((keyResultsData ?? []) as KeyResultRow[]).reduce<
+      if (ownerIds.length > 0) {
+        const { data: ownerProfilesData } = await supabase
+          .from("profiles")
+          .select("id,name,avatar,email")
+          .in("id", ownerIds);
+
+        if (!isActive) {
+          return;
+        }
+
+        ownerProfilesById = ((ownerProfilesData ?? []) as GoalOwnerProfileRow[]).reduce<
+          Record<string, { name: string; avatar: string | null }>
+        >((acc, profile) => {
+          acc[String(profile.id)] = {
+            name: profile.name?.trim() || profile.email?.trim() || "Chưa gán owner",
+            avatar: profile.avatar ? String(profile.avatar) : null,
+          };
+          return acc;
+        }, {});
+      }
+
+      const keyResultsByGoalId = ((keyResultsData ?? []) as unknown as KeyResultRow[]).reduce<
         Record<string, GoalKeyResultPreview[]>
       >((acc, keyResult) => {
         const goalId = String(keyResult.goal_id);
@@ -661,12 +880,72 @@ export default function GoalsPage() {
         acc[goalId].push({
           id: String(keyResult.id),
           name: String(keyResult.name),
-          progress: clampProgress(keyResult.progress),
+          progress: 0,
         });
         return acc;
       }, {});
 
-      const graph = buildGoalGraph((goalsData as GoalRow[]) ?? [], departmentsById, keyResultsByGoalId);
+      const typedKeyResults = ((keyResultsData ?? []) as unknown as KeyResultRow[]).map((keyResult) => ({
+        id: String(keyResult.id),
+        goal_id: String(keyResult.goal_id),
+        name: String(keyResult.name),
+        weight: typeof keyResult.weight === "number" ? keyResult.weight : Number(keyResult.weight ?? 1),
+      }));
+      const goalIdByKeyResultId = typedKeyResults.reduce<Record<string, string>>((acc, keyResult) => {
+        acc[keyResult.id] = keyResult.goal_id;
+        return acc;
+      }, {});
+      const taskCountByGoalId = ((tasksData ?? []) as Array<{ key_result_id: string | null }>).reduce<
+        Record<string, number>
+      >((acc, task) => {
+        const keyResultId = task.key_result_id ? String(task.key_result_id) : null;
+        const goalId = keyResultId ? goalIdByKeyResultId[keyResultId] ?? null : null;
+        if (!goalId) {
+          return acc;
+        }
+        acc[goalId] = (acc[goalId] ?? 0) + 1;
+        return acc;
+      }, {});
+      const keyResultProgressMap = buildKeyResultProgressMap(
+        typedKeyResults,
+        ((tasksData ?? []) as Array<{
+          key_result_id: string | null;
+          type: string | null;
+          status: string | null;
+          progress: number | null;
+          weight: number | null;
+        }>).map((task) => ({
+          key_result_id: task.key_result_id ? String(task.key_result_id) : null,
+          type: task.type ? String(task.type) : null,
+          status: task.status ? String(task.status) : null,
+          progress: task.progress,
+          weight: task.weight,
+        })),
+      );
+      typedKeyResults.forEach((keyResult) => {
+        const goalId = keyResult.goal_id;
+        if (!keyResultsByGoalId[goalId]) {
+          keyResultsByGoalId[goalId] = [];
+        }
+        const preview = keyResultsByGoalId[goalId].find((item) => item.id === keyResult.id);
+        if (preview) {
+          preview.progress = keyResultProgressMap[keyResult.id] ?? 0;
+        }
+      });
+      const goalProgressById = buildGoalProgressMap(
+        ((goalsData as GoalRow[]) ?? []).map((goal) => String(goal.id)),
+        typedKeyResults,
+        keyResultProgressMap,
+      );
+      const graph = buildGoalGraph(
+        (goalsData as GoalRow[]) ?? [],
+        departmentsById,
+        goalDepartmentNamesByGoalId,
+        keyResultsByGoalId,
+        taskCountByGoalId,
+        goalProgressById,
+        ownerProfilesById,
+      );
       setNodes(graph.nodes);
       setEdges(graph.edges);
       setIsLoadingGoals(false);
@@ -680,186 +959,8 @@ export default function GoalsPage() {
   }, []);
 
   useEffect(() => {
-    let isActive = true;
-
-    const loadCreatePermission = async () => {
-      setIsCheckingCreatePermission(true);
-      const debugState: GoalCreatePermissionDebug = {
-        checkedAt: new Date().toISOString(),
-        step: "start",
-        authUserId: null,
-        profileId: null,
-        profileName: null,
-        leaderRoleIds: [],
-        leaderRolesRaw: [],
-        userRoleRows: [],
-        departments: [],
-        rootDepartments: [],
-        canCreateGoal: false,
-        error: null,
-      };
-
-      try {
-        debugState.step = "auth.getUser";
-        const { data: authData, error: authError } = await supabase.auth.getUser();
-        if (authError || !authData.user) {
-          debugState.error = authError?.message ?? "Không lấy được auth user";
-          debugState.step = "failed.auth";
-          if (isActive) {
-            setCanCreateGoal(false);
-            setRootDepartments([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-        debugState.authUserId = authData.user.id;
-
-        debugState.step = "profiles.by_user_id";
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("id,name")
-          .eq("user_id", authData.user.id)
-          .maybeSingle();
-
-        if (profileError || !profile?.id) {
-          debugState.error = profileError?.message ?? "Không tìm thấy profile theo user_id";
-          debugState.step = "failed.profile";
-          if (isActive) {
-            setCanCreateGoal(false);
-            setRootDepartments([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-        debugState.profileId = profile.id;
-        debugState.profileName = profile.name ?? null;
-
-        debugState.step = "roles.list";
-        const { data: rolesData, error: roleError } = await supabase
-          .from("roles")
-          .select("id,name");
-
-        debugState.leaderRolesRaw = (rolesData ?? []).map((role) => ({
-          id: String(role.id),
-          name: typeof role.name === "string" ? role.name : null,
-        }));
-
-        const leaderRoleIds = (rolesData ?? [])
-          .filter((role) => {
-            const roleName = typeof role.name === "string" ? role.name.trim().toLowerCase() : "";
-            return roleName === "leader" || roleName.includes("leader");
-          })
-          .map((role) => role.id)
-          .filter(Boolean) as string[];
-
-        debugState.leaderRoleIds = leaderRoleIds;
-        if (roleError || leaderRoleIds.length === 0) {
-          debugState.error = roleError?.message ?? "Không tìm thấy role Leader";
-          debugState.step = "failed.role";
-          if (isActive) {
-            setCanCreateGoal(false);
-            setRootDepartments([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-
-        debugState.step = "user_role_in_department.by_profile";
-        const { data: userRolesData, error: userRolesError } = await supabase
-          .from("user_role_in_department")
-          .select("department_id,role_id")
-          .eq("profile_id", profile.id)
-          .in("role_id", leaderRoleIds);
-
-        debugState.userRoleRows = (userRolesData ?? []).map((item) => ({
-          department_id: item.department_id ?? null,
-          role_id: item.role_id ?? null,
-        }));
-
-        const departmentIds = [
-          ...new Set((userRolesData ?? []).map((item) => item.department_id).filter(Boolean)),
-        ];
-        if (userRolesError || departmentIds.length === 0) {
-          debugState.error = userRolesError?.message ?? "Không có role Leader gắn với phòng ban";
-          debugState.step = "failed.user_role_in_department";
-          if (isActive) {
-            setCanCreateGoal(false);
-            setRootDepartments([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-
-        debugState.step = "departments.by_ids";
-        const { data: departmentsData, error: departmentsError } = await supabase
-          .from("departments")
-          .select("id,name,parent_department_id")
-          .in("id", departmentIds);
-
-        if (departmentsError || !departmentsData?.length) {
-          debugState.error = departmentsError?.message ?? "Không lấy được phòng ban";
-          debugState.step = "failed.departments";
-          if (isActive) {
-            setCanCreateGoal(false);
-            setRootDepartments([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-
-        debugState.departments = departmentsData.map((department) => ({
-          id: String(department.id),
-          name: String(department.name),
-          parent_department_id: department.parent_department_id ?? null,
-        }));
-
-        const rootDepartments = departmentsData
-          .filter((department) => !department.parent_department_id)
-          .map((department) => ({
-            id: department.id as string,
-            name: department.name as string,
-          }));
-
-        debugState.rootDepartments = rootDepartments;
-        debugState.canCreateGoal = rootDepartments.length > 0;
-        debugState.step = "done";
-
-        if (!isActive) {
-          return;
-        }
-
-        setCanCreateGoal(rootDepartments.length > 0);
-        setRootDepartments(rootDepartments);
-        setPermissionDebug({ ...debugState });
-      } catch {
-        debugState.error = "Lỗi không xác định khi kiểm tra quyền tạo mục tiêu";
-        debugState.step = "failed.exception";
-        if (isActive) {
-          setCanCreateGoal(false);
-          setRootDepartments([]);
-          setPermissionDebug({ ...debugState });
-        }
-      } finally {
-        if (isActive) {
-          setIsCheckingCreatePermission(false);
-        }
-
-        console.groupCollapsed("[goals] Debug quyền tạo mục tiêu");
-        console.log(debugState);
-        console.groupEnd();
-      }
-    };
-
-    void loadCreatePermission();
-
-    return () => {
-      isActive = false;
-    };
-  }, []);
-
-  useEffect(() => {
     if (!selectedGoal?.id || !isDetailOpen) {
-      setSelectedGoalTasks([]);
+      setSelectedGoalKeyResults([]);
       setSelectedGoalTasksError(null);
       setIsLoadingSelectedGoalTasks(false);
       return;
@@ -871,38 +972,77 @@ export default function GoalsPage() {
       setIsLoadingSelectedGoalTasks(true);
       setSelectedGoalTasksError(null);
 
-      const { data: tasksData, error: tasksError } = await supabase
-        .from("tasks")
-        .select("id,name,type,status,progress,profile_id,key_result_id")
+      const { data: keyResultsData, error: keyResultsError } = await supabase
+        .from("key_results")
+        .select("id,name,current,target,unit")
         .eq("goal_id", selectedGoal.id)
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: true });
+
+      if (!isActive) {
+        return;
+      }
+
+      if (keyResultsError) {
+        setSelectedGoalKeyResults([]);
+        setSelectedGoalTasksError("Không tải được phân bổ công việc.");
+        setIsLoadingSelectedGoalTasks(false);
+        return;
+      }
+
+      const goalKeyResults = (keyResultsData ?? []) as Array<{
+        id: string;
+        name: string;
+        current: number | null;
+        target: number | null;
+        unit: string | null;
+      }>;
+      const keyResultIds = goalKeyResults.map((item) => String(item.id));
+      const { data: tasksData, error: tasksError } = keyResultIds.length > 0
+        ? await supabase
+            .from("tasks")
+            .select(`
+              id,
+              name,
+              type,
+              status,
+              progress,
+              weight,
+              profile_id,
+              key_result_id,
+              key_result:key_results!tasks_key_result_id_fkey(
+                id,
+                name,
+                goal_id,
+                goal:goals!key_results_goal_id_fkey(
+                  id,
+                  name
+                )
+              )
+            `)
+            .in("key_result_id", keyResultIds)
+            .order("created_at", { ascending: false })
+        : { data: [], error: null };
 
       if (!isActive) {
         return;
       }
 
       if (tasksError) {
-        setSelectedGoalTasks([]);
+        setSelectedGoalKeyResults([]);
         setSelectedGoalTasksError("Không tải được phân bổ công việc.");
         setIsLoadingSelectedGoalTasks(false);
         return;
       }
 
-      const typedTasks = (tasksData ?? []) as GoalTaskRow[];
-      const keyResultIds = [...new Set(typedTasks.map((task) => task.key_result_id).filter(Boolean))] as string[];
+      const typedTasks = (tasksData ?? []) as unknown as GoalTaskRow[];
       const profileIds = [...new Set(typedTasks.map((task) => task.profile_id).filter(Boolean))] as string[];
       let profileNameById: Record<string, string> = {};
-      let keyResultNameById: Record<string, string> = {};
 
-      if (profileIds.length > 0 || keyResultIds.length > 0) {
-        const [{ data: profilesData }, { data: keyResultsData }] = await Promise.all([
-          profileIds.length > 0
-            ? supabase.from("profiles").select("id,name").in("id", profileIds)
-            : Promise.resolve({ data: [] }),
-          keyResultIds.length > 0
-            ? supabase.from("key_results").select("id,name").in("id", keyResultIds)
-            : Promise.resolve({ data: [] }),
-        ]);
+      if (profileIds.length > 0) {
+        const { data: profilesData } = await supabase
+          .from("profiles")
+          .select("id,name")
+          .in("id", profileIds);
 
         if (!isActive) {
           return;
@@ -913,33 +1053,52 @@ export default function GoalsPage() {
           acc[profileId] = profile.name ? String(profile.name) : "Chưa gán";
           return acc;
         }, {});
-
-        keyResultNameById = (keyResultsData ?? []).reduce<Record<string, string>>((acc, keyResult) => {
-          const keyResultId = String(keyResult.id);
-          acc[keyResultId] = keyResult.name ? String(keyResult.name) : "Task cấp goal";
-          return acc;
-        }, {});
       }
 
-      const mappedTasks: GoalTaskItem[] = typedTasks.map((task) => ({
-        id: task.id,
-        tieuDe: task.name,
-        loai: task.type === "okr" ? "OKR" : "KPI",
-        trangThai: task.status ? taskStatusLabelMap[task.status] ?? task.status : "Chưa cập nhật",
-        nguoiPhuTrach: task.profile_id ? profileNameById[task.profile_id] ?? "Chưa gán" : "Chưa gán",
-        tienDo: getTaskProgressByType(
-          task.type ? String(task.type) : null,
-          task.status === "doing" || task.status === "done" || task.status === "cancelled"
-            ? task.status
-            : "todo",
-          task.progress,
-        ),
-        keyResultName: task.key_result_id
-          ? keyResultNameById[task.key_result_id] ?? "Task cấp goal"
-          : "Task cấp goal",
-      }));
+      const mappedTasks: GoalTaskItem[] = typedTasks.map((task) => {
+        return {
+          id: task.id,
+          tieuDe: task.name,
+          loai: task.type === "okr" ? "OKR" : "KPI",
+          trangThai: task.status ? taskStatusLabelMap[task.status] ?? task.status : "Chưa cập nhật",
+          nguoiPhuTrach: task.profile_id ? profileNameById[task.profile_id] ?? "Chưa gán" : "Chưa gán",
+          tienDo: getComputedTaskProgress(task),
+        };
+      });
+      const progressMap = buildKeyResultProgressMap(
+        goalKeyResults.map((item) => ({ id: String(item.id), goal_id: selectedGoal.id })),
+        typedTasks.map((task) => ({
+          key_result_id: task.key_result_id ? String(task.key_result_id) : null,
+          type: task.type ? String(task.type) : null,
+          status: task.status ? String(task.status) : null,
+          progress: task.progress,
+          weight: task.weight,
+        })),
+      );
+      const tasksByKeyResultId = mappedTasks.reduce<Record<string, GoalTaskItem[]>>((acc, task) => {
+        const matchedTask = typedTasks.find((item) => item.id === task.id);
+        const keyResultId = matchedTask?.key_result_id ? String(matchedTask.key_result_id) : null;
+        if (!keyResultId) {
+          return acc;
+        }
+        if (!acc[keyResultId]) {
+          acc[keyResultId] = [];
+        }
+        acc[keyResultId].push(task);
+        return acc;
+      }, {});
 
-      setSelectedGoalTasks(mappedTasks);
+      setSelectedGoalKeyResults(
+        goalKeyResults.map((keyResult) => ({
+          id: String(keyResult.id),
+          name: String(keyResult.name),
+          progress: progressMap[String(keyResult.id)] ?? 0,
+          current: typeof keyResult.current === "number" ? keyResult.current : Number(keyResult.current ?? 0),
+          target: typeof keyResult.target === "number" ? keyResult.target : Number(keyResult.target ?? 0),
+          unit: keyResult.unit ? String(keyResult.unit) : null,
+          tasks: tasksByKeyResultId[String(keyResult.id)] ?? [],
+        })),
+      );
       setSelectedGoalTasksError(null);
       setIsLoadingSelectedGoalTasks(false);
     };
@@ -966,9 +1125,10 @@ export default function GoalsPage() {
       setGoalLogsError(null);
 
       const { data: logsData, error: logsError } = await supabase
-        .from("goal_logs")
-        .select("id,goal_id,profile_id,old_value,new_value,created_at,action")
-        .eq("goal_id", selectedGoal.id)
+        .from("activity_logs")
+        .select("id,entity_id,entity_type,profile_id,old_value,new_value,created_at,action")
+        .eq("entity_type", "goal")
+        .eq("entity_id", selectedGoal.id)
         .order("created_at", { ascending: false });
 
       if (!isActive) {
@@ -982,7 +1142,7 @@ export default function GoalsPage() {
         return;
       }
 
-      const typedLogs = (logsData ?? []) as GoalLogRow[];
+      const typedLogs = (logsData ?? []) as unknown as ActivityLogRow[];
       const profileIds = [
         ...new Set(typedLogs.map((item) => item.profile_id).filter(Boolean).map((item) => String(item))),
       ];
@@ -1005,10 +1165,11 @@ export default function GoalsPage() {
         }, {});
       }
 
-      const mappedLogs: GoalLogItem[] = typedLogs.map((item) => ({
+      const mappedLogs: ActivityLogItem[] = typedLogs.map((item) => ({
         id: item.id,
         profileName: item.profile_id ? profileNameById[item.profile_id] ?? "Không rõ" : "Hệ thống",
         action: item.action,
+        entityType: item.entity_type,
         createdAt: item.created_at,
         oldValue: item.old_value ?? null,
         newValue: item.new_value ?? null,
@@ -1159,7 +1320,7 @@ export default function GoalsPage() {
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
   };
 
-  const onPointerDownCard = (event: PointerEvent<HTMLButtonElement>, goalId: string) => {
+  const onPointerDownCard = (event: PointerEvent<HTMLElement>, goalId: string) => {
     if (mode !== "canvas") {
       return;
     }
@@ -1278,6 +1439,42 @@ export default function GoalsPage() {
 
   const handleSelectGoal = (goalId: string) => {
     updateUrlState({ nextGoalId: goalId, nextDetailOpen: true });
+    setActiveGoalMenuId(null);
+  };
+
+  const handleDeleteGoal = async (goalId: string) => {
+    const targetGoal = nodes.find((node) => node.id === goalId);
+    if (!targetGoal) {
+      return;
+    }
+
+    const confirmed = window.confirm(`Xóa mục tiêu "${targetGoal.tieuDe}"?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingGoalId(goalId);
+
+    const { error } = await supabase.from("goals").delete().eq("id", goalId);
+
+    if (error) {
+      window.alert(error.message || "Không thể xóa mục tiêu.");
+      setDeletingGoalId(null);
+      return;
+    }
+
+    setNodes((prev) => prev.filter((node) => node.id !== goalId));
+    setEdges((prev) => prev.filter((edge) => edge.from !== goalId && edge.to !== goalId));
+    setActiveGoalMenuId(null);
+    setDeletingGoalId(null);
+
+    if (selectedId === goalId) {
+      const nextParams = new URLSearchParams(searchParams.toString());
+      nextParams.delete("goal");
+      nextParams.set("detail", "closed");
+      const next = nextParams.toString();
+      router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
+    }
   };
 
   return (
@@ -1392,8 +1589,11 @@ export default function GoalsPage() {
                         onClick={fitCanvasToNodes}
                         className="h-7 rounded px-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
                       >
-                        {Math.round(canvasScale * 100)}%
+                        Vừa khung
                       </button>
+                      <span className="inline-flex h-7 items-center rounded bg-slate-100 px-2 text-[11px] font-semibold text-slate-500">
+                        Thu phóng {Math.round(canvasScale * 100)}%
+                      </span>
                       <button
                         type="button"
                         onClick={() => applyCanvasZoom(canvasScale + 0.08)}
@@ -1459,13 +1659,9 @@ export default function GoalsPage() {
                     </svg>
 
                     {nodes.map((goal) => (
-                      <button
-                        data-goal-card="1"
+                      <div
                         key={goal.id}
-                        type="button"
-                        onPointerDown={(event) => onPointerDownCard(event, goal.id)}
-                        onClick={() => handleSelectGoal(goal.id)}
-                        className={`absolute rounded-2xl border bg-white p-4 text-left shadow-[0_14px_34px_-26px_rgba(15,23,42,0.6)] transition ${
+                        className={`group absolute rounded-2xl border bg-white shadow-[0_14px_34px_-26px_rgba(15,23,42,0.6)] transition ${
                           selectedId === goal.id
                             ? "border-blue-600 ring-2 ring-blue-100"
                             : "border-slate-200 hover:border-blue-300"
@@ -1474,72 +1670,158 @@ export default function GoalsPage() {
                           left: goal.x,
                           top: goal.y,
                           width: CARD_WIDTH,
-                          cursor: mode === "canvas" ? "grab" : "pointer",
                         }}
                       >
-                        <div className="mb-4 flex items-center justify-between">
-                          <span
-                            className={`max-w-[240px] truncate rounded-lg px-3 py-1 text-[11px] font-semibold ${badgeMap[goal.mau]}`}
+                        <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
+                          <Link
+                            href={`/goals/${goal.id}?createKr=1`}
+                            onClick={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            className={`inline-flex h-8 items-center rounded-lg px-3 text-xs font-semibold transition ${
+                              goal.keyResultCount === 0
+                                ? "bg-blue-600 text-white hover:bg-blue-700"
+                                : "pointer-events-none border border-slate-200 bg-white text-slate-700 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-slate-50"
+                            }`}
                           >
-                            {goal.phongBan}
-                          </span>
-                          <span
-                            className={`inline-flex h-3 w-3 rounded-full ${colorMap[goal.mau]}`}
-                          />
-                        </div>
-                        <p className="line-clamp-2 text-2xl font-semibold leading-tight tracking-[-0.02em] text-slate-900">
-                          {goal.tieuDe}
-                        </p>
-                        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                          <div className="mb-2 flex items-center justify-between">
-                            <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-500 uppercase">
-                              Key result
-                            </span>
-                            <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">
-                              {goal.keyResultCount}
-                            </span>
-                          </div>
-                          {goal.keyResultsPreview.length > 0 ? (
-                            <div className="space-y-2">
-                              {goal.keyResultsPreview.map((keyResult) => (
-                                <div
-                                  key={keyResult.id}
-                                  className="rounded-lg border border-white/80 bg-white px-2.5 py-2"
+                            + KR
+                          </Link>
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setActiveGoalMenuId((prev) => (prev === goal.id ? null : goal.id));
+                              }}
+                              onPointerDown={(event) => event.stopPropagation()}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                            >
+                              ...
+                            </button>
+                            {activeGoalMenuId === goal.id ? (
+                              <div className="absolute right-0 top-10 w-40 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setActiveGoalMenuId(null);
+                                    router.push(`/goals/${goal.id}`);
+                                  }}
+                                  className="flex w-full items-center px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                                 >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <p className="line-clamp-1 text-xs font-semibold text-slate-700">
-                                      {keyResult.name}
-                                    </p>
-                                    <span className="text-[11px] font-semibold text-blue-700">
-                                      {keyResult.progress}%
-                                    </span>
-                                  </div>
-                                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100">
-                                    <div
-                                      className="h-full rounded-full bg-blue-600"
-                                      style={{ width: `${keyResult.progress}%` }}
-                                    />
-                                  </div>
-                                </div>
-                              ))}
-                              {goal.keyResultCount > goal.keyResultsPreview.length ? (
-                                <p className="text-[11px] font-medium text-slate-500">
-                                  +{goal.keyResultCount - goal.keyResultsPreview.length} key result khác
-                                </p>
+                                  Sửa mục tiêu
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={deletingGoalId === goal.id}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void handleDeleteGoal(goal.id);
+                                  }}
+                                  className="flex w-full items-center px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {deletingGoalId === goal.id ? "Đang xóa..." : "Xóa mục tiêu"}
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div
+                          data-goal-card="1"
+                          onPointerDown={(event) => onPointerDownCard(event, goal.id)}
+                          onClick={() => handleSelectGoal(goal.id)}
+                          className="h-full w-full p-4 text-left"
+                          style={{ cursor: mode === "canvas" ? "grab" : "pointer" }}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              handleSelectGoal(goal.id);
+                            }
+                          }}
+                        >
+                          <div className="flex items-start justify-between gap-3 pr-24">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={`inline-flex max-w-[150px] truncate rounded-lg px-2.5 py-1 text-[11px] font-semibold ${badgeMap[goal.mau]}`}
+                                title={goal.teamNames.join(", ")}
+                              >
+                                {goal.teamSummary}
+                              </span>
+                              {goal.departmentCount > 1 ? (
+                                <span className="inline-flex rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                                  {goal.departmentCount} phòng ban
+                                </span>
                               ) : null}
+                              <span
+                                className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ${healthBadgeMap[goal.healthStatus]}`}
+                              >
+                                {goalHealthLabelMap[goal.healthStatus]}
+                              </span>
+                            </div>
+                            <span className={`mt-1 inline-flex h-3 w-3 rounded-full ${colorMap[goal.mau]}`} />
+                          </div>
+
+                          <p className="mt-4 line-clamp-2 text-[22px] font-semibold leading-tight tracking-[-0.02em] text-slate-900">
+                            {goal.tieuDe}
+                          </p>
+
+                          <div className="mt-4 grid grid-cols-3 gap-2">
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">KR</p>
+                              <p className="mt-1 text-lg font-semibold text-slate-900">{goal.keyResultCount}</p>
+                            </div>
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">Task</p>
+                              <p className="mt-1 text-lg font-semibold text-slate-900">{goal.taskCount}</p>
+                            </div>
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">Tiến độ</p>
+                              <p className="mt-1 text-lg font-semibold text-slate-900">{goal.progress}%</p>
+                            </div>
+                          </div>
+
+                          {goal.keyResultCount > 0 ? (
+                            <div className="mt-3 space-y-1">
+                              <div className="flex items-center justify-between text-[11px] text-slate-500">
+                                <span>{goal.statusLabel}</span>
+                                <span>{goal.keyResultsPreview.length} KR nổi bật</span>
+                              </div>
+                              <ProgressBar value={goal.progress} />
                             </div>
                           ) : (
-                            <p className="text-xs text-slate-500">Chưa có key result.</p>
+                            <p className="mt-3 text-xs font-medium text-slate-500">
+                              Chưa có KR để theo dõi tiến độ.
+                            </p>
                           )}
-                        </div>
-                        <div className="mt-4 space-y-1">
-                          <div className="flex items-center justify-between text-sm text-slate-500">
-                            <span>Tiến độ</span>
-                            <span className="font-semibold">{goal.progress}%</span>
+
+                          <div className="mt-4 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                            <div className="flex items-center gap-3">
+                              {goal.ownerAvatar ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={goal.ownerAvatar}
+                                  alt={goal.ownerName}
+                                  className="h-9 w-9 rounded-full object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
+                                  {toShortName(goal.ownerName)}
+                                </div>
+                              )}
+                              <div>
+                                <p className="text-[11px] text-slate-500">Chủ sở hữu</p>
+                                <p className="text-sm font-semibold text-slate-800">{goal.ownerName}</p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Deadline</p>
+                              <p className="text-xs font-medium text-slate-600">{formatDateVi(goal.endDate)}</p>
+                            </div>
                           </div>
-                          <ProgressBar value={goal.progress} />
                         </div>
-                      </button>
+                      </div>
                     ))}
                     </div>
                   </div>
@@ -1702,17 +1984,34 @@ export default function GoalsPage() {
                                       ? nodeMap[goal.parentGoalId]?.tieuDe ?? "Không xác định"
                                       : "Không có"}
                                   </td>
-                                  <td className="px-5 py-4 text-sm text-slate-600">{goal.phongBan}</td>
+                                  <td className="px-5 py-4 text-sm text-slate-600" title={goal.teamNames.join(", ")}>
+                                    {goal.teamSummary}
+                                  </td>
                                   <td className="px-5 py-4 text-sm text-slate-600">{goal.nhom}</td>
-                                  <td className="px-5 py-4 text-sm text-slate-600">{goal.owner}</td>
+                                  <td className="px-5 py-4 text-sm text-slate-600">
+                                    <div className="space-y-2">
+                                      <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                                        {goal.statusLabel}
+                                      </span>
+                                      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${healthBadgeMap[goal.healthStatus]}`}>
+                                        {goalHealthLabelMap[goal.healthStatus]}
+                                      </span>
+                                    </div>
+                                  </td>
                                   <td className="px-5 py-4 text-sm text-slate-600">{goal.quy}</td>
                                   <td className="px-5 py-4">
-                                    <div className="w-32 space-y-1">
-                                      <ProgressBar value={goal.progress} />
-                                      <p className="text-right text-xs font-semibold text-slate-500">
-                                        {goal.progress}%
+                                    {goal.keyResultCount > 0 ? (
+                                      <div className="w-32 space-y-1">
+                                        <ProgressBar value={goal.progress} />
+                                        <p className="text-right text-xs font-semibold text-slate-500">
+                                          {goal.progress}%
+                                        </p>
+                                      </div>
+                                    ) : (
+                                      <p className="text-xs font-medium text-slate-500">
+                                        Chưa có KR
                                       </p>
-                                    </div>
+                                    )}
                                   </td>
                                   <td className="whitespace-nowrap px-5 py-4 text-sm text-slate-500">
                                     {formatDateTimeVi(goal.createdAt)}
@@ -1787,33 +2086,79 @@ export default function GoalsPage() {
 
                 <div className="grid grid-cols-2 gap-6">
                   <div>
-                    <p className="text-sm text-slate-400">Phòng ban</p>
+                    <p className="text-sm text-slate-400">Phòng ban chính</p>
                     <p className="mt-2 text-base font-medium text-slate-800">{selectedGoal.phongBan}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-slate-400">Team tham gia</p>
+                    <p className="mt-2 text-base font-medium text-slate-800">{selectedGoal.departmentCount}</p>
                   </div>
                   <div>
                     <p className="text-sm text-slate-400">Quý</p>
                     <p className="mt-2 text-base font-medium text-slate-800">{selectedGoal.quy}</p>
                   </div>
+                  <div>
+                    <p className="text-sm text-slate-400">Chủ sở hữu</p>
+                    <p className="mt-2 text-base font-medium text-slate-800">{selectedGoal.ownerName}</p>
+                  </div>
                 </div>
+
+                {selectedGoal.teamNames.length > 0 ? (
+                  <div>
+                    <p className="text-sm text-slate-400">Danh sách phòng ban tham gia</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {selectedGoal.teamNames.map((teamName, index) => (
+                        <span
+                          key={`${selectedGoal.id}-${teamName}`}
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                            index === 0 ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-700"
+                          }`}
+                        >
+                          {teamName}
+                          {index === 0 ? " · chính" : ""}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
 
                 <div>
                   <p className="text-sm text-slate-400">Trạng thái</p>
                   <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-lg font-semibold text-slate-800">{selectedGoal.owner}</p>
-                    <p className="text-sm text-slate-500">{selectedGoal.vaiTro}</p>
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg font-semibold text-slate-800">{selectedGoal.statusLabel}</span>
+                      <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ${healthBadgeMap[selectedGoal.healthStatus]}`}>
+                        {goalHealthLabelMap[selectedGoal.healthStatus]}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm text-slate-500">Hạn chót {formatDateVi(selectedGoal.endDate)}</p>
                   </div>
                 </div>
 
-                <div>
-                  <div className="mb-2 flex items-center justify-between">
-                    <p className="text-sm text-slate-400">Tiến độ</p>
-                    <p className="text-3xl font-bold text-slate-900">{selectedGoal.progress}%</p>
+                {selectedGoal.keyResultCount > 0 ? (
+                  <div>
+                    <div className="mb-2 flex items-center justify-between">
+                      <p className="text-sm text-slate-400">Tiến độ</p>
+                      <p className="text-3xl font-bold text-slate-900">{selectedGoal.progress}%</p>
+                    </div>
+                    <ProgressBar value={selectedGoal.progress} />
+                    <p className="mt-2 text-xs text-slate-500 italic">
+                      * Tự động tính từ progress của task theo từng key result.
+                    </p>
                   </div>
-                  <ProgressBar value={selectedGoal.progress} />
-                  <p className="mt-2 text-xs text-slate-500 italic">
-                    * Tự động tính theo mục tiêu con và các công việc liên kết.
-                  </p>
-                </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-blue-200 bg-blue-50/60 p-4">
+                    <p className="text-sm font-medium text-slate-700">
+                      Chưa có Key Result. Hãy thêm KR để bắt đầu theo dõi mục tiêu.
+                    </p>
+                    <Link
+                      href={`/goals/${selectedGoal.id}?createKr=1`}
+                      className="mt-3 inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white"
+                    >
+                      + Thêm Key Result
+                    </Link>
+                  </div>
+                )}
 
                 <div>
                   <p className="text-sm text-slate-400">Mô tả</p>
@@ -1823,7 +2168,7 @@ export default function GoalsPage() {
                 <div className="rounded-2xl border border-slate-200 bg-slate-50">
                   <div className="border-b border-slate-200 px-4 py-3">
                     <h3 className="text-base font-semibold text-slate-900">
-                      Task theo key result
+                      Công việc theo Key Result
                     </h3>
                   </div>
                   <div className="divide-y divide-slate-200">
@@ -1835,36 +2180,62 @@ export default function GoalsPage() {
                       <p className="px-4 py-5 text-sm text-rose-600">
                         {selectedGoalTasksError}
                       </p>
-                    ) : selectedGoalTasks.length > 0 ? (
-                      selectedGoalTasks.map((task) => (
-                        <div key={task.id} className="space-y-2 px-4 py-3">
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="text-sm font-medium text-slate-800">{task.tieuDe}</p>
-                            <div className="flex flex-col items-end gap-1">
+                    ) : selectedGoalKeyResults.length > 0 ? (
+                      selectedGoalKeyResults.map((keyResult) => (
+                        <div key={keyResult.id} className="space-y-3 px-4 py-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-slate-900">{keyResult.name}</p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                {keyResult.current}/{keyResult.target}
+                                {keyResult.unit ? ` · ${keyResult.unit}` : ""}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Link
+                                href={`/tasks/new?goalId=${selectedGoal.id}&keyResultId=${keyResult.id}`}
+                                className="inline-flex h-8 items-center rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white"
+                              >
+                                + Task
+                              </Link>
                               <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">
-                                {task.keyResultName}
-                              </span>
-                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
-                                {task.loai}
+                                {keyResult.progress}%
                               </span>
                             </div>
                           </div>
-                          <div className="flex items-center justify-between text-xs text-slate-500">
-                            <span>{task.trangThai}</span>
-                            <span>{task.nguoiPhuTrach}</span>
-                          </div>
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between text-[11px] text-slate-500">
-                              <span>Tiến độ</span>
-                              <span className="font-semibold">{task.tienDo}%</span>
+                          <ProgressBar value={keyResult.progress} />
+                          {keyResult.tasks.length > 0 ? (
+                            <div className="space-y-2">
+                              {keyResult.tasks.map((task) => (
+                                <div key={task.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <p className="text-sm font-medium text-slate-800">{task.tieuDe}</p>
+                                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                                      {task.loai}
+                                    </span>
+                                  </div>
+                                  <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+                                    <span>{task.trangThai}</span>
+                                    <span>{task.nguoiPhuTrach}</span>
+                                  </div>
+                                  <div className="mt-2 space-y-1">
+                                    <div className="flex items-center justify-between text-[11px] text-slate-500">
+                                      <span>Tiến độ</span>
+                                      <span className="font-semibold">{task.tienDo}%</span>
+                                    </div>
+                                    <ProgressBar value={task.tienDo} />
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                            <ProgressBar value={task.tienDo} />
-                          </div>
+                          ) : (
+                            <p className="text-xs text-slate-500">KR này chưa có task.</p>
+                          )}
                         </div>
                       ))
                     ) : (
                       <p className="px-4 py-5 text-sm text-slate-500">
-                        Chưa có công việc nào liên kết với goal này.
+                        Chưa có dữ liệu KR để hiển thị công việc.
                       </p>
                     )}
                   </div>
@@ -1944,7 +2315,7 @@ export default function GoalsPage() {
                               </p>
                             </div>
                             <span className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-500">
-                              {log.action ?? "goal_updated"}
+                              {(log.entityType ?? "goal").toUpperCase()} · {log.action ?? "goal_updated"}
                             </span>
                           </div>
 

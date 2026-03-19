@@ -20,6 +20,20 @@ const okrProgressByStatus: Record<TaskStatusValue, number> = {
   cancelled: 0,
 };
 
+export const normalizeTaskStatus = (value: string | null | undefined): TaskStatusValue => {
+  const raw = (value ?? "").trim().toLowerCase();
+  if (raw === "done" || raw === "completed") {
+    return "done";
+  }
+  if (raw === "doing" || raw === "inprogress" || raw === "review") {
+    return "doing";
+  }
+  if (raw === "cancelled" || raw === "canceled") {
+    return "cancelled";
+  }
+  return "todo";
+};
+
 export const getTaskProgressByType = (
   taskType: string | null | undefined,
   status: TaskStatusValue,

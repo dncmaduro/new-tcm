@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import {
   Select,
@@ -11,40 +11,50 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getTaskProgressByType, TASK_STATUSES, type TaskStatusValue } from "@/lib/constants/tasks";
 import { formatKeyResultMetric, formatKeyResultUnit } from "@/lib/constants/key-results";
+import { getComputedTaskProgress } from "@/lib/okr";
+import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
 
-type TaskMode = "list" | "kanban";
-const TASKS_PAGE_SIZE = 10;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const LEFT_PANEL_WIDTH = 420;
+
+type TimelineScale = "day" | "week" | "month";
+type TimelineStatus = "todo" | "in_progress" | "done" | "blocked" | "cancelled";
+type TaskViewMode = "gantt" | "list";
 
 type TaskRow = {
   id: string;
   name: string;
-  goal_id: string | null;
   key_result_id: string | null;
-  profile_id: string | null;
+  assignee_id: string | null;
   type: string | null;
   status: string | null;
   progress: number | null;
-  deadline?: string | null;
-  due_date?: string | null;
-  due_at?: string | null;
+  weight: number | null;
+  deadline: string | null;
   created_at: string | null;
+  key_result?: unknown;
+  assignee?: unknown;
 };
 
 type GoalLiteRow = {
   id: string;
   name: string;
+  start_date: string | null;
+  end_date: string | null;
 };
 
 type KeyResultLiteRow = {
   id: string;
-  goal_id: string;
+  goal_id: string | null;
   name: string;
   current: number | null;
   target: number | null;
   unit: string | null;
+  start_value: number | null;
+  weight: number | null;
+  goal: GoalLiteRow | null;
 };
 
 type ProfileLiteRow = {
@@ -58,22 +68,50 @@ type TaskItem = {
   name: string;
   goalId: string | null;
   goalName: string;
+  goalStartDate: string | null;
+  goalEndDate: string | null;
   keyResultId: string | null;
   keyResultName: string;
   keyResultMetric: string;
   type: string | null;
-  profileId: string | null;
-  assignee: string;
+  assigneeId: string | null;
+  assigneeName: string;
   assigneeShort: string;
-  status: TaskStatusValue;
+  status: TimelineStatus;
+  rawStatus: string | null;
   progress: number;
   deadlineAt: string | null;
+  startAt: string | null;
   createdAt: string | null;
 };
 
-type DepartmentOption = {
+type GoalGroup = {
   id: string;
   name: string;
+  startDate: string | null;
+  endDate: string | null;
+  keyResults: KeyResultGroup[];
+};
+
+type KeyResultGroup = {
+  id: string;
+  name: string;
+  goalId: string;
+  metric: string;
+  tasks: TaskItem[];
+};
+
+type TimelinePeriod = {
+  key: string;
+  start: Date;
+  end: Date;
+  label: string;
+  subLabel: string;
+};
+
+type QuickEditState = {
+  progress: string;
+  deadline: string;
 };
 
 type TaskCreatePermissionDebug = {
@@ -91,39 +129,61 @@ type TaskCreatePermissionDebug = {
   error: string | null;
 };
 
-const statusLabelMap = TASK_STATUSES.reduce<Record<string, string>>((acc, status) => {
-  acc[status.value] = status.label;
-  return acc;
-}, {});
+const TIMELINE_STATUS_OPTIONS: Array<{ value: "all" | TimelineStatus; label: string }> = [
+  { value: "all", label: "Tất cả trạng thái" },
+  { value: "todo", label: "Cần làm" },
+  { value: "in_progress", label: "Đang làm" },
+  { value: "done", label: "Hoàn thành" },
+  { value: "blocked", label: "Bị chặn" },
+  { value: "cancelled", label: "Đã hủy" },
+];
 
-const normalizeTaskStatus = (value: string | null): TaskStatusValue => {
-  const raw = (value ?? "").trim().toLowerCase();
-  if (raw === "done" || raw === "completed") {
-    return "done";
-  }
-  if (raw === "doing" || raw === "inprogress" || raw === "review") {
-    return "doing";
-  }
-  if (raw === "cancelled" || raw === "canceled") {
-    return "cancelled";
-  }
-  return "todo";
+const statusMetaMap: Record<
+  TimelineStatus,
+  { label: string; badgeClassName: string; barClassName: string; fillClassName: string }
+> = {
+  todo: {
+    label: "Cần làm",
+    badgeClassName: "bg-slate-100 text-slate-700",
+    barClassName: "bg-slate-300 text-slate-900",
+    fillClassName: "bg-slate-500/55",
+  },
+  in_progress: {
+    label: "Đang làm",
+    badgeClassName: "bg-blue-50 text-blue-700",
+    barClassName: "bg-blue-500 text-white",
+    fillClassName: "bg-blue-300/70",
+  },
+  done: {
+    label: "Hoàn thành",
+    badgeClassName: "bg-emerald-50 text-emerald-700",
+    barClassName: "bg-emerald-500 text-white",
+    fillClassName: "bg-emerald-300/80",
+  },
+  blocked: {
+    label: "Bị chặn",
+    badgeClassName: "bg-rose-50 text-rose-700",
+    barClassName: "bg-rose-500 text-white",
+    fillClassName: "bg-rose-300/70",
+  },
+  cancelled: {
+    label: "Đã hủy",
+    badgeClassName: "bg-slate-200 text-slate-700",
+    barClassName: "bg-slate-400 text-white",
+    fillClassName: "bg-slate-300/75",
+  },
 };
 
-const resolveDeadline = (task: TaskRow) =>
-  task.deadline ?? task.due_date ?? task.due_at ?? null;
+const PERIOD_COUNT: Record<TimelineScale, number> = {
+  day: 21,
+  week: 12,
+  month: 6,
+};
 
-const formatDate = (value: string | null) => {
-  if (!value) {
-    return "Chưa đặt";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Không hợp lệ";
-  }
-  return new Intl.DateTimeFormat("vi-VN", {
-    dateStyle: "short",
-  }).format(date);
+const PERIOD_WIDTH: Record<TimelineScale, number> = {
+  day: 56,
+  week: 92,
+  month: 128,
 };
 
 const toShortName = (name: string) => {
@@ -140,58 +200,266 @@ const toShortName = (name: string) => {
   return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
 };
 
-function StatusBadge({ status }: { status: TaskStatusValue }) {
-  if (status === "doing") {
-    return (
-      <span className="rounded-lg bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">
-        {statusLabelMap[status]}
-      </span>
-    );
+const clampProgress = (value: number | null | undefined) => {
+  const safe = Number.isFinite(value) ? Number(value) : 0;
+  return Math.min(100, Math.max(0, Math.round(safe)));
+};
+
+const normalizeTimelineStatus = (value: string | null | undefined): TimelineStatus => {
+  const raw = (value ?? "").trim().toLowerCase();
+  if (raw === "blocked") {
+    return "blocked";
   }
-  if (status === "done") {
-    return (
-      <span className="rounded-lg bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
-        {statusLabelMap[status]}
-      </span>
-    );
+  if (raw === "doing" || raw === "in_progress" || raw === "inprogress" || raw === "review") {
+    return "in_progress";
   }
-  if (status === "cancelled") {
-    return (
-      <span className="rounded-lg bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700">
-        {statusLabelMap[status]}
-      </span>
-    );
+  if (raw === "done" || raw === "completed") {
+    return "done";
   }
+  if (raw === "cancelled" || raw === "canceled") {
+    return "cancelled";
+  }
+  return "todo";
+};
+
+const normalizeGoalLite = (value: unknown): GoalLiteRow | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  return {
+    id: String(record.id),
+    name: String(record.name),
+    start_date: record.start_date ? String(record.start_date) : null,
+    end_date: record.end_date ? String(record.end_date) : null,
+  };
+};
+
+const normalizeProfileLite = (value: unknown): ProfileLiteRow | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  return {
+    id: String(record.id),
+    name: record.name ? String(record.name) : null,
+    email: record.email ? String(record.email) : null,
+  };
+};
+
+const normalizeKeyResultLite = (value: unknown): KeyResultLiteRow | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const rawGoal = Array.isArray(record.goal) ? record.goal[0] ?? null : record.goal;
+  return {
+    id: String(record.id),
+    goal_id: record.goal_id ? String(record.goal_id) : null,
+    name: String(record.name),
+    current: typeof record.current === "number" ? record.current : Number(record.current ?? 0),
+    target: typeof record.target === "number" ? record.target : Number(record.target ?? 0),
+    unit: record.unit ? String(record.unit) : null,
+    start_value: typeof record.start_value === "number" ? record.start_value : Number(record.start_value ?? 0),
+    weight: typeof record.weight === "number" ? record.weight : Number(record.weight ?? 1),
+    goal: normalizeGoalLite(rawGoal),
+  };
+};
+
+const formatDate = (value: string | null) => {
+  if (!value) {
+    return "Chưa đặt";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Không hợp lệ";
+  }
+
+  return new Intl.DateTimeFormat("vi-VN", {
+    dateStyle: "short",
+  }).format(date);
+};
+
+const toDateInputValue = (value: string | null) => {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return date.toISOString().slice(0, 10);
+};
+
+const startOfDay = (value: Date) => {
+  const next = new Date(value);
+  next.setHours(0, 0, 0, 0);
+  return next;
+};
+
+const startOfWeek = (value: Date) => {
+  const next = startOfDay(value);
+  const day = next.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  next.setDate(next.getDate() + diff);
+  return next;
+};
+
+const startOfMonth = (value: Date) => {
+  const next = startOfDay(value);
+  next.setDate(1);
+  return next;
+};
+
+const startOfScale = (value: Date, scale: TimelineScale) => {
+  if (scale === "week") {
+    return startOfWeek(value);
+  }
+  if (scale === "month") {
+    return startOfMonth(value);
+  }
+  return startOfDay(value);
+};
+
+const addScale = (value: Date, scale: TimelineScale, amount: number) => {
+  const next = new Date(value);
+  if (scale === "week") {
+    next.setDate(next.getDate() + amount * 7);
+    return next;
+  }
+  if (scale === "month") {
+    next.setMonth(next.getMonth() + amount);
+    return next;
+  }
+  next.setDate(next.getDate() + amount);
+  return next;
+};
+
+const endOfScale = (value: Date, scale: TimelineScale) => {
+  const next = addScale(startOfScale(value, scale), scale, 1);
+  next.setMilliseconds(next.getMilliseconds() - 1);
+  return next;
+};
+
+const formatPeriodLabel = (date: Date, scale: TimelineScale) => {
+  if (scale === "day") {
+    return {
+      label: new Intl.DateTimeFormat("vi-VN", { weekday: "short" }).format(date),
+      subLabel: new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit" }).format(date),
+    };
+  }
+
+  if (scale === "week") {
+    const end = endOfScale(date, scale);
+    return {
+      label: `Tuần ${new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit" }).format(date)}`,
+      subLabel: new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit" }).format(end),
+    };
+  }
+
+  return {
+    label: new Intl.DateTimeFormat("vi-VN", { month: "long" }).format(date),
+    subLabel: new Intl.DateTimeFormat("vi-VN", { year: "numeric" }).format(date),
+  };
+};
+
+const buildTimelinePeriods = (anchor: Date, scale: TimelineScale) => {
+  const start = startOfScale(anchor, scale);
+  return Array.from({ length: PERIOD_COUNT[scale] }, (_, index) => {
+    const periodStart = addScale(start, scale, index);
+    const periodEnd = endOfScale(periodStart, scale);
+    const formatted = formatPeriodLabel(periodStart, scale);
+    return {
+      key: `${scale}-${periodStart.toISOString()}`,
+      start: periodStart,
+      end: periodEnd,
+      label: formatted.label,
+      subLabel: formatted.subLabel,
+    } satisfies TimelinePeriod;
+  });
+};
+
+const getTaskStartDate = (task: TaskItem) => {
+  if (task.createdAt) {
+    return startOfDay(new Date(task.createdAt));
+  }
+  if (task.goalStartDate) {
+    return startOfDay(new Date(task.goalStartDate));
+  }
+  if (task.deadlineAt) {
+    return startOfDay(new Date(task.deadlineAt));
+  }
+  return startOfDay(new Date());
+};
+
+const getTaskEndDate = (task: TaskItem) => {
+  if (!task.deadlineAt) {
+    return null;
+  }
+
+  const deadline = startOfDay(new Date(task.deadlineAt));
+  const start = getTaskStartDate(task);
+  return deadline.getTime() >= start.getTime() ? deadline : start;
+};
+
+const getScaleDiff = (base: Date, value: Date, scale: TimelineScale) => {
+  if (scale === "day") {
+    return Math.floor((startOfDay(value).getTime() - startOfDay(base).getTime()) / DAY_MS);
+  }
+  if (scale === "week") {
+    return Math.floor((startOfWeek(value).getTime() - startOfWeek(base).getTime()) / (DAY_MS * 7));
+  }
+  return (value.getFullYear() - base.getFullYear()) * 12 + (value.getMonth() - base.getMonth());
+};
+
+const buildTaskTooltip = (task: TaskItem) =>
+  [
+    task.name,
+    `Mục tiêu: ${task.goalName}`,
+    `Kết quả then chốt: ${task.keyResultName}`,
+    `Người phụ trách: ${task.assigneeName}`,
+    `Tiến độ: ${task.progress}%`,
+    `Hạn chót: ${formatDate(task.deadlineAt)}`,
+    `Trạng thái: ${statusMetaMap[task.status].label}`,
+  ].join("\n");
+
+function StatusBadge({ status }: { status: TimelineStatus }) {
   return (
-    <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
-      {statusLabelMap[status]}
+    <span className={`rounded-lg px-2 py-1 text-xs font-semibold ${statusMetaMap[status].badgeClassName}`}>
+      {statusMetaMap[status].label}
     </span>
   );
 }
 
 function ProgressBar({ value }: { value: number }) {
   return (
-    <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+    <div className="h-2 overflow-hidden rounded-full bg-slate-100">
       <div className="h-full rounded-full bg-blue-600" style={{ width: `${value}%` }} />
     </div>
   );
 }
 
-function ModeButton({
+function ScaleButton({
   active,
   children,
   onClick,
 }: {
   active: boolean;
-  children: ReactNode;
+  children: string;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
-        active ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-800"
+      className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+        active ? "bg-white text-blue-700 shadow-sm" : "text-slate-500 hover:text-slate-800"
       }`}
     >
       {children}
@@ -201,13 +469,8 @@ function ModeButton({
 
 export default function TasksPage() {
   const router = useRouter();
-  const pathname = usePathname();
   const searchParams = useSearchParams();
-
-  const [canCreateTask, setCanCreateTask] = useState(false);
-  const [isCheckingCreatePermission, setIsCheckingCreatePermission] = useState(true);
-  const [rootDepartments, setRootDepartments] = useState<DepartmentOption[]>([]);
-  const [permissionDebug, setPermissionDebug] = useState<TaskCreatePermissionDebug | null>(null);
+  const workspaceAccess = useWorkspaceAccess();
 
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [isLoadingTasks, setIsLoadingTasks] = useState(true);
@@ -217,24 +480,41 @@ export default function TasksPage() {
   const [assigneeFilters, setAssigneeFilters] = useState<Array<{ id: string; name: string }>>([]);
 
   const [searchKeyword, setSearchKeyword] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | TaskStatusValue>("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | TimelineStatus>("all");
   const [goalFilter, setGoalFilter] = useState<"all" | string>("all");
   const [keyResultFilter, setKeyResultFilter] = useState<"all" | string>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<"all" | string>("all");
-  const [taskPage, setTaskPage] = useState(1);
+  const [viewMode, setViewMode] = useState<TaskViewMode>("gantt");
+  const [timeScale, setTimeScale] = useState<TimelineScale>("week");
+  const [rangeAnchor, setRangeAnchor] = useState(() => new Date());
+  const [showNoDeadlineSection, setShowNoDeadlineSection] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [quickEditState, setQuickEditState] = useState<QuickEditState>({ progress: "0", deadline: "" });
+  const [savingTaskId, setSavingTaskId] = useState<string | null>(null);
 
-  const mode: TaskMode =
-    searchParams.get("mode") === "kanban"
-      ? "kanban"
-      : "list";
   const showPermissionDebug = searchParams.get("debugPermission") === "1";
-
-  const changeMode = (nextMode: TaskMode) => {
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("mode", nextMode);
-    const next = params.toString();
-    router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
-  };
+  const canCreateTask = workspaceAccess.canManage && !workspaceAccess.error;
+  const isCheckingCreatePermission = workspaceAccess.isLoading;
+  const rootDepartments = workspaceAccess.managedDepartments;
+  const permissionDebug: TaskCreatePermissionDebug = useMemo(
+    () => ({
+      ...buildWorkspaceAccessDebug({
+        authUserId: workspaceAccess.authUserId,
+        profileId: workspaceAccess.profileId,
+        profileName: workspaceAccess.profileName,
+        leaderRoleIds: workspaceAccess.leaderRoleIds,
+        roles: workspaceAccess.roles,
+        memberships: workspaceAccess.memberships,
+        departments: workspaceAccess.departments,
+        managedDepartments: workspaceAccess.managedDepartments,
+        canManage: workspaceAccess.canManage,
+        error: workspaceAccess.error,
+        lastLoadedAt: workspaceAccess.lastLoadedAt,
+      }),
+      canCreateTask: workspaceAccess.canManage,
+    }),
+    [workspaceAccess],
+  );
 
   useEffect(() => {
     let isActive = true;
@@ -244,28 +524,49 @@ export default function TasksPage() {
       setTaskLoadError(null);
 
       try {
-        const [
-          { data: taskRows, error: taskError },
-          { data: goalRows, error: goalError },
-          { data: keyResultRows, error: keyResultError },
-          { data: profileRows, error: profileError },
-        ] =
-          await Promise.all([
-            supabase
-              .from("tasks")
-              .select("*")
-              .order("created_at", { ascending: false }),
-            supabase.from("goals").select("id,name"),
-            supabase.from("key_results").select("id,goal_id,name,current,target,unit"),
-            supabase.from("profiles").select("id,name,email"),
-          ]);
+        const { data, error } = await supabase
+          .from("tasks")
+          .select(`
+            id,
+            name,
+            key_result_id,
+            assignee_id,
+            type,
+            status,
+            progress,
+            weight,
+            deadline,
+            created_at,
+            key_result:key_results!tasks_key_result_id_fkey(
+              id,
+              goal_id,
+              name,
+              current,
+              target,
+              unit,
+              start_value,
+              weight,
+              goal:goals!key_results_goal_id_fkey(
+                id,
+                name,
+                start_date,
+                end_date
+              )
+            ),
+            assignee:profiles!tasks_assignee_id_fkey(
+              id,
+              name,
+              email
+            )
+          `)
+          .order("created_at", { ascending: false });
 
         if (!isActive) {
           return;
         }
 
-        if (taskError) {
-          setTaskLoadError(taskError.message || "Không tải được danh sách công việc.");
+        if (error) {
+          setTaskLoadError(error.message || "Không tải được danh sách công việc.");
           setTasks([]);
           setGoalFilters([]);
           setKeyResultFilters([]);
@@ -273,98 +574,87 @@ export default function TasksPage() {
           return;
         }
 
-        const goalsById = (goalRows ?? []).reduce<Record<string, string>>((acc, item: GoalLiteRow) => {
-          acc[String(item.id)] = String(item.name);
-          return acc;
-        }, {});
-
-        const keyResultsById = (keyResultRows ?? []).reduce<Record<string, KeyResultLiteRow>>(
-          (acc, item: KeyResultLiteRow) => {
-            acc[String(item.id)] = item;
-            return acc;
-          },
-          {},
-        );
-
-        const profilesById = (profileRows ?? []).reduce<Record<string, string>>((acc, item: ProfileLiteRow) => {
-          acc[String(item.id)] = String(item.name ?? item.email ?? "Chưa có tên");
-          return acc;
-        }, {});
-
-        const mappedTasks = (taskRows ?? []).map((row: TaskRow) => {
-          const assignee = row.profile_id ? profilesById[String(row.profile_id)] ?? "Chưa gán" : "Chưa gán";
-          const goalName = row.goal_id ? goalsById[String(row.goal_id)] ?? "Chưa có mục tiêu" : "Chưa có mục tiêu";
-          const keyResult = row.key_result_id ? keyResultsById[String(row.key_result_id)] ?? null : null;
-          const keyResultName = keyResult?.name ? String(keyResult.name) : "Chưa gắn key result";
+        const mappedTasks = ((data ?? []) as Array<Record<string, unknown>>).map((rawRow) => {
+          const row = rawRow as TaskRow;
+          const keyResult = normalizeKeyResultLite(Array.isArray(rawRow.key_result) ? rawRow.key_result[0] ?? null : rawRow.key_result);
+          const assignee = normalizeProfileLite(Array.isArray(rawRow.assignee) ? rawRow.assignee[0] ?? null : rawRow.assignee);
+          const goalName = keyResult?.goal?.name ?? "Chưa có mục tiêu";
+          const keyResultName = keyResult?.name ?? "Chưa gắn key result";
           const keyResultMetric = keyResult
-            ? `${formatKeyResultMetric(
-                typeof keyResult.current === "number" ? keyResult.current : Number(keyResult.current ?? 0),
+            ? `${formatKeyResultMetric(keyResult.start_value, keyResult.unit)} → ${formatKeyResultMetric(
+                keyResult.current,
                 keyResult.unit,
-              )}/${formatKeyResultMetric(
-                typeof keyResult.target === "number" ? keyResult.target : Number(keyResult.target ?? 0),
-                keyResult.unit,
-              )} ${formatKeyResultUnit(keyResult.unit)}`
-            : "Task cấp goal";
+              )} → ${formatKeyResultMetric(keyResult.target, keyResult.unit)} ${formatKeyResultUnit(keyResult.unit)}`
+            : "Chưa có số liệu KR";
+          const assigneeName = assignee?.name?.trim() || assignee?.email?.trim() || "Chưa gán";
 
           return {
             id: String(row.id),
             name: String(row.name),
-            goalId: row.goal_id ? String(row.goal_id) : null,
+            goalId: keyResult?.goal?.id ?? (keyResult?.goal_id ? String(keyResult.goal_id) : null),
             goalName,
+            goalStartDate: keyResult?.goal?.start_date ?? null,
+            goalEndDate: keyResult?.goal?.end_date ?? null,
             keyResultId: row.key_result_id ? String(row.key_result_id) : null,
             keyResultName,
             keyResultMetric,
             type: row.type ? String(row.type) : null,
-            profileId: row.profile_id ? String(row.profile_id) : null,
-            assignee,
-            assigneeShort: toShortName(assignee),
-            status: normalizeTaskStatus(row.status),
-            progress: getTaskProgressByType(
-              row.type ? String(row.type) : null,
-              normalizeTaskStatus(row.status),
-              row.progress,
-            ),
-            deadlineAt: resolveDeadline(row),
-            createdAt: row.created_at,
-          } as TaskItem;
+            assigneeId: row.assignee_id ? String(row.assignee_id) : null,
+            assigneeName,
+            assigneeShort: toShortName(assigneeName),
+            status: normalizeTimelineStatus(row.status),
+            rawStatus: row.status ? String(row.status) : null,
+            progress: getComputedTaskProgress({
+              type: row.type,
+              status: row.status,
+              progress: row.progress,
+            }),
+            deadlineAt: row.deadline ? String(row.deadline) : null,
+            startAt: row.created_at ? String(row.created_at) : null,
+            createdAt: row.created_at ? String(row.created_at) : null,
+          } satisfies TaskItem;
         });
 
         setTasks(mappedTasks);
-
-        const mappedGoalFilters = (goalRows ?? []).map((item: GoalLiteRow) => ({
-          id: String(item.id),
-          name: String(item.name),
-        }));
-        setGoalFilters(mappedGoalFilters);
-
-        const mappedKeyResultFilters = (keyResultRows ?? []).map((item: KeyResultLiteRow) => ({
-          id: String(item.id),
-          name: String(item.name),
-          goalId: String(item.goal_id),
-        }));
-        setKeyResultFilters(mappedKeyResultFilters);
-
-        const mappedAssigneeFilters = (profileRows ?? []).map((item: ProfileLiteRow) => ({
-          id: String(item.id),
-          name: String(item.name ?? item.email ?? "Chưa có tên"),
-        }));
-        setAssigneeFilters(mappedAssigneeFilters);
-
-        const nonFatalErrors: string[] = [];
-        if (goalError) {
-          nonFatalErrors.push("Không tải được danh sách mục tiêu.");
-        }
-        if (keyResultError) {
-          nonFatalErrors.push("Không tải được danh sách key result.");
-        }
-        if (profileError) {
-          nonFatalErrors.push("Không tải được danh sách người phụ trách.");
-        }
-        setTaskLoadError(nonFatalErrors.length ? nonFatalErrors.join(" ") : null);
+        setGoalFilters(
+          Array.from(
+            new Map(
+              mappedTasks
+                .filter((task) => task.goalId)
+                .map((task) => [task.goalId as string, { id: task.goalId as string, name: task.goalName }]),
+            ).values(),
+          ),
+        );
+        setKeyResultFilters(
+          Array.from(
+            new Map(
+              mappedTasks
+                .filter((task) => task.keyResultId && task.goalId)
+                .map((task) => [
+                  task.keyResultId as string,
+                  {
+                    id: task.keyResultId as string,
+                    name: task.keyResultName,
+                    goalId: task.goalId as string,
+                  },
+                ]),
+            ).values(),
+          ),
+        );
+        setAssigneeFilters(
+          Array.from(
+            new Map(
+              mappedTasks
+                .filter((task) => task.assigneeId)
+                .map((task) => [task.assigneeId as string, { id: task.assigneeId as string, name: task.assigneeName }]),
+            ).values(),
+          ),
+        );
       } catch {
         if (!isActive) {
           return;
         }
+
         setTaskLoadError("Có lỗi khi tải dữ liệu công việc.");
         setTasks([]);
         setGoalFilters([]);
@@ -384,184 +674,6 @@ export default function TasksPage() {
     };
   }, []);
 
-  useEffect(() => {
-    let isActive = true;
-
-    const loadCreatePermission = async () => {
-      setIsCheckingCreatePermission(true);
-
-      const debugState: TaskCreatePermissionDebug = {
-        checkedAt: new Date().toISOString(),
-        step: "start",
-        authUserId: null,
-        profileId: null,
-        profileName: null,
-        leaderRoleIds: [],
-        leaderRolesRaw: [],
-        userRoleRows: [],
-        departments: [],
-        rootDepartments: [],
-        canCreateTask: false,
-        error: null,
-      };
-
-      try {
-        debugState.step = "auth.getUser";
-        const { data: authData, error: authError } = await supabase.auth.getUser();
-        if (authError || !authData.user) {
-          debugState.error = authError?.message ?? "Không lấy được auth user";
-          debugState.step = "failed.auth";
-          if (isActive) {
-            setCanCreateTask(false);
-            setRootDepartments([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-        debugState.authUserId = authData.user.id;
-
-        debugState.step = "profiles.by_user_id";
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("id,name")
-          .eq("user_id", authData.user.id)
-          .maybeSingle();
-
-        if (profileError || !profile?.id) {
-          debugState.error = profileError?.message ?? "Không tìm thấy profile theo user_id";
-          debugState.step = "failed.profile";
-          if (isActive) {
-            setCanCreateTask(false);
-            setRootDepartments([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-        debugState.profileId = profile.id;
-        debugState.profileName = profile.name ?? null;
-
-        debugState.step = "roles.list";
-        const { data: rolesData, error: roleError } = await supabase.from("roles").select("id,name");
-
-        debugState.leaderRolesRaw = (rolesData ?? []).map((role) => ({
-          id: String(role.id),
-          name: typeof role.name === "string" ? role.name : null,
-        }));
-
-        const leaderRoleIds = (rolesData ?? [])
-          .filter((role) => {
-            const roleName = typeof role.name === "string" ? role.name.trim().toLowerCase() : "";
-            return roleName === "leader" || roleName.includes("leader");
-          })
-          .map((role) => role.id)
-          .filter(Boolean) as string[];
-
-        debugState.leaderRoleIds = leaderRoleIds;
-        if (roleError || leaderRoleIds.length === 0) {
-          debugState.error = roleError?.message ?? "Không tìm thấy role Leader";
-          debugState.step = "failed.role";
-          if (isActive) {
-            setCanCreateTask(false);
-            setRootDepartments([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-
-        debugState.step = "user_role_in_department.by_profile";
-        const { data: userRolesData, error: userRolesError } = await supabase
-          .from("user_role_in_department")
-          .select("department_id,role_id")
-          .eq("profile_id", profile.id)
-          .in("role_id", leaderRoleIds);
-
-        debugState.userRoleRows = (userRolesData ?? []).map((item) => ({
-          department_id: item.department_id ?? null,
-          role_id: item.role_id ?? null,
-        }));
-
-        const departmentIds = [
-          ...new Set((userRolesData ?? []).map((item) => item.department_id).filter(Boolean)),
-        ];
-
-        if (userRolesError || departmentIds.length === 0) {
-          debugState.error = userRolesError?.message ?? "Không có role Leader gắn với phòng ban";
-          debugState.step = "failed.user_role_in_department";
-          if (isActive) {
-            setCanCreateTask(false);
-            setRootDepartments([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-
-        debugState.step = "departments.by_ids";
-        const { data: departmentsData, error: departmentsError } = await supabase
-          .from("departments")
-          .select("id,name,parent_department_id")
-          .in("id", departmentIds);
-
-        if (departmentsError || !departmentsData?.length) {
-          debugState.error = departmentsError?.message ?? "Không lấy được phòng ban";
-          debugState.step = "failed.departments";
-          if (isActive) {
-            setCanCreateTask(false);
-            setRootDepartments([]);
-            setPermissionDebug({ ...debugState });
-          }
-          return;
-        }
-
-        debugState.departments = departmentsData.map((department) => ({
-          id: String(department.id),
-          name: String(department.name),
-          parent_department_id: department.parent_department_id ?? null,
-        }));
-
-        const roots = departmentsData
-          .filter((department) => !department.parent_department_id)
-          .map((department) => ({
-            id: String(department.id),
-            name: String(department.name),
-          }));
-
-        debugState.rootDepartments = roots;
-        debugState.canCreateTask = roots.length > 0;
-        debugState.step = "done";
-
-        if (!isActive) {
-          return;
-        }
-
-        setCanCreateTask(roots.length > 0);
-        setRootDepartments(roots);
-        setPermissionDebug({ ...debugState });
-      } catch {
-        debugState.error = "Lỗi không xác định khi kiểm tra quyền tạo công việc";
-        debugState.step = "failed.exception";
-        if (isActive) {
-          setCanCreateTask(false);
-          setRootDepartments([]);
-          setPermissionDebug({ ...debugState });
-        }
-      } finally {
-        if (isActive) {
-          setIsCheckingCreatePermission(false);
-        }
-
-        console.groupCollapsed("[tasks] Debug quyền tạo công việc");
-        console.log(debugState);
-        console.groupEnd();
-      }
-    };
-
-    void loadCreatePermission();
-
-    return () => {
-      isActive = false;
-    };
-  }, []);
-
   const filteredTasks = useMemo(() => {
     return tasks.filter((task) => {
       if (statusFilter !== "all" && task.status !== statusFilter) {
@@ -573,7 +685,7 @@ export default function TasksPage() {
       if (keyResultFilter !== "all" && task.keyResultId !== keyResultFilter) {
         return false;
       }
-      if (assigneeFilter !== "all" && task.profileId !== assigneeFilter) {
+      if (assigneeFilter !== "all" && task.assigneeId !== assigneeFilter) {
         return false;
       }
 
@@ -582,24 +694,10 @@ export default function TasksPage() {
         return true;
       }
 
-      const haystack = `${task.name} ${task.goalName} ${task.assignee}`.toLowerCase();
+      const haystack = `${task.name} ${task.goalName} ${task.keyResultName} ${task.assigneeName}`.toLowerCase();
       return haystack.includes(keyword);
     });
   }, [assigneeFilter, goalFilter, keyResultFilter, searchKeyword, statusFilter, tasks]);
-
-  const totalTaskPages = useMemo(
-    () => Math.max(1, Math.ceil(filteredTasks.length / TASKS_PAGE_SIZE)),
-    [filteredTasks.length],
-  );
-  const safeTaskPage = Math.min(taskPage, totalTaskPages);
-  const paginatedTasks = useMemo(() => {
-    const start = (safeTaskPage - 1) * TASKS_PAGE_SIZE;
-    return filteredTasks.slice(start, start + TASKS_PAGE_SIZE);
-  }, [filteredTasks, safeTaskPage]);
-
-  useEffect(() => {
-    setTaskPage(1);
-  }, [searchKeyword, statusFilter, goalFilter, keyResultFilter, assigneeFilter, mode]);
 
   const filteredKeyResultFilters = useMemo(() => {
     if (goalFilter === "all") {
@@ -608,10 +706,160 @@ export default function TasksPage() {
     return keyResultFilters.filter((keyResult) => keyResult.goalId === goalFilter);
   }, [goalFilter, keyResultFilters]);
 
-  const todo = filteredTasks.filter((task) => task.status === "todo");
-  const doing = filteredTasks.filter((task) => task.status === "doing");
-  const done = filteredTasks.filter((task) => task.status === "done");
-  const cancelled = filteredTasks.filter((task) => task.status === "cancelled");
+  const noDeadlineTasks = useMemo(
+    () => filteredTasks.filter((task) => !task.deadlineAt),
+    [filteredTasks],
+  );
+
+  const visibleTasks = useMemo(
+    () => filteredTasks.filter((task) => Boolean(task.deadlineAt)),
+    [filteredTasks],
+  );
+
+  const groupedGoals = useMemo(() => {
+    const goalMap = new Map<string, GoalGroup>();
+
+    visibleTasks
+      .slice()
+      .sort((a, b) => {
+        const aTime = getTaskEndDate(a)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+        const bTime = getTaskEndDate(b)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+        return aTime - bTime;
+      })
+      .forEach((task) => {
+        const goalId = task.goalId ?? "no-goal";
+        if (!goalMap.has(goalId)) {
+          goalMap.set(goalId, {
+            id: goalId,
+            name: task.goalName,
+            startDate: task.goalStartDate,
+            endDate: task.goalEndDate,
+            keyResults: [],
+          });
+        }
+
+        const goal = goalMap.get(goalId)!;
+        let keyResult = goal.keyResults.find((item) => item.id === (task.keyResultId ?? "no-kr"));
+        if (!keyResult) {
+          keyResult = {
+            id: task.keyResultId ?? "no-kr",
+            name: task.keyResultName,
+            goalId,
+            metric: task.keyResultMetric,
+            tasks: [],
+          };
+          goal.keyResults.push(keyResult);
+        }
+        keyResult.tasks.push(task);
+      });
+
+    return Array.from(goalMap.values());
+  }, [visibleTasks]);
+
+  const periods = useMemo(() => buildTimelinePeriods(rangeAnchor, timeScale), [rangeAnchor, timeScale]);
+  const periodWidth = PERIOD_WIDTH[timeScale];
+  const timelineWidth = periods.length * periodWidth;
+  const firstPeriodStart = periods[0]?.start ?? startOfScale(new Date(), timeScale);
+  const todayIndex = useMemo(() => {
+    const today = new Date();
+    return periods.findIndex((period) => today >= period.start && today <= period.end);
+  }, [periods]);
+
+  const tasksInProgress = useMemo(
+    () => filteredTasks.filter((task) => task.status === "in_progress").length,
+    [filteredTasks],
+  );
+  const overdueTaskCount = useMemo(
+    () =>
+      filteredTasks.filter((task) => {
+        if (!task.deadlineAt) {
+          return false;
+        }
+        const deadline = startOfDay(new Date(task.deadlineAt));
+        const today = startOfDay(new Date());
+        return deadline < today && !["done", "cancelled"].includes(task.status);
+      }).length,
+    [filteredTasks],
+  );
+  const dueThisWeekCount = useMemo(
+    () =>
+      filteredTasks.filter((task) => {
+        if (!task.deadlineAt) {
+          return false;
+        }
+        const deadline = startOfDay(new Date(task.deadlineAt));
+        const today = startOfDay(new Date());
+        const diffDays = Math.round((deadline.getTime() - today.getTime()) / DAY_MS);
+        return diffDays >= 0 && diffDays <= 7 && !["done", "cancelled"].includes(task.status);
+      }).length,
+    [filteredTasks],
+  );
+
+  const openQuickEdit = (task: TaskItem) => {
+    setEditingTaskId(task.id);
+    setQuickEditState({
+      progress: String(task.progress),
+      deadline: toDateInputValue(task.deadlineAt),
+    });
+  };
+
+  const handleSaveQuickEdit = async (task: TaskItem) => {
+    if (savingTaskId) {
+      return;
+    }
+
+    const safeProgress = clampProgress(Number(quickEditState.progress));
+    const nextDeadline = quickEditState.deadline || null;
+    setSavingTaskId(task.id);
+
+    const { error } = await supabase
+      .from("tasks")
+      .update({
+        progress: safeProgress,
+        deadline: nextDeadline,
+      })
+      .eq("id", task.id);
+
+    if (error) {
+      setTaskLoadError(error.message || "Không thể cập nhật nhanh công việc.");
+      setSavingTaskId(null);
+      return;
+    }
+
+    setTasks((prev) =>
+      prev.map((item) =>
+        item.id === task.id
+          ? {
+              ...item,
+              progress: safeProgress,
+              deadlineAt: nextDeadline,
+            }
+          : item,
+      ),
+    );
+    setEditingTaskId(null);
+    setSavingTaskId(null);
+  };
+
+  const addTaskHref = useMemo(() => {
+    const params = new URLSearchParams();
+    const defaultDepartmentId = rootDepartments[0]?.id;
+    if (defaultDepartmentId) {
+      params.set("departmentId", defaultDepartmentId);
+    }
+    if (goalFilter !== "all") {
+      params.set("goalId", goalFilter);
+    }
+    if (keyResultFilter !== "all") {
+      params.set("keyResultId", keyResultFilter);
+    }
+    const query = params.toString();
+    return query ? `/tasks/new?${query}` : "/tasks/new";
+  }, [goalFilter, keyResultFilter, rootDepartments]);
+
+  const moveRange = (direction: -1 | 1) => {
+    setRangeAnchor((current) => addScale(current, timeScale, PERIOD_COUNT[timeScale] * direction));
+  };
 
   return (
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
@@ -629,26 +877,32 @@ export default function TasksPage() {
                   <span className="px-2">›</span>
                   <span>Công việc</span>
                 </p>
-                <h1 className="mt-1 text-3xl font-semibold tracking-[-0.02em] text-slate-900">Công việc</h1>
-                <p className="mt-1 text-sm text-slate-500">{filteredTasks.length} / {tasks.length} công việc</p>
+                <h1 className="mt-1 text-3xl font-semibold tracking-[-0.02em] text-slate-900">
+                  Timeline thực thi
+                </h1>
+                <p className="mt-1 text-sm text-slate-500">
+                  Mục tiêu → Kết quả then chốt → Công việc · {filteredTasks.length} / {tasks.length} công việc
+                </p>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="rounded-xl border border-slate-200 bg-white p-1">
+                  <ScaleButton active={viewMode === "gantt"} onClick={() => setViewMode("gantt")}>
+                    Gantt
+                  </ScaleButton>
+                  <ScaleButton active={viewMode === "list"} onClick={() => setViewMode("list")}>
+                    Danh sách
+                  </ScaleButton>
+                </div>
                 <input
                   value={searchKeyword}
                   onChange={(event) => setSearchKeyword(event.target.value)}
-                  placeholder="Tìm theo tên, mục tiêu, người phụ trách..."
-                  className="h-11 w-[300px] rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  placeholder="Tìm theo công việc, KR, mục tiêu, người phụ trách..."
+                  className="h-11 w-[320px] rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 />
                 {!isCheckingCreatePermission && canCreateTask ? (
                   <button
                     type="button"
-                    onClick={() => {
-                      const defaultDepartmentId = rootDepartments[0]?.id;
-                      const next = defaultDepartmentId
-                        ? `/tasks/new?departmentId=${defaultDepartmentId}`
-                        : "/tasks/new";
-                      router.push(next);
-                    }}
+                    onClick={() => router.push(addTaskHref)}
                     className="h-11 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700"
                   >
                     + Thêm công việc
@@ -661,9 +915,7 @@ export default function TasksPage() {
           <main className="space-y-4 px-4 py-5 lg:px-7">
             {showPermissionDebug && permissionDebug ? (
               <div className="rounded-2xl border border-slate-200 bg-slate-950 px-4 py-3 text-xs text-slate-100">
-                <p className="mb-2 font-semibold text-sky-300">
-                  Debug quyền tạo công việc (debugPermission=1)
-                </p>
+                <p className="mb-2 font-semibold text-sky-300">Debug quyền tạo công việc (debugPermission=1)</p>
                 <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed">
                   {JSON.stringify(permissionDebug, null, 2)}
                 </pre>
@@ -674,14 +926,13 @@ export default function TasksPage() {
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto]">
                 <Select
                   value={statusFilter}
-                  onValueChange={(value) => setStatusFilter(value as "all" | TaskStatusValue)}
+                  onValueChange={(value) => setStatusFilter(value as "all" | TimelineStatus)}
                 >
                   <SelectTrigger className="h-10">
                     <SelectValue placeholder="Tất cả trạng thái" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">Tất cả trạng thái</SelectItem>
-                    {TASK_STATUSES.map((status) => (
+                    {TIMELINE_STATUS_OPTIONS.map((status) => (
                       <SelectItem key={status.value} value={status.value}>
                         {status.label}
                       </SelectItem>
@@ -709,10 +960,7 @@ export default function TasksPage() {
                   </SelectContent>
                 </Select>
 
-                <Select
-                  value={keyResultFilter}
-                  onValueChange={(value) => setKeyResultFilter(value as "all" | string)}
-                >
+                <Select value={keyResultFilter} onValueChange={(value) => setKeyResultFilter(value as "all" | string)}>
                   <SelectTrigger className="h-10">
                     <SelectValue placeholder="Tất cả key result" />
                   </SelectTrigger>
@@ -726,10 +974,7 @@ export default function TasksPage() {
                   </SelectContent>
                 </Select>
 
-                <Select
-                  value={assigneeFilter}
-                  onValueChange={(value) => setAssigneeFilter(value as "all" | string)}
-                >
+                <Select value={assigneeFilter} onValueChange={(value) => setAssigneeFilter(value as "all" | string)}>
                   <SelectTrigger className="h-10">
                     <SelectValue placeholder="Tất cả người phụ trách" />
                   </SelectTrigger>
@@ -759,20 +1004,85 @@ export default function TasksPage() {
               </div>
             </section>
 
-            <section className="flex flex-wrap items-center justify-end gap-3">
-              <div className="rounded-xl border border-slate-200 bg-slate-100 p-1">
-                <ModeButton active={mode === "list"} onClick={() => changeMode("list")}>
-                  Danh sách
-                </ModeButton>
-                <ModeButton active={mode === "kanban"} onClick={() => changeMode("kanban")}>
-                  Bảng
-                </ModeButton>
+            <section className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-900">
+                    {viewMode === "gantt" ? "Biểu đồ tiến độ công việc" : "Danh sách công việc"}
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {viewMode === "gantt"
+                      ? "Theo dõi thực thi theo mục tiêu, kết quả then chốt và hạn chót của từng công việc."
+                      : "Xem nhanh công việc theo cấu trúc Mục tiêu → Kết quả then chốt → Công việc."}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  {viewMode === "gantt" ? (
+                    <>
+                      <div className="rounded-xl border border-slate-200 bg-slate-100 p-1">
+                        <ScaleButton active={timeScale === "day"} onClick={() => setTimeScale("day")}>
+                          Ngày
+                        </ScaleButton>
+                        <ScaleButton active={timeScale === "week"} onClick={() => setTimeScale("week")}>
+                          Tuần
+                        </ScaleButton>
+                        <ScaleButton active={timeScale === "month"} onClick={() => setTimeScale("month")}>
+                          Tháng
+                        </ScaleButton>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => moveRange(-1)}
+                          className="inline-flex h-10 items-center rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          Trước
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRangeAnchor(new Date())}
+                          className="inline-flex h-10 items-center rounded-xl bg-blue-50 px-4 text-sm font-semibold text-blue-700 hover:bg-blue-100"
+                        >
+                          Hôm nay
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => moveRange(1)}
+                          className="inline-flex h-10 items-center rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          Sau
+                        </button>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                    Công việc quá hạn
+                  </p>
+                  <p className="mt-2 text-2xl font-semibold text-slate-900">{overdueTaskCount}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">Đến hạn 7 ngày</p>
+                  <p className="mt-2 text-2xl font-semibold text-slate-900">{dueThisWeekCount}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">Đang thực thi</p>
+                  <p className="mt-2 text-2xl font-semibold text-slate-900">{tasksInProgress}</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">Chưa có hạn chót</p>
+                  <p className="mt-2 text-2xl font-semibold text-slate-900">{noDeadlineTasks.length}</p>
+                </div>
               </div>
             </section>
 
             {isLoadingTasks ? (
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
-                Đang tải danh sách công việc...
+                Đang tải dữ liệu trục thời gian...
               </div>
             ) : null}
 
@@ -782,147 +1092,482 @@ export default function TasksPage() {
               </div>
             ) : null}
 
-            {!isLoadingTasks && mode === "list" ? (
+            {!isLoadingTasks && filteredTasks.length === 0 ? (
+              <section className="rounded-2xl border border-slate-200 bg-white px-6 py-12 text-center">
+                <p className="text-base font-semibold text-slate-900">
+                  Chưa có công việc nào để hiển thị trên trục thời gian.
+                </p>
+                <Link
+                  href="/goals"
+                  className="mt-5 inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
+                >
+                  Đi tới mục tiêu để tạo công việc
+                </Link>
+              </section>
+            ) : null}
+
+            {!isLoadingTasks && filteredTasks.length > 0 ? (
+              viewMode === "gantt" ? (
               <section className="rounded-2xl border border-slate-200 bg-white">
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[1120px] text-left">
-                    <thead>
-                      <tr className="text-xs tracking-[0.08em] text-slate-400 uppercase">
-                        <th className="px-6 py-4 font-semibold">Tên công việc</th>
-                        <th className="px-4 py-4 font-semibold">Mục tiêu</th>
-                        <th className="px-4 py-4 font-semibold">Key result</th>
-                        <th className="px-4 py-4 font-semibold">Người phụ trách</th>
-                        <th className="px-4 py-4 font-semibold">Trạng thái</th>
-                        <th className="px-4 py-4 font-semibold">Tiến độ</th>
-                        <th className="px-4 py-4 font-semibold">Deadline</th>
-                        <th className="px-4 py-4 font-semibold">Ngày tạo</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {paginatedTasks.map((task) => (
-                        <tr key={task.id} className="border-t border-slate-100">
-                          <td className="px-6 py-4">
+                <div className="overflow-auto rounded-2xl">
+                  <div
+                    className="min-w-full"
+                    style={{ width: LEFT_PANEL_WIDTH + timelineWidth }}
+                  >
+                    <div
+                      className="grid border-b border-slate-200 bg-slate-50"
+                      style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
+                    >
+                      <div className="px-5 py-4">
+                        <p className="text-sm font-semibold text-slate-900">Cấu trúc thực thi</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Mục tiêu → Kết quả then chốt → Công việc
+                        </p>
+                      </div>
+                      <div
+                        className="grid"
+                        style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}
+                      >
+                        {periods.map((period, index) => (
+                          <div
+                            key={period.key}
+                            className={`border-l border-slate-200 px-2 py-3 text-center ${
+                              index === todayIndex ? "bg-blue-50/70" : ""
+                            }`}
+                          >
+                            <p className="text-xs font-semibold text-slate-700">{period.label}</p>
+                            <p className="mt-1 text-[11px] text-slate-500">{period.subLabel}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {groupedGoals.map((goal) => (
+                      <Fragment key={goal.id}>
+                        <div
+                          className="grid border-b border-slate-100"
+                          style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
+                        >
+                          <div className="bg-slate-50 px-5 py-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                                  Mục tiêu
+                                </p>
+                                <p className="mt-1 text-base font-semibold text-slate-900">{goal.name}</p>
+                                <p className="mt-1 text-xs text-slate-500">
+                                  {goal.startDate || goal.endDate
+                                    ? `${formatDate(goal.startDate)} → ${formatDate(goal.endDate)}`
+                                    : "Chưa đặt khung thời gian"}
+                                </p>
+                              </div>
+                              {goal.id !== "no-goal" ? (
+                                <Link
+                                  href={`/goals/${goal.id}`}
+                                  className="text-xs font-semibold text-blue-700 hover:text-blue-800"
+                                >
+                                  Mở mục tiêu
+                                </Link>
+                              ) : null}
+                            </div>
+                          </div>
+                          <div className="relative h-full min-h-[64px] bg-slate-50">
+                            <div
+                              className="absolute inset-0 grid"
+                              style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}
+                            >
+                              {periods.map((period, index) => (
+                                <div
+                                  key={`${goal.id}-${period.key}`}
+                                  className={`border-l border-slate-100 ${index === todayIndex ? "bg-blue-50/50" : ""}`}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        {goal.keyResults.map((keyResult) => (
+                          <Fragment key={keyResult.id}>
+                            <div
+                              className="grid border-b border-slate-100"
+                              style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
+                            >
+                              <div className="bg-white px-5 py-4">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                                      Kết quả then chốt
+                                    </p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-900">{keyResult.name}</p>
+                                    <p className="mt-1 text-xs text-slate-500">{keyResult.metric}</p>
+                                  </div>
+                                  {keyResult.goalId !== "no-goal" && keyResult.id !== "no-kr" ? (
+                                    <Link
+                                      href={`/tasks/new?goalId=${keyResult.goalId}&keyResultId=${keyResult.id}`}
+                                      className="text-xs font-semibold text-blue-700 hover:text-blue-800"
+                                    >
+                                      + Thêm công việc
+                                    </Link>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <div className="relative h-full min-h-[62px] bg-white">
+                                <div
+                                  className="absolute inset-0 grid"
+                                  style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}
+                                >
+                                  {periods.map((period, index) => (
+                                    <div
+                                      key={`${keyResult.id}-${period.key}`}
+                                      className={`border-l border-slate-100 ${index === todayIndex ? "bg-blue-50/40" : ""}`}
+                                    />
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+
+                            {keyResult.tasks.map((task) => {
+                              const startDate = getTaskStartDate(task);
+                              const endDate = getTaskEndDate(task);
+                              const rawStartIndex = getScaleDiff(firstPeriodStart, startDate, timeScale);
+                              const rawEndIndex = endDate ? getScaleDiff(firstPeriodStart, endDate, timeScale) : rawStartIndex;
+                              const visibleStartIndex = Math.max(0, rawStartIndex);
+                              const visibleEndIndex = Math.min(periods.length - 1, Math.max(rawEndIndex, rawStartIndex));
+                              const isVisible = rawEndIndex >= 0 && rawStartIndex <= periods.length - 1;
+                              const span = Math.max(1, visibleEndIndex - visibleStartIndex + 1);
+                              const barLeft = visibleStartIndex * periodWidth + 6;
+                              const barWidth = Math.max(periodWidth - 12, span * periodWidth - 12);
+                              const tooltip = buildTaskTooltip(task);
+                              const quickEditing = editingTaskId === task.id;
+
+                              return (
+                                <div
+                                  key={task.id}
+                                  className="grid border-b border-slate-100 last:border-b-0"
+                                  style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
+                                >
+                                  <div className="bg-white px-5 py-3">
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="min-w-0 flex-1">
+                                        <Link
+                                          href={`/tasks/${task.id}`}
+                                          className="block truncate text-sm font-semibold text-slate-900 hover:text-blue-700"
+                                          title={tooltip}
+                                        >
+                                          {task.name}
+                                        </Link>
+                                        <p className="mt-1 text-xs text-slate-500">
+                                          {task.type === "okr" ? "Công việc OKR" : "Công việc KPI"}
+                                          {" · "}
+                                          {task.assigneeName}
+                                        </p>
+                                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                                          <StatusBadge status={task.status} />
+                                          <span className="text-xs font-medium text-slate-500">{task.progress}%</span>
+                                          <span className="text-xs text-slate-500">{formatDate(task.deadlineAt)}</span>
+                                        </div>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => openQuickEdit(task)}
+                                        className="text-xs font-semibold text-blue-700 hover:text-blue-800"
+                                      >
+                                        Sửa nhanh
+                                      </button>
+                                    </div>
+
+                                    {quickEditing ? (
+                                      <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                        <div className="grid gap-3 md:grid-cols-2">
+                                          <label className="space-y-1 text-xs font-medium text-slate-600">
+                                            <span>Tiến độ</span>
+                                            <input
+                                              type="number"
+                                              min={0}
+                                              max={100}
+                                              value={quickEditState.progress}
+                                              onChange={(event) =>
+                                                setQuickEditState((prev) => ({
+                                                  ...prev,
+                                                  progress: event.target.value,
+                                                }))
+                                              }
+                                              className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                            />
+                                          </label>
+                                          <label className="space-y-1 text-xs font-medium text-slate-600">
+                                            <span>Deadline</span>
+                                            <input
+                                              type="date"
+                                              value={quickEditState.deadline}
+                                              onChange={(event) =>
+                                                setQuickEditState((prev) => ({
+                                                  ...prev,
+                                                  deadline: event.target.value,
+                                                }))
+                                              }
+                                              className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                            />
+                                          </label>
+                                        </div>
+                                        <div className="mt-3 flex items-center justify-end gap-2">
+                                          <button
+                                            type="button"
+                                            onClick={() => setEditingTaskId(null)}
+                                            className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                          >
+                                            Hủy
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => void handleSaveQuickEdit(task)}
+                                            disabled={savingTaskId === task.id}
+                                            className="inline-flex h-8 items-center rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                                          >
+                                            {savingTaskId === task.id ? "Đang lưu..." : "Lưu nhanh"}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </div>
+
+                                  <div className="relative min-h-[92px] bg-white">
+                                    <div
+                                      className="absolute inset-0 grid"
+                                      style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}
+                                    >
+                                      {periods.map((period, index) => (
+                                        <div
+                                          key={`${task.id}-${period.key}`}
+                                          className={`border-l border-slate-100 ${index === todayIndex ? "bg-blue-50/40" : ""}`}
+                                        />
+                                      ))}
+                                    </div>
+
+                                    {isVisible && endDate ? (
+                                      <button
+                                        type="button"
+                                        title={tooltip}
+                                        onClick={() => router.push(`/tasks/${task.id}`)}
+                                        className={`absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl px-3 text-left shadow-sm transition hover:brightness-[0.98] ${statusMetaMap[task.status].barClassName}`}
+                                        style={{ left: barLeft, width: barWidth }}
+                                      >
+                                        <span
+                                          className={`absolute inset-y-0 left-0 ${statusMetaMap[task.status].fillClassName}`}
+                                          style={{ width: `${task.progress}%` }}
+                                        />
+                                        <span className="relative z-[1] flex w-full items-center justify-between gap-3">
+                                          <span className="truncate text-sm font-semibold">{task.name}</span>
+                                          <span className="text-xs font-semibold">{task.progress}%</span>
+                                        </span>
+                                      </button>
+                                    ) : (
+                                      <div className="absolute inset-y-0 left-0 flex items-center px-4 text-xs text-slate-400">
+                                        Ngoài khung thời gian
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </Fragment>
+                        ))}
+                      </Fragment>
+                    ))}
+                  </div>
+                </div>
+              </section>
+              ) : (
+                <section className="rounded-2xl border border-slate-200 bg-white">
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[1120px] text-left">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-[11px] uppercase tracking-[0.08em] text-slate-400">
+                          <th className="px-5 py-3 font-semibold">Công việc</th>
+                          <th className="px-4 py-3 font-semibold">Kết quả then chốt</th>
+                          <th className="px-4 py-3 font-semibold">Mục tiêu</th>
+                          <th className="px-4 py-3 font-semibold">Người phụ trách</th>
+                          <th className="px-4 py-3 font-semibold">Trạng thái</th>
+                          <th className="px-4 py-3 font-semibold">Tiến độ</th>
+                          <th className="px-4 py-3 font-semibold">Deadline</th>
+                          <th className="px-4 py-3 font-semibold">Thao tác</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredTasks.map((task) => {
+                          const quickEditing = editingTaskId === task.id;
+                          return (
+                            <Fragment key={task.id}>
+                              <tr className="border-b border-slate-100 align-top">
+                                <td className="px-5 py-4">
+                                  <Link
+                                    href={`/tasks/${task.id}`}
+                                    className="text-sm font-semibold text-slate-900 hover:text-blue-700"
+                                  >
+                                    {task.name}
+                                  </Link>
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    {task.type?.toUpperCase() ?? "KPI"} · {task.progress}%
+                                  </p>
+                                </td>
+                                <td className="px-4 py-4">
+                                  <p className="text-sm font-semibold text-slate-900">{task.keyResultName}</p>
+                                  <p className="mt-1 text-xs text-slate-500">{task.keyResultMetric}</p>
+                                </td>
+                                <td className="px-4 py-4">
+                                  <p className="text-sm text-slate-700">{task.goalName}</p>
+                                </td>
+                                <td className="px-4 py-4">
+                                  <p className="text-sm text-slate-700">{task.assigneeName}</p>
+                                </td>
+                                <td className="px-4 py-4">
+                                  <StatusBadge status={task.status} />
+                                </td>
+                                <td className="px-4 py-4">
+                                  <div className="w-[140px]">
+                                    <ProgressBar value={task.progress} />
+                                    <p className="mt-2 text-xs text-slate-500">{task.progress}%</p>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-4 text-sm text-slate-600">
+                                  {formatDate(task.deadlineAt)}
+                                </td>
+                                <td className="px-4 py-4">
+                                  <div className="flex items-center gap-2">
+                                    <Link
+                                      href={`/tasks/${task.id}`}
+                                      className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                    >
+                                      Chi tiết
+                                    </Link>
+                                    <button
+                                      type="button"
+                                      onClick={() => openQuickEdit(task)}
+                                      className="inline-flex h-8 items-center rounded-lg bg-blue-50 px-3 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                                    >
+                                      Sửa nhanh
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                              {quickEditing ? (
+                                <tr className="border-b border-slate-100 bg-slate-50">
+                                  <td colSpan={8} className="px-5 py-4">
+                                    <div className="grid gap-3 md:grid-cols-[180px_180px_auto]">
+                                      <label className="space-y-1 text-xs font-medium text-slate-600">
+                                        <span>Tiến độ</span>
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          max={100}
+                                          value={quickEditState.progress}
+                                          onChange={(event) =>
+                                            setQuickEditState((prev) => ({
+                                              ...prev,
+                                              progress: event.target.value,
+                                            }))
+                                          }
+                                          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                        />
+                                      </label>
+                                      <label className="space-y-1 text-xs font-medium text-slate-600">
+                                        <span>Deadline</span>
+                                        <input
+                                          type="date"
+                                          value={quickEditState.deadline}
+                                          onChange={(event) =>
+                                            setQuickEditState((prev) => ({
+                                              ...prev,
+                                              deadline: event.target.value,
+                                            }))
+                                          }
+                                          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                        />
+                                      </label>
+                                      <div className="flex items-end justify-end gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => setEditingTaskId(null)}
+                                          className="inline-flex h-9 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                        >
+                                          Hủy
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => void handleSaveQuickEdit(task)}
+                                          disabled={savingTaskId === task.id}
+                                          className="inline-flex h-9 items-center rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                                        >
+                                          {savingTaskId === task.id ? "Đang lưu..." : "Lưu nhanh"}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              )
+            ) : null}
+
+            {!isLoadingTasks && viewMode === "gantt" && noDeadlineTasks.length > 0 ? (
+              <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-semibold text-slate-900">Công việc chưa có hạn chót</h2>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Các công việc này chưa thể đặt lên trục thời gian nên được tách riêng để xử lý.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                      {noDeadlineTasks.length} công việc
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowNoDeadlineSection((prev) => !prev)}
+                      className="inline-flex h-9 items-center rounded-xl border border-slate-200 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      {showNoDeadlineSection ? "Thu gọn" : "Mở rộng"}
+                    </button>
+                  </div>
+                </div>
+
+                {showNoDeadlineSection ? (
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {noDeadlineTasks.map((task) => (
+                      <div key={task.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
                             <Link
                               href={`/tasks/${task.id}`}
-                              className="text-base font-semibold leading-tight text-slate-800 hover:text-blue-700"
+                              className="text-sm font-semibold text-slate-900 hover:text-blue-700"
                             >
                               {task.name}
                             </Link>
-                          </td>
-                          <td className="px-4 py-4 text-sm text-slate-600">{task.goalName}</td>
-                          <td className="px-4 py-4">
-                            <div className="space-y-1">
-                              <p className="text-sm font-medium text-slate-700">{task.keyResultName}</p>
-                              <p className="text-xs text-slate-500">{task.keyResultMetric}</p>
-                            </div>
-                          </td>
-                          <td className="px-4 py-4">
-                            <div className="flex items-center gap-2">
-                              <span className="grid h-7 w-7 place-items-center rounded-full bg-blue-100 text-[11px] font-semibold text-blue-700">
-                                {task.assigneeShort}
-                              </span>
-                              <span className="text-sm text-slate-700">{task.assignee}</span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-4">
-                            <StatusBadge status={task.status} />
-                          </td>
-                          <td className="px-4 py-4">
-                            <div className="w-40 space-y-1">
-                              <ProgressBar value={task.progress} />
-                              <p className="text-right text-xs font-semibold text-slate-500">{task.progress}%</p>
-                            </div>
-                          </td>
-                          <td className="px-4 py-4 text-sm text-slate-500">{formatDate(task.deadlineAt)}</td>
-                          <td className="px-4 py-4 text-sm text-slate-500">{formatDate(task.createdAt)}</td>
-                        </tr>
-                      ))}
-
-                      {filteredTasks.length === 0 ? (
-                        <tr>
-                          <td colSpan={8} className="px-6 py-10 text-center text-sm text-slate-500">
-                            Không có công việc phù hợp bộ lọc hiện tại.
-                          </td>
-                        </tr>
-                      ) : null}
-                    </tbody>
-                  </table>
-                </div>
-                {filteredTasks.length > 0 ? (
-                  <div className="flex items-center justify-between border-t border-slate-100 px-6 py-3 text-sm">
-                    <p className="text-slate-500">
-                      Trang {safeTaskPage}/{totalTaskPages} · {filteredTasks.length} công việc
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setTaskPage((prev) => Math.max(1, prev - 1))}
-                        disabled={safeTaskPage <= 1}
-                        className="h-9 rounded-lg border border-slate-200 bg-white px-3 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        Trước
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setTaskPage((prev) => Math.min(totalTaskPages, prev + 1))}
-                        disabled={safeTaskPage >= totalTaskPages}
-                        className="h-9 rounded-lg border border-slate-200 bg-white px-3 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        Sau
-                      </button>
-                    </div>
+                            <p className="mt-1 text-xs text-slate-500">{task.goalName}</p>
+                            <p className="mt-1 text-xs font-medium text-slate-600">{task.keyResultName}</p>
+                          </div>
+                          <StatusBadge status={task.status} />
+                        </div>
+                        <div className="mt-3">
+                          <ProgressBar value={task.progress} />
+                          <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                            <span>{task.progress}%</span>
+                            <span>{task.assigneeName}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 ) : null}
               </section>
             ) : null}
-
-            {!isLoadingTasks && mode === "kanban" ? (
-              <section className="grid gap-4 xl:grid-cols-4">
-                {[
-                  { key: "todo", title: statusLabelMap.todo, items: todo },
-                  { key: "doing", title: statusLabelMap.doing, items: doing },
-                  { key: "done", title: statusLabelMap.done, items: done },
-                  { key: "cancelled", title: statusLabelMap.cancelled, items: cancelled },
-                ].map((column) => (
-                  <article key={column.key} className="rounded-2xl border border-slate-200 bg-white p-4">
-                    <div className="mb-3 flex items-center justify-between">
-                      <h2 className="text-base font-semibold text-slate-800">{column.title}</h2>
-                      <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
-                        {column.items.length}
-                      </span>
-                    </div>
-                    <div className="space-y-3">
-                      {column.items.map((task) => (
-                        <div key={task.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                          <Link
-                            href={`/tasks/${task.id}`}
-                            className="text-base font-semibold leading-tight text-slate-800 hover:text-blue-700"
-                          >
-                            {task.name}
-                          </Link>
-                          <p className="mt-1 text-xs text-slate-500">{task.goalName}</p>
-                          <p className="mt-1 text-xs text-slate-500">{task.keyResultName}</p>
-                          <div className="mt-3">
-                            <ProgressBar value={task.progress} />
-                          </div>
-                          <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-                            <span>{task.progress}%</span>
-                            <span>{task.assignee}</span>
-                          </div>
-                        </div>
-                      ))}
-
-                      {column.items.length === 0 ? (
-                        <p className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500">
-                          Không có công việc.
-                        </p>
-                      ) : null}
-                    </div>
-                  </article>
-                ))}
-              </section>
-            ) : null}
-
           </main>
         </div>
       </div>
