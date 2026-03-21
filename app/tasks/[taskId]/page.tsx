@@ -818,10 +818,10 @@ export default function TaskDetailPage() {
                         </div>
                         <div className="rounded-xl bg-white px-4 py-3">
                           <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                            KR weight
+                            Trọng số KR (%)
                           </p>
                           <p className="mt-2 text-lg font-semibold text-slate-900">
-                            {Math.round(Number(keyResult.weight ?? 1))}
+                            {Math.round(Number(keyResult.weight ?? 1))}%
                           </p>
                         </div>
                       </div>

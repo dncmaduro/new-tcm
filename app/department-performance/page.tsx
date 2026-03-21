@@ -12,6 +12,13 @@ import {
   DepartmentSummaryCards,
   DepartmentUpcomingDeadlines,
 } from "@/app/department-performance/_components/department-performance-widgets";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useDepartmentPerformance } from "@/app/department-performance/use-department-performance";
 import { useManagementAccess } from "@/lib/use-management-access";
 
@@ -123,86 +130,108 @@ export default function DepartmentPerformancePage() {
             {!isLoadingPermission && canManage ? (
               <>
                 <section className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1.2fr_0.8fr_0.8fr_0.9fr_1fr_auto_auto]">
-                    <select
-                      value={effectiveDepartmentId ?? ""}
-                      onChange={(event) => setSelectedDepartmentId(event.target.value)}
-                      className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                    >
-                      {managedDepartments.map((department) => (
-                        <option key={department.id} value={department.id}>
-                          {department.name}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="flex flex-wrap gap-3">
+                    <div className="min-w-[240px] flex-1">
+                      <Select
+                        value={effectiveDepartmentId ?? undefined}
+                        onValueChange={setSelectedDepartmentId}
+                        disabled={managedDepartments.length === 0}
+                      >
+                        <SelectTrigger className="h-10">
+                          <SelectValue placeholder="Chọn phòng ban" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {managedDepartments.map((department) => (
+                            <SelectItem key={department.id} value={department.id}>
+                              {department.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-                    <select
-                      value={quarterFilter}
-                      onChange={(event) => setQuarterFilter(event.target.value)}
-                      className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none"
-                    >
-                      <option value="all">Tất cả quý</option>
-                      {filterOptions.quarterOptions.map((quarter) => (
-                        <option key={quarter} value={String(quarter)}>
-                          Q{quarter}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="min-w-[196px] flex-1">
+                      <Select value={quarterFilter} onValueChange={setQuarterFilter}>
+                        <SelectTrigger className="h-10">
+                          <SelectValue placeholder="Tất cả quý" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Tất cả quý</SelectItem>
+                          {filterOptions.quarterOptions.map((quarter) => (
+                            <SelectItem key={quarter} value={String(quarter)}>
+                              Q{quarter}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-                    <select
-                      value={yearFilter}
-                      onChange={(event) => setYearFilter(event.target.value)}
-                      className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none"
-                    >
-                      <option value="all">Tất cả năm</option>
-                      {filterOptions.yearOptions.map((year) => (
-                        <option key={year} value={String(year)}>
-                          {year}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="min-w-[196px] flex-1">
+                      <Select value={yearFilter} onValueChange={setYearFilter}>
+                        <SelectTrigger className="h-10">
+                          <SelectValue placeholder="Tất cả năm" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Tất cả năm</SelectItem>
+                          {filterOptions.yearOptions.map((year) => (
+                            <SelectItem key={year} value={String(year)}>
+                              {year}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-                    <select
-                      value={goalStatusFilter}
-                      onChange={(event) => setGoalStatusFilter(event.target.value)}
-                      className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none"
-                    >
-                      <option value="all">Tất cả trạng thái mục tiêu</option>
-                      {filterOptions.statusOptions.map((status) => (
-                        <option key={status} value={status}>
-                          {goalStatusLabelMap[status] ?? status}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="min-w-[220px] flex-1">
+                      <Select value={goalStatusFilter} onValueChange={setGoalStatusFilter}>
+                        <SelectTrigger className="h-10">
+                          <SelectValue placeholder="Tất cả trạng thái mục tiêu" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Tất cả trạng thái mục tiêu</SelectItem>
+                          {filterOptions.statusOptions.map((status) => (
+                            <SelectItem key={status} value={status}>
+                              {goalStatusLabelMap[status] ?? status}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-                    <select
-                      value={assigneeFilter}
-                      onChange={(event) => setAssigneeFilter(event.target.value)}
-                      className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none"
-                    >
-                      <option value="all">Tất cả thành viên</option>
-                      {filterOptions.memberOptions.map((member) => (
-                        <option key={member.id} value={member.id}>
-                          {member.name}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="min-w-[220px] flex-1">
+                      <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
+                        <SelectTrigger className="h-10">
+                          <SelectValue placeholder="Tất cả thành viên" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Tất cả thành viên</SelectItem>
+                          {filterOptions.memberOptions.map((member) => (
+                            <SelectItem key={member.id} value={member.id}>
+                              {member.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
                     <label className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700">
                       <input
                         type="checkbox"
                         checked={onlyOverdue}
                         onChange={(event) => setOnlyOverdue(event.target.checked)}
+                        className="h-4 w-4 rounded border-slate-300 text-blue-600 accent-blue-600"
                       />
                       Chỉ quá hạn
                     </label>
 
-                    <input
-                      value={searchKeyword}
-                      onChange={(event) => setSearchKeyword(event.target.value)}
-                      placeholder="Tìm mục tiêu, KR, công việc, thành viên..."
-                      className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                    />
+                    <div className="min-w-[260px] flex-[1.2]">
+                      <input
+                        value={searchKeyword}
+                        onChange={(event) => setSearchKeyword(event.target.value)}
+                        placeholder="Tìm mục tiêu, KR, công việc, thành viên..."
+                        className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      />
+                    </div>
                   </div>
 
                   <div className="mt-4 flex flex-wrap items-center gap-2">

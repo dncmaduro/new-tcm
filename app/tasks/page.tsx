@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import {
   Select,
@@ -174,10 +174,10 @@ const statusMetaMap: Record<
   },
 };
 
-const PERIOD_COUNT: Record<TimelineScale, number> = {
-  day: 21,
-  week: 12,
-  month: 6,
+const PERIOD_PADDING: Record<TimelineScale, number> = {
+  day: 7,
+  week: 3,
+  month: 1,
 };
 
 const PERIOD_WIDTH: Record<TimelineScale, number> = {
@@ -369,22 +369,6 @@ const formatPeriodLabel = (date: Date, scale: TimelineScale) => {
   };
 };
 
-const buildTimelinePeriods = (anchor: Date, scale: TimelineScale) => {
-  const start = startOfScale(anchor, scale);
-  return Array.from({ length: PERIOD_COUNT[scale] }, (_, index) => {
-    const periodStart = addScale(start, scale, index);
-    const periodEnd = endOfScale(periodStart, scale);
-    const formatted = formatPeriodLabel(periodStart, scale);
-    return {
-      key: `${scale}-${periodStart.toISOString()}`,
-      start: periodStart,
-      end: periodEnd,
-      label: formatted.label,
-      subLabel: formatted.subLabel,
-    } satisfies TimelinePeriod;
-  });
-};
-
 const getTaskStartDate = (task: TaskItem) => {
   if (task.createdAt) {
     return startOfDay(new Date(task.createdAt));
@@ -406,6 +390,43 @@ const getTaskEndDate = (task: TaskItem) => {
   const deadline = startOfDay(new Date(task.deadlineAt));
   const start = getTaskStartDate(task);
   return deadline.getTime() >= start.getTime() ? deadline : start;
+};
+
+const buildTimelinePeriods = (tasks: TaskItem[], scale: TimelineScale) => {
+  const today = new Date();
+  const allDates = tasks.flatMap((task) => {
+    const start = getTaskStartDate(task);
+    const end = getTaskEndDate(task) ?? start;
+    return [start, end];
+  });
+
+  const minDate = allDates.length
+    ? new Date(Math.min(...allDates.map((date) => date.getTime()), today.getTime()))
+    : today;
+  const maxDate = allDates.length
+    ? new Date(Math.max(...allDates.map((date) => date.getTime()), today.getTime()))
+    : today;
+
+  const paddedStart = addScale(startOfScale(minDate, scale), scale, -PERIOD_PADDING[scale]);
+  const paddedEnd = addScale(startOfScale(maxDate, scale), scale, PERIOD_PADDING[scale]);
+  const periods: TimelinePeriod[] = [];
+
+  for (
+    let cursor = startOfScale(paddedStart, scale);
+    cursor.getTime() <= paddedEnd.getTime();
+    cursor = addScale(cursor, scale, 1)
+  ) {
+    const formatted = formatPeriodLabel(cursor, scale);
+    periods.push({
+      key: `${scale}-${cursor.toISOString()}`,
+      start: cursor,
+      end: endOfScale(cursor, scale),
+      label: formatted.label,
+      subLabel: formatted.subLabel,
+    });
+  }
+
+  return periods;
 };
 
 const getScaleDiff = (base: Date, value: Date, scale: TimelineScale) => {
@@ -486,11 +507,11 @@ export default function TasksPage() {
   const [assigneeFilter, setAssigneeFilter] = useState<"all" | string>("all");
   const [viewMode, setViewMode] = useState<TaskViewMode>("gantt");
   const [timeScale, setTimeScale] = useState<TimelineScale>("week");
-  const [rangeAnchor, setRangeAnchor] = useState(() => new Date());
   const [showNoDeadlineSection, setShowNoDeadlineSection] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [quickEditState, setQuickEditState] = useState<QuickEditState>({ progress: "0", deadline: "" });
   const [savingTaskId, setSavingTaskId] = useState<string | null>(null);
+  const timelineScrollRef = useRef<HTMLDivElement | null>(null);
 
   const showPermissionDebug = searchParams.get("debugPermission") === "1";
   const canCreateTask = workspaceAccess.canManage && !workspaceAccess.error;
@@ -756,7 +777,7 @@ export default function TasksPage() {
     return Array.from(goalMap.values());
   }, [visibleTasks]);
 
-  const periods = useMemo(() => buildTimelinePeriods(rangeAnchor, timeScale), [rangeAnchor, timeScale]);
+  const periods = useMemo(() => buildTimelinePeriods(visibleTasks, timeScale), [timeScale, visibleTasks]);
   const periodWidth = PERIOD_WIDTH[timeScale];
   const timelineWidth = periods.length * periodWidth;
   const firstPeriodStart = periods[0]?.start ?? startOfScale(new Date(), timeScale);
@@ -857,9 +878,20 @@ export default function TasksPage() {
     return query ? `/tasks/new?${query}` : "/tasks/new";
   }, [goalFilter, keyResultFilter, rootDepartments]);
 
-  const moveRange = (direction: -1 | 1) => {
-    setRangeAnchor((current) => addScale(current, timeScale, PERIOD_COUNT[timeScale] * direction));
-  };
+  useEffect(() => {
+    if (viewMode !== "gantt" || todayIndex < 0 || !timelineScrollRef.current) {
+      return;
+    }
+
+    const container = timelineScrollRef.current;
+    const todayOffset = LEFT_PANEL_WIDTH + todayIndex * periodWidth;
+    const targetScrollLeft = Math.max(0, todayOffset - container.clientWidth * 0.4);
+
+    container.scrollTo({
+      left: targetScrollLeft,
+      behavior: "smooth",
+    });
+  }, [periodWidth, timeScale, todayIndex, viewMode]);
 
   return (
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
@@ -1030,29 +1062,9 @@ export default function TasksPage() {
                           Tháng
                         </ScaleButton>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => moveRange(-1)}
-                          className="inline-flex h-10 items-center rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                        >
-                          Trước
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setRangeAnchor(new Date())}
-                          className="inline-flex h-10 items-center rounded-xl bg-blue-50 px-4 text-sm font-semibold text-blue-700 hover:bg-blue-100"
-                        >
-                          Hôm nay
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => moveRange(1)}
-                          className="inline-flex h-10 items-center rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                        >
-                          Sau
-                        </button>
-                      </div>
+                      <p className="text-sm text-slate-500">
+                        Cuộn ngang trên timeline để xem thêm mốc thời gian.
+                      </p>
                     </>
                   ) : null}
                 </div>
@@ -1109,7 +1121,10 @@ export default function TasksPage() {
             {!isLoadingTasks && filteredTasks.length > 0 ? (
               viewMode === "gantt" ? (
               <section className="rounded-2xl border border-slate-200 bg-white">
-                <div className="overflow-auto rounded-2xl">
+                <div
+                  ref={timelineScrollRef}
+                  className="overflow-x-auto overflow-y-hidden rounded-2xl scroll-smooth"
+                >
                   <div
                     className="min-w-full"
                     style={{ width: LEFT_PANEL_WIDTH + timelineWidth }}

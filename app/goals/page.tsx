@@ -260,20 +260,6 @@ const formatDateVi = (value: string | null) => {
   return new Intl.DateTimeFormat("vi-VN", { dateStyle: "short" }).format(date);
 };
 
-const toShortName = (name: string) => {
-  const parts = name
-    .split(" ")
-    .map((item) => item.trim())
-    .filter(Boolean);
-  if (!parts.length) {
-    return "--";
-  }
-  if (parts.length === 1) {
-    return parts[0].slice(0, 2).toUpperCase();
-  }
-  return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
-};
-
 const getGoalHealthStatus = ({
   endDate,
   hasKeyResults,
@@ -566,13 +552,6 @@ const buildGoalGraph = (
   return { nodes: positionedNodes, edges };
 };
 
-const colorMap: Record<GoalNode["mau"], string> = {
-  blue: "bg-blue-600",
-  indigo: "bg-indigo-600",
-  emerald: "bg-emerald-600",
-  orange: "bg-orange-500",
-};
-
 const badgeMap: Record<GoalNode["mau"], string> = {
   blue: "bg-blue-50 text-blue-700",
   indigo: "bg-indigo-50 text-indigo-700",
@@ -729,7 +708,13 @@ export default function GoalsPage() {
   );
 
   useEffect(() => {
-    setGoalsListPage(1);
+    const frameId = requestAnimationFrame(() => {
+      setGoalsListPage(1);
+    });
+
+    return () => {
+      cancelAnimationFrame(frameId);
+    };
   }, [keywordFilter, departmentFilter, typeFilter, statusFilter, quarterFilter, yearFilter, mode]);
 
   const nodeMap = useMemo(
@@ -960,10 +945,15 @@ export default function GoalsPage() {
 
   useEffect(() => {
     if (!selectedGoal?.id || !isDetailOpen) {
-      setSelectedGoalKeyResults([]);
-      setSelectedGoalTasksError(null);
-      setIsLoadingSelectedGoalTasks(false);
-      return;
+      const frameId = requestAnimationFrame(() => {
+        setSelectedGoalKeyResults([]);
+        setSelectedGoalTasksError(null);
+        setIsLoadingSelectedGoalTasks(false);
+      });
+
+      return () => {
+        cancelAnimationFrame(frameId);
+      };
     }
 
     let isActive = true;
@@ -1112,10 +1102,15 @@ export default function GoalsPage() {
 
   useEffect(() => {
     if (!selectedGoal?.id || !isGoalLogsOpen) {
-      setGoalLogs([]);
-      setGoalLogsError(null);
-      setIsLoadingGoalLogs(false);
-      return;
+      const frameId = requestAnimationFrame(() => {
+        setGoalLogs([]);
+        setGoalLogsError(null);
+        setIsLoadingGoalLogs(false);
+      });
+
+      return () => {
+        cancelAnimationFrame(frameId);
+      };
     }
 
     let isActive = true;
@@ -1189,7 +1184,13 @@ export default function GoalsPage() {
 
   useEffect(() => {
     if (!isDetailOpen || !selectedGoal?.id) {
-      setIsGoalLogsOpen(false);
+      const frameId = requestAnimationFrame(() => {
+        setIsGoalLogsOpen(false);
+      });
+
+      return () => {
+        cancelAnimationFrame(frameId);
+      };
     }
   }, [isDetailOpen, selectedGoal?.id]);
 
@@ -1448,32 +1449,117 @@ export default function GoalsPage() {
       return;
     }
 
-    const confirmed = window.confirm(`Xóa mục tiêu "${targetGoal.tieuDe}"?`);
+    const childIdsByParent = nodes.reduce<Record<string, string[]>>((acc, node) => {
+      if (!node.parentGoalId) {
+        return acc;
+      }
+      if (!acc[node.parentGoalId]) {
+        acc[node.parentGoalId] = [];
+      }
+      acc[node.parentGoalId].push(node.id);
+      return acc;
+    }, {});
+
+    const goalIdsToDelete: string[] = [];
+    const collectGoalIds = (currentGoalId: string) => {
+      (childIdsByParent[currentGoalId] ?? []).forEach((childGoalId) => {
+        collectGoalIds(childGoalId);
+      });
+      goalIdsToDelete.push(currentGoalId);
+    };
+
+    collectGoalIds(goalId);
+
+    const confirmed = window.confirm(
+      goalIdsToDelete.length > 1
+        ? `Xóa mục tiêu "${targetGoal.tieuDe}" và ${goalIdsToDelete.length - 1} mục tiêu con?`
+        : `Xóa mục tiêu "${targetGoal.tieuDe}"?`,
+    );
     if (!confirmed) {
       return;
     }
 
     setDeletingGoalId(goalId);
 
-    const { error } = await supabase.from("goals").delete().eq("id", goalId);
+    const goalIdsToDeleteSet = new Set(goalIdsToDelete);
 
-    if (error) {
-      window.alert(error.message || "Không thể xóa mục tiêu.");
+    const { data: keyResultsData, error: keyResultsError } = await supabase
+      .from("key_results")
+      .select("id")
+      .in("goal_id", goalIdsToDelete);
+
+    if (keyResultsError) {
+      window.alert(keyResultsError.message || "Không thể tải danh sách key result để xóa mục tiêu.");
       setDeletingGoalId(null);
       return;
     }
 
-    setNodes((prev) => prev.filter((node) => node.id !== goalId));
-    setEdges((prev) => prev.filter((edge) => edge.from !== goalId && edge.to !== goalId));
+    const keyResultIds = (keyResultsData ?? []).map((item) => String(item.id));
+
+    if (keyResultIds.length > 0) {
+      const { error: deleteTasksError } = await supabase
+        .from("tasks")
+        .delete()
+        .in("key_result_id", keyResultIds);
+
+      if (deleteTasksError) {
+        window.alert(deleteTasksError.message || "Không thể xóa công việc thuộc mục tiêu.");
+        setDeletingGoalId(null);
+        return;
+      }
+    }
+
+    const { error: deleteGoalDepartmentsError } = await supabase
+      .from("goal_departments")
+      .delete()
+      .in("goal_id", goalIdsToDelete);
+
+    if (deleteGoalDepartmentsError) {
+      window.alert(deleteGoalDepartmentsError.message || "Không thể xóa phòng ban tham gia của mục tiêu.");
+      setDeletingGoalId(null);
+      return;
+    }
+
+    if (keyResultIds.length > 0) {
+      const { error: deleteKeyResultsError } = await supabase
+        .from("key_results")
+        .delete()
+        .in("id", keyResultIds);
+
+      if (deleteKeyResultsError) {
+        window.alert(deleteKeyResultsError.message || "Không thể xóa key result của mục tiêu.");
+        setDeletingGoalId(null);
+        return;
+      }
+    }
+
+    for (const deletingId of goalIdsToDelete) {
+      const { error } = await supabase.from("goals").delete().eq("id", deletingId);
+
+      if (error) {
+        window.alert(error.message || "Không thể xóa mục tiêu.");
+        setDeletingGoalId(null);
+        return;
+      }
+    }
+
+    setNodes((prev) => prev.filter((node) => !goalIdsToDeleteSet.has(node.id)));
+    setEdges((prev) => prev.filter((edge) => !goalIdsToDeleteSet.has(edge.from) && !goalIdsToDeleteSet.has(edge.to)));
     setActiveGoalMenuId(null);
     setDeletingGoalId(null);
 
-    if (selectedId === goalId) {
+    if (selectedId && goalIdsToDeleteSet.has(selectedId)) {
       const nextParams = new URLSearchParams(searchParams.toString());
       nextParams.delete("goal");
       nextParams.set("detail", "closed");
       const next = nextParams.toString();
       router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
+      return;
+    }
+
+    if (selectedId === goalId) {
+      setDeletingGoalId(null);
+      return;
     }
   };
 
@@ -1673,18 +1759,6 @@ export default function GoalsPage() {
                         }}
                       >
                         <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
-                          <Link
-                            href={`/goals/${goal.id}?createKr=1`}
-                            onClick={(event) => event.stopPropagation()}
-                            onPointerDown={(event) => event.stopPropagation()}
-                            className={`inline-flex h-8 items-center rounded-lg px-3 text-xs font-semibold transition ${
-                              goal.keyResultCount === 0
-                                ? "bg-blue-600 text-white hover:bg-blue-700"
-                                : "pointer-events-none border border-slate-200 bg-white text-slate-700 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-slate-50"
-                            }`}
-                          >
-                            + KR
-                          </Link>
                           <div className="relative">
                             <button
                               type="button"
@@ -1698,14 +1772,19 @@ export default function GoalsPage() {
                               ...
                             </button>
                             {activeGoalMenuId === goal.id ? (
-                              <div className="absolute right-0 top-10 w-40 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                              <div
+                                className="absolute right-0 top-10 z-20 w-40 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg"
+                                onClick={(event) => event.stopPropagation()}
+                                onPointerDown={(event) => event.stopPropagation()}
+                              >
                                 <button
                                   type="button"
                                   onClick={(event) => {
                                     event.stopPropagation();
                                     setActiveGoalMenuId(null);
-                                    router.push(`/goals/${goal.id}`);
+                                    router.push(`/goals/new?editGoalId=${goal.id}`);
                                   }}
+                                  onPointerDown={(event) => event.stopPropagation()}
                                   className="flex w-full items-center px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                                 >
                                   Sửa mục tiêu
@@ -1717,6 +1796,7 @@ export default function GoalsPage() {
                                     event.stopPropagation();
                                     void handleDeleteGoal(goal.id);
                                   }}
+                                  onPointerDown={(event) => event.stopPropagation()}
                                   className="flex w-full items-center px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                   {deletingGoalId === goal.id ? "Đang xóa..." : "Xóa mục tiêu"}
@@ -1741,7 +1821,7 @@ export default function GoalsPage() {
                             }
                           }}
                         >
-                          <div className="flex items-start justify-between gap-3 pr-24">
+                          <div className="flex items-start justify-between gap-3 pr-12">
                             <div className="flex flex-wrap items-center gap-2">
                               <span
                                 className={`inline-flex max-w-[150px] truncate rounded-lg px-2.5 py-1 text-[11px] font-semibold ${badgeMap[goal.mau]}`}
@@ -1760,7 +1840,6 @@ export default function GoalsPage() {
                                 {goalHealthLabelMap[goal.healthStatus]}
                               </span>
                             </div>
-                            <span className={`mt-1 inline-flex h-3 w-3 rounded-full ${colorMap[goal.mau]}`} />
                           </div>
 
                           <p className="mt-4 line-clamp-2 text-[22px] font-semibold leading-tight tracking-[-0.02em] text-slate-900">
@@ -1796,29 +1875,9 @@ export default function GoalsPage() {
                             </p>
                           )}
 
-                          <div className="mt-4 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-                            <div className="flex items-center gap-3">
-                              {goal.ownerAvatar ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
-                                  src={goal.ownerAvatar}
-                                  alt={goal.ownerName}
-                                  className="h-9 w-9 rounded-full object-cover"
-                                />
-                              ) : (
-                                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-xs font-semibold text-slate-700">
-                                  {toShortName(goal.ownerName)}
-                                </div>
-                              )}
-                              <div>
-                                <p className="text-[11px] text-slate-500">Chủ sở hữu</p>
-                                <p className="text-sm font-semibold text-slate-800">{goal.ownerName}</p>
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Deadline</p>
-                              <p className="text-xs font-medium text-slate-600">{formatDateVi(goal.endDate)}</p>
-                            </div>
+                          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                            <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Deadline</p>
+                            <p className="mt-1 text-sm font-semibold text-slate-700">{formatDateVi(goal.endDate)}</p>
                           </div>
                         </div>
                       </div>
@@ -2097,10 +2156,6 @@ export default function GoalsPage() {
                     <p className="text-sm text-slate-400">Quý</p>
                     <p className="mt-2 text-base font-medium text-slate-800">{selectedGoal.quy}</p>
                   </div>
-                  <div>
-                    <p className="text-sm text-slate-400">Chủ sở hữu</p>
-                    <p className="mt-2 text-base font-medium text-slate-800">{selectedGoal.ownerName}</p>
-                  </div>
                 </div>
 
                 {selectedGoal.teamNames.length > 0 ? (
@@ -2152,7 +2207,7 @@ export default function GoalsPage() {
                       Chưa có Key Result. Hãy thêm KR để bắt đầu theo dõi mục tiêu.
                     </p>
                     <Link
-                      href={`/goals/${selectedGoal.id}?createKr=1`}
+                      href={`/goals/${selectedGoal.id}/key-results/new`}
                       className="mt-3 inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white"
                     >
                       + Thêm Key Result
@@ -2243,7 +2298,7 @@ export default function GoalsPage() {
 
                 <div className="space-y-3 border-t border-slate-200 pt-5">
                   <Link
-                    href={`/goals/${selectedGoal.id}?createKr=1`}
+                    href={`/goals/${selectedGoal.id}/key-results/new`}
                     className="flex h-11 w-full items-center justify-center rounded-xl border border-slate-200 bg-white text-base font-semibold text-slate-700"
                   >
                     Thêm KR

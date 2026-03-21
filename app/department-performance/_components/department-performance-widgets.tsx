@@ -304,8 +304,8 @@ export function DepartmentGoalExecutionTable({
                                     <p className="mt-1">{keyResult.progress}%</p>
                                   </div>
                                   <div className="text-sm text-slate-600">
-                                    <p className="text-xs uppercase tracking-[0.08em] text-slate-400">Trọng số</p>
-                                    <p className="mt-1">{keyResult.weight}</p>
+                                    <p className="text-xs uppercase tracking-[0.08em] text-slate-400">Trọng số KR</p>
+                                    <p className="mt-1">{keyResult.weight}%</p>
                                   </div>
                                   <div className="text-sm text-slate-600">
                                     <p className="text-xs uppercase tracking-[0.08em] text-slate-400">Task liên kết</p>

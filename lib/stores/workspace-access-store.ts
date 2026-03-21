@@ -88,26 +88,77 @@ const defaultState = {
 
 let inFlightLoad: Promise<void> | null = null;
 
-const getLeaderRoleIds = (roles: WorkspaceRole[]) =>
+const normalizeRoleName = (value: string | null | undefined) =>
+  (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+
+export const getLeaderRoleIds = (roles: WorkspaceRole[]) =>
   roles
     .filter((role) => {
-      const roleName = typeof role.name === "string" ? role.name.trim().toLowerCase() : "";
+      const roleName = normalizeRoleName(role.name);
       return roleName === "leader" || roleName.includes("leader");
     })
     .map((role) => role.id);
+
+export const getDirectorRoleIds = (roles: WorkspaceRole[]) =>
+  roles
+    .filter((role) => {
+      const roleName = normalizeRoleName(role.name);
+      return roleName === "director" || roleName.includes("director") || roleName.includes("giam doc");
+    })
+    .map((role) => role.id);
+
+const getRootDepartmentId = (
+  departmentId: string,
+  departmentsById: Record<string, WorkspaceDepartment>,
+) => {
+  let currentDepartmentId: string | null = departmentId;
+  const visitedDepartmentIds = new Set<string>();
+
+  while (currentDepartmentId) {
+    if (visitedDepartmentIds.has(currentDepartmentId)) {
+      break;
+    }
+
+    visitedDepartmentIds.add(currentDepartmentId);
+    const currentDepartment = departmentsById[currentDepartmentId];
+
+    if (!currentDepartment) {
+      return departmentId;
+    }
+
+    if (!currentDepartment.parentDepartmentId) {
+      return currentDepartment.id;
+    }
+
+    currentDepartmentId = currentDepartment.parentDepartmentId;
+  }
+
+  return departmentId;
+};
 
 const buildManagedDepartments = (
   memberships: WorkspaceMembership[],
   departments: WorkspaceDepartment[],
   leaderRoleIds: string[],
 ) => {
-  const departmentIds = new Set(
+  const departmentsById = departments.reduce<Record<string, WorkspaceDepartment>>((acc, department) => {
+    acc[department.id] = department;
+    return acc;
+  }, {});
+
+  const rootDepartmentIds = new Set(
     memberships
       .filter((membership) => membership.departmentId && membership.roleId && leaderRoleIds.includes(membership.roleId))
-      .map((membership) => membership.departmentId as string),
+      .map((membership) =>
+        getRootDepartmentId(membership.departmentId as string, departmentsById),
+      ),
   );
 
-  return departments.filter((department) => !department.parentDepartmentId && departmentIds.has(department.id));
+  return departments.filter((department) => !department.parentDepartmentId && rootDepartmentIds.has(department.id));
 };
 
 export const useWorkspaceAccessStore = create<WorkspaceAccessStore>((set, get) => ({
@@ -171,26 +222,19 @@ export const useWorkspaceAccessStore = create<WorkspaceAccessStore>((set, get) =
           roleId: item.role_id ? String(item.role_id) : null,
         }));
 
-        const departmentIds = [
-          ...new Set(memberships.map((item) => item.departmentId).filter((value): value is string => Boolean(value))),
-        ];
+        const departmentResult = await supabase
+          .from("departments")
+          .select("id,name,parent_department_id");
 
-        if (departmentIds.length > 0) {
-          const departmentResult = await supabase
-            .from("departments")
-            .select("id,name,parent_department_id")
-            .in("id", departmentIds);
-
-          if (departmentResult.error) {
-            throw new Error(departmentResult.error.message || "Không tải được danh sách phòng ban.");
-          }
-
-          departments = ((departmentResult.data ?? []) as DepartmentRow[]).map((department) => ({
-            id: String(department.id),
-            name: String(department.name),
-            parentDepartmentId: department.parent_department_id ? String(department.parent_department_id) : null,
-          }));
+        if (departmentResult.error) {
+          throw new Error(departmentResult.error.message || "Không tải được danh sách phòng ban.");
         }
+
+        departments = ((departmentResult.data ?? []) as DepartmentRow[]).map((department) => ({
+          id: String(department.id),
+          name: String(department.name),
+          parentDepartmentId: department.parent_department_id ? String(department.parent_department_id) : null,
+        }));
 
         set({
           isLoading: false,
@@ -236,12 +280,25 @@ export function useWorkspaceAccess() {
     void load();
   }, [load]);
 
+  const leaderRoleIds = getLeaderRoleIds(state.roles);
+  const directorRoleIds = getDirectorRoleIds(state.roles);
+  const hasLeaderRole = state.memberships.some(
+    (membership) => membership.roleId && leaderRoleIds.includes(membership.roleId),
+  );
+  const hasDirectorRole = state.memberships.some(
+    (membership) => membership.roleId && directorRoleIds.includes(membership.roleId),
+  );
+
   return {
     ...state,
     profileId: state.profile?.id ?? null,
     profileName: state.profile?.name ?? null,
-    leaderRoleIds: getLeaderRoleIds(state.roles),
+    leaderRoleIds,
+    directorRoleIds,
+    hasLeaderRole,
+    hasDirectorRole,
     canManage: state.managedDepartments.length > 0,
+    canManageAttendance: hasLeaderRole || hasDirectorRole,
   };
 }
 

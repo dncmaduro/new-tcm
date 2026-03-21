@@ -618,7 +618,7 @@ export default function NewTaskPage() {
                           </p>
                         </div>
                         <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-blue-700">
-                          KR weight {selectedKeyResult.weight}
+                          Trọng số KR {Math.round(Number(selectedKeyResult.weight ?? 1))}%
                         </span>
                       </div>
                     </div>

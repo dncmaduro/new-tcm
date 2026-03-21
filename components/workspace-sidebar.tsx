@@ -14,6 +14,7 @@ import {
   ChevronUpIcon,
 } from "@radix-ui/react-icons";
 import { ComponentType, useEffect, useMemo, useRef, useState } from "react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { supabase } from "@/lib/supabase";
 import { useWorkspaceAccess, useWorkspaceAccessStore } from "@/lib/stores/workspace-access-store";
 
@@ -22,6 +23,7 @@ type SidebarKey =
   | "goals"
   | "tasks"
   | "timesheet"
+  | "attendanceManagement"
   | "timeRequestManagement"
   | "reports"
   | "departments"
@@ -39,10 +41,14 @@ const sidebarItems: Array<{ key: SidebarKey; label: string; href: string; icon: 
   { key: "goals", label: "Mục tiêu", href: "/goals", icon: TargetIcon },
   { key: "tasks", label: "Công việc", href: "/tasks", icon: CheckboxIcon },
   { key: "timesheet", label: "Chấm công", href: "/timesheet", icon: ClockIcon },
-  { key: "timeRequestManagement", label: "Quản lý yêu cầu thời gian", href: "/time-request-management", icon: ClockIcon },
   { key: "reports", label: "Báo cáo", href: "/reports", icon: BarChartIcon },
   { key: "departmentPerformance", label: "Hiệu suất phòng ban", href: "/department-performance", icon: BarChartIcon },
   { key: "departments", label: "Phòng ban", href: "/departments", icon: GroupIcon },
+];
+
+const managementSidebarItems: Array<{ key: SidebarKey; label: string; href: string }> = [
+  { key: "attendanceManagement", label: "Quản lý chấm công", href: "/attendance-management" },
+  { key: "timeRequestManagement", label: "Quản lý yêu cầu thời gian", href: "/time-request-management" },
 ];
 
 function SidebarBadge() {
@@ -82,6 +88,9 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [isManagementMenuOpen, setIsManagementMenuOpen] = useState(
+    active === "attendanceManagement" || active === "timeRequestManagement",
+  );
 
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
@@ -103,6 +112,12 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   const visibleSidebarItems = sidebarItems.filter((item) => {
     if (item.key === "departmentPerformance") {
       return canManage;
+    }
+    return true;
+  });
+  const visibleManagementItems = managementSidebarItems.filter((item) => {
+    if (item.key === "attendanceManagement") {
+      return workspaceAccess.canManageAttendance;
     }
     return true;
   });
@@ -151,6 +166,12 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   const sidebarRole = primaryAssignment?.roleName ?? "Chưa có vai trò";
   const sidebarDepartment = primaryAssignment?.departmentName ?? "Chưa có phòng ban";
 
+  useEffect(() => {
+    if (active === "attendanceManagement" || active === "timeRequestManagement") {
+      setIsManagementMenuOpen(true);
+    }
+  }, [active]);
+
   const handleLogout = async () => {
     setIsLoggingOut(true);
     setLogoutError(null);
@@ -185,7 +206,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
         </div>
   
         <nav className="space-y-2">
-            {visibleSidebarItems.map((item) => {
+          {visibleSidebarItems.map((item) => {
             const Icon = item.icon;
             return (
               <Link
@@ -202,6 +223,46 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
               </Link>
             );
           })}
+
+          {visibleManagementItems.length > 0 ? (
+            <Collapsible open={isManagementMenuOpen} onOpenChange={setIsManagementMenuOpen}>
+              <div className="space-y-2">
+                <CollapsibleTrigger
+                  className={`flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-lg font-medium tracking-[-0.01em] transition ${
+                    active === "attendanceManagement" || active === "timeRequestManagement"
+                      ? "bg-[#0b1e43] text-white"
+                      : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
+                  }`}
+                >
+                  <span className="flex items-center gap-3">
+                    <ClockIcon className="h-[18px] w-[18px]" />
+                    Quản lý
+                  </span>
+                  {isManagementMenuOpen ? (
+                    <ChevronUpIcon className="h-4 w-4 text-slate-300" />
+                  ) : (
+                    <ChevronDownIcon className="h-4 w-4 text-slate-300" />
+                  )}
+                </CollapsibleTrigger>
+
+                <CollapsibleContent className="space-y-2">
+                  {visibleManagementItems.map((item) => (
+                    <Link
+                      key={item.key}
+                      href={item.href}
+                      className={`ml-5 flex w-[calc(100%-1.25rem)] items-center rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+                        item.key === active
+                          ? "bg-[#1e62d8] text-white"
+                          : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
+                      }`}
+                    >
+                      {item.label}
+                    </Link>
+                  ))}
+                </CollapsibleContent>
+              </div>
+            </Collapsible>
+          ) : null}
         </nav>
   
         <div className="mt-auto space-y-4">

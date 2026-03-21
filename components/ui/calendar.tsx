@@ -28,13 +28,14 @@ export function Calendar({ className, classNames, showOutsideDays = true, ...pro
         weeks: "flex flex-col gap-1",
         week: "mt-1 flex w-full",
         month_grid: "w-full border-collapse",
-        day: "h-9 w-9 p-0 text-center align-middle",
+        day: "h-9 w-9 p-0 text-center align-middle text-slate-700",
         day_button:
-          "h-9 w-9 rounded-md p-0 text-sm text-slate-700 hover:bg-slate-100 aria-selected:bg-blue-600 aria-selected:text-white",
+          "h-9 w-9 rounded-md p-0 text-sm hover:bg-slate-100 aria-selected:bg-blue-600 aria-selected:text-white",
         today: "text-blue-700 font-semibold",
         outside: "text-slate-300 opacity-50",
         disabled: "text-slate-300 opacity-50",
-        selected: "bg-blue-600 text-white hover:bg-blue-600 focus:bg-blue-600",
+        selected:
+          "bg-blue-600 text-white hover:bg-blue-600 focus:bg-blue-600 [&>button]:text-white [&>button]:font-semibold",
         hidden: "invisible",
         ...classNames,
       }}

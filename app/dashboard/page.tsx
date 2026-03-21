@@ -108,8 +108,8 @@ export default function DashboardPage() {
           </header>
 
           <main className="space-y-6 px-4 py-6 lg:px-8 lg:py-7">
-            <section className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
+            <section>
+              <div className="space-y-2.5">
                 <h1 className="text-4xl font-semibold tracking-[-0.025em] text-slate-950">
                   Tổng quan
                 </h1>
@@ -118,20 +118,6 @@ export default function DashboardPage() {
                     ? `Chào mừng trở lại, ${data.profile.profileName}. Đây là những gì đang diễn ra hôm nay.`
                     : "Đang đồng bộ dữ liệu tổng quan cho bạn."}
                 </p>
-              </div>
-              <div className="flex items-center gap-3">
-                <Link
-                  href="/tasks"
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                >
-                  Xuất báo cáo
-                </Link>
-                <Link
-                  href="/tasks/new"
-                  className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
-                >
-                  + Việc mới
-                </Link>
               </div>
             </section>
 

@@ -2,14 +2,13 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { GOAL_STATUSES, GOAL_TYPES } from "@/lib/constants/goals";
 import {
+  KEY_RESULT_UNITS,
   formatKeyResultMetric,
   formatKeyResultUnit,
-  getKeyResultProgressHint,
-  KEY_RESULT_UNITS,
   type KeyResultUnitValue,
 } from "@/lib/constants/key-results";
 import { getTaskProgressHint, TASK_STATUSES, TASK_TYPES } from "@/lib/constants/tasks";
@@ -120,15 +119,11 @@ type GoalTaskItem = {
   keyResultId: string | null;
 };
 
-type KeyResultFormState = {
-  name: string;
-  description: string;
+type KeyResultScaleFormState = {
+  current: string;
+  target: string;
   unit: KeyResultUnitValue;
-  startValue: number;
-  target: number;
-  current: number;
-  weight: number;
-  responsibleDepartmentId: string;
+  weight: string;
 };
 
 const typeLabelMap = GOAL_TYPES.reduce<Record<string, string>>((acc, item) => {
@@ -145,17 +140,6 @@ const taskStatusLabelMap = TASK_STATUSES.reduce<Record<string, string>>((acc, it
   acc[item.value] = item.label;
   return acc;
 }, {});
-
-const defaultKeyResultForm: KeyResultFormState = {
-  name: "",
-  description: "",
-  unit: "count",
-  startValue: 0,
-  target: 100,
-  current: 0,
-  weight: 1,
-  responsibleDepartmentId: "",
-};
 
 const formatDateTime = (value: string | null) => {
   if (!value) {
@@ -183,35 +167,27 @@ const formatQuarterYear = (quarter: number | null, year: number | null) => {
   return "Chưa đặt kỳ";
 };
 
-const getKeyResultStatusMeta = (progress: number, taskCount: number) => {
-  if (taskCount === 0) {
-    return {
-      label: "Chưa có task",
-      className: "bg-slate-100 text-slate-600",
-    };
+const toKeyResultUnitValue = (value: string | null): KeyResultUnitValue =>
+  KEY_RESULT_UNITS.find((unit) => unit.value === value)?.value ?? KEY_RESULT_UNITS[0].value;
+
+const createKeyResultScaleForm = (keyResult: KeyResultRow): KeyResultScaleFormState => ({
+  current: String(Number.isFinite(keyResult.current) ? Number(keyResult.current) : 0),
+  target: String(Number.isFinite(keyResult.target) ? Number(keyResult.target) : 0),
+  unit: toKeyResultUnitValue(keyResult.unit),
+  weight: String(Math.round(Number(keyResult.weight ?? 1))),
+});
+
+const getReadableKeyResultSaveError = (message: string | null | undefined) => {
+  const normalizedMessage = String(message ?? "").toLowerCase();
+
+  if (
+    normalizedMessage.includes('record "new" has no field "progress"') ||
+    normalizedMessage.includes('record "old" has no field "progress"')
+  ) {
+    return "DB đang còn trigger cũ của key result dùng cột progress không còn tồn tại. Cần chạy migration sửa trigger key_results.";
   }
-  if (progress >= 100) {
-    return {
-      label: "Hoàn thành",
-      className: "bg-emerald-50 text-emerald-700",
-    };
-  }
-  if (progress >= 60) {
-    return {
-      label: "Đúng hướng",
-      className: "bg-blue-50 text-blue-700",
-    };
-  }
-  if (progress > 0) {
-    return {
-      label: "Nguy cơ",
-      className: "bg-amber-50 text-amber-700",
-    };
-  }
-  return {
-    label: "Chưa bắt đầu",
-    className: "bg-slate-100 text-slate-600",
-  };
+
+  return message || "Không thể cập nhật key result.";
 };
 
 function ProgressBar({ value }: { value: number }) {
@@ -242,35 +218,14 @@ export default function GoalDetailPage() {
   const [relatedDepartmentLoadError, setRelatedDepartmentLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [editingKeyResultId, setEditingKeyResultId] = useState<string | null>(null);
+  const [keyResultScaleForm, setKeyResultScaleForm] = useState<KeyResultScaleFormState | null>(null);
+  const [keyResultScaleError, setKeyResultScaleError] = useState<string | null>(null);
+  const [savingKeyResultId, setSavingKeyResultId] = useState<string | null>(null);
+  const [savedKeyResultId, setSavedKeyResultId] = useState<string | null>(null);
 
-  const [showCreateKeyResult, setShowCreateKeyResult] = useState(false);
-  const [isCreatingKeyResult, setIsCreatingKeyResult] = useState(false);
-  const [keyResultSubmitError, setKeyResultSubmitError] = useState<string | null>(null);
-  const [keyResultNotice, setKeyResultNotice] = useState<string | null>(null);
-  const [keyResultForm, setKeyResultForm] = useState<KeyResultFormState>(defaultKeyResultForm);
   const isCheckingCreatePermission = workspaceAccess.isLoading;
   const canCreateKeyResult = workspaceAccess.canManage && !workspaceAccess.error;
-
-  useEffect(() => {
-    if (searchParams.get("createKr") === "1") {
-      setShowCreateKeyResult(true);
-    }
-  }, [searchParams]);
-
-  useEffect(() => {
-    if (!goalDepartments.length) {
-      return;
-    }
-
-    setKeyResultForm((prev) =>
-      prev.responsibleDepartmentId
-        ? prev
-        : {
-            ...prev,
-            responsibleDepartmentId: goalDepartments[0]?.departmentId ?? "",
-          },
-    );
-  }, [goalDepartments]);
 
   useEffect(() => {
     if (!hasValidGoalId) {
@@ -286,6 +241,10 @@ export default function GoalDetailPage() {
       setChildGoalLoadError(null);
       setKeyResultLoadError(null);
       setRelatedDepartmentLoadError(null);
+      setEditingKeyResultId(null);
+      setKeyResultScaleForm(null);
+      setKeyResultScaleError(null);
+      setSavingKeyResultId(null);
 
       const { data: goalData, error: goalError } = await supabase
         .from("goals")
@@ -636,7 +595,7 @@ export default function GoalDetailPage() {
       return 0;
     }
     return buildGoalProgressMap([goal.id], keyResults, keyResultProgressMap)[goal.id] ?? 0;
-  }, [goal?.id, keyResultProgressMap, keyResults]);
+  }, [goal, keyResultProgressMap, keyResults]);
   const goalTypeLabel = goal?.type ? typeLabelMap[goal.type] ?? goal.type : "Chưa đặt";
   const goalStatusLabel = goal?.status ? statusLabelMap[goal.status] ?? goal.status : "Chưa đặt";
   const quarterLabel = goal?.quarter ? `Q${goal.quarter}` : "Chưa đặt";
@@ -682,6 +641,7 @@ export default function GoalDetailPage() {
     () => goalTasks.filter((task) => !task.keyResultId),
     [goalTasks],
   );
+  const assignedGoalTaskCount = goalTasks.length - unassignedGoalTasks.length;
   const goalDepartmentsById = useMemo(
     () =>
       goalDepartments.reduce<Record<string, GoalDepartmentItem>>((acc, item) => {
@@ -709,7 +669,7 @@ export default function GoalDetailPage() {
     return buildGoalDepartmentPerformanceMap(goalDepartments, keyResults, keyResultProgressMap, {
       [goal.id]: goalProgress,
     });
-  }, [goal?.id, goalDepartments, goalProgress, keyResultProgressMap, keyResults]);
+  }, [goal, goalDepartments, goalProgress, keyResultProgressMap, keyResults]);
   const departmentPerformanceItems = useMemo(() => {
     return goalDepartments.map((department) => {
       const ownedKeyResults = keyResults.filter(
@@ -744,142 +704,109 @@ export default function GoalDetailPage() {
   }
   const addTaskQuery = addTaskParams.toString();
   const addTaskHref = addTaskQuery ? `/tasks/new?${addTaskQuery}` : "/tasks/new";
+  const createKeyResultHref = hasValidGoalId ? `/goals/${goalId}/key-results/new` : "/goals";
+  const keyResultNotice =
+    searchParams.get("krCreated") === "1"
+      ? "Đã tạo key result. Bạn có thể gắn task vào KR này ngay."
+      : null;
 
-  const handleCreateKeyResult = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const startEditingKeyResultScale = (keyResult: KeyResultRow) => {
+    setEditingKeyResultId(keyResult.id);
+    setKeyResultScaleForm(createKeyResultScaleForm(keyResult));
+    setKeyResultScaleError(null);
+    setSavedKeyResultId(null);
+  };
 
-    if (!goal?.id) {
-      setKeyResultSubmitError("Không xác định được mục tiêu để tạo key result.");
+  const cancelEditingKeyResultScale = () => {
+    setEditingKeyResultId(null);
+    setKeyResultScaleForm(null);
+    setKeyResultScaleError(null);
+  };
+
+  const handleSaveKeyResultScale = async (keyResult: KeyResultRow) => {
+    if (!keyResultScaleForm || editingKeyResultId !== keyResult.id) {
       return;
     }
 
     if (!canCreateKeyResult) {
-      setKeyResultSubmitError("Bạn không có quyền tạo key result cho mục tiêu này.");
+      setKeyResultScaleError("Bạn không có quyền cập nhật key result ở mục tiêu này.");
       return;
     }
 
-    const safeStartValue = Number(keyResultForm.startValue);
-    const safeTarget = Number(keyResultForm.target);
-    const safeCurrent = Number(keyResultForm.current);
-    const safeWeight = Number(keyResultForm.weight);
-    if (!keyResultForm.name.trim()) {
-      setKeyResultSubmitError("Vui lòng nhập tên key result.");
-      return;
-    }
-    if (!Number.isFinite(safeStartValue) || safeStartValue < 0) {
-      setKeyResultSubmitError("Start value không được nhỏ hơn 0.");
+    const safeCurrent = Number(keyResultScaleForm.current);
+    const safeTarget = Number(keyResultScaleForm.target);
+    const safeWeight = Number(keyResultScaleForm.weight);
+
+    if (!Number.isFinite(safeCurrent) || safeCurrent < 0) {
+      setKeyResultScaleError("Hiện tại không được nhỏ hơn 0.");
       return;
     }
     if (!Number.isFinite(safeTarget) || safeTarget <= 0) {
-      setKeyResultSubmitError("Target phải lớn hơn 0.");
-      return;
-    }
-    if (safeTarget < safeStartValue) {
-      setKeyResultSubmitError("Target phải lớn hơn hoặc bằng start value.");
-      return;
-    }
-    if (!Number.isFinite(safeCurrent) || safeCurrent < 0) {
-      setKeyResultSubmitError("Current không được nhỏ hơn 0.");
+      setKeyResultScaleError("Target phải lớn hơn 0.");
       return;
     }
     if (!Number.isFinite(safeWeight) || safeWeight <= 0) {
-      setKeyResultSubmitError("Weight phải lớn hơn 0.");
-      return;
-    }
-    if (!keyResultForm.responsibleDepartmentId) {
-      setKeyResultSubmitError("Vui lòng chọn phòng ban phụ trách KR.");
-      return;
-    }
-    if (
-      goalDepartments.length > 0 &&
-      !goalDepartments.some((item) => item.departmentId === keyResultForm.responsibleDepartmentId)
-    ) {
-      setKeyResultSubmitError("Phòng ban phụ trách KR phải nằm trong danh sách phòng ban tham gia mục tiêu.");
+      setKeyResultScaleError("Trọng số KR phải lớn hơn 0.");
       return;
     }
 
-    setIsCreatingKeyResult(true);
-    setKeyResultSubmitError(null);
-    setKeyResultNotice(null);
+    setKeyResultScaleError(null);
+    setSavingKeyResultId(keyResult.id);
 
     try {
       const payload = {
-        goal_id: goal.id,
-        name: keyResultForm.name.trim(),
-        description: keyResultForm.description.trim() || null,
-        unit: keyResultForm.unit,
-        start_value: safeStartValue,
-        target: safeTarget,
         current: safeCurrent,
+        target: safeTarget,
+        unit: keyResultScaleForm.unit,
         weight: Math.round(safeWeight),
-        responsible_department_id: keyResultForm.responsibleDepartmentId,
       };
 
-      const { data, error: createError } = await supabase
+      const { error: updateError } = await supabase
         .from("key_results")
-        .insert(payload)
-        .select(
-          "id,goal_id,name,description,start_value,target,current,unit,weight,responsible_department_id,created_at,updated_at",
-        )
-        .maybeSingle();
+        .update(payload)
+        .eq("id", keyResult.id);
 
-      if (createError || !data) {
-        if (createError?.code === "42501") {
-          throw new Error("Bạn không có quyền tạo key result cho mục tiêu này.");
+      if (updateError) {
+        if (updateError.code === "42501") {
+          setKeyResultScaleError(
+            "DB đang chặn UPDATE vào key_results (RLS). Cần chạy migration sửa policy bảng key_results.",
+          );
+        } else {
+          setKeyResultScaleError(getReadableKeyResultSaveError(updateError.message));
         }
-        throw new Error(createError?.message || "Không thể tạo key result.");
+        return;
       }
 
-      const createdKeyResult = data as KeyResultRow;
-      setKeyResults((prev) => [
-        ...prev,
-        {
-          ...createdKeyResult,
-          id: String(createdKeyResult.id),
-          goal_id: String(createdKeyResult.goal_id),
-          start_value:
-            typeof createdKeyResult.start_value === "number"
-              ? createdKeyResult.start_value
-              : Number(createdKeyResult.start_value ?? 0),
-          target:
-            typeof createdKeyResult.target === "number"
-              ? createdKeyResult.target
-              : Number(createdKeyResult.target ?? 0),
-          current:
-            typeof createdKeyResult.current === "number"
-              ? createdKeyResult.current
-              : Number(createdKeyResult.current ?? 0),
-          unit: createdKeyResult.unit ? String(createdKeyResult.unit) : null,
-          weight:
-            typeof createdKeyResult.weight === "number"
-              ? createdKeyResult.weight
-              : Number(createdKeyResult.weight ?? 1),
-          responsible_department_id: createdKeyResult.responsible_department_id
-            ? String(createdKeyResult.responsible_department_id)
-            : null,
-        },
-      ]);
-      setKeyResultForm({
-        ...defaultKeyResultForm,
-        responsibleDepartmentId: goalDepartments[0]?.departmentId ?? "",
-      });
-      setShowCreateKeyResult(false);
-      setKeyResultNotice("Đã tạo key result. Bạn có thể gắn task vào KR này ngay.");
-    } catch (createError) {
-      setKeyResultSubmitError(
-        createError instanceof Error ? createError.message : "Không thể tạo key result.",
+      setKeyResults((prev) =>
+        prev.map((item) =>
+          item.id === keyResult.id
+            ? {
+                ...item,
+                current: safeCurrent,
+                target: safeTarget,
+                unit: keyResultScaleForm.unit,
+                weight: Math.round(safeWeight),
+                updated_at: new Date().toISOString(),
+              }
+            : item,
+        ),
       );
+      setSavedKeyResultId(keyResult.id);
+      setEditingKeyResultId(null);
+      setKeyResultScaleForm(null);
+    } catch {
+      setKeyResultScaleError("Có lỗi xảy ra khi cập nhật key result.");
     } finally {
-      setIsCreatingKeyResult(false);
+      setSavingKeyResultId(null);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
-      <div className="flex min-h-screen w-full">
+    <div className="h-screen overflow-hidden bg-[#f3f5fa] text-slate-900">
+      <div className="flex h-full w-full">
         <WorkspaceSidebar active="goals" />
 
-        <div className="flex h-screen w-full flex-1 flex-col overflow-hidden lg:pl-[280px]">
+        <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden lg:pl-[280px]">
           <header className="border-b border-slate-200 bg-[#f3f5fa] px-4 py-4 lg:px-7">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm text-slate-500">
@@ -892,23 +819,19 @@ export default function GoalDetailPage() {
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowCreateKeyResult((prev) => !prev);
-                    setKeyResultSubmitError(null);
-                    setKeyResultNotice(null);
-                  }}
-                  disabled={isCheckingCreatePermission}
-                  className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                {workspaceAccess.canManage && !workspaceAccess.error && hasValidGoalId ? (
+                  <Link
+                    href={`/goals/new?editGoalId=${goalId}`}
+                    className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    Sửa mục tiêu
+                  </Link>
+                ) : null}
+                <Link
+                  href={createKeyResultHref}
+                  className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                 >
                   + Thêm key result
-                </button>
-                <Link
-                  href={addTaskHref}
-                  className="inline-flex h-9 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
-                >
-                  + Thêm việc
                 </Link>
                 <Link
                   href="/goals"
@@ -1026,7 +949,7 @@ export default function GoalDetailPage() {
                       <div>
                         <h2 className="text-base font-semibold text-slate-900">Phòng ban tham gia & hiệu suất</h2>
                         <p className="mt-1 text-sm text-slate-500">
-                          Hiệu suất phòng ban = tiến độ goal x goal_weight + tiến độ KR sở hữu x kr_weight.
+                          Hiệu suất phòng ban = tiến độ mục tiêu x tỷ trọng mục tiêu + tiến độ KR sở hữu x tỷ trọng KR.
                         </p>
                       </div>
                       <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
@@ -1060,11 +983,11 @@ export default function GoalDetailPage() {
                             </div>
                             <div className="mt-4 grid gap-3 sm:grid-cols-3 text-sm text-slate-600">
                               <div className="rounded-xl bg-white px-3 py-2">
-                                <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">goal_weight</p>
+                                <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Tỷ trọng mục tiêu</p>
                                 <p className="mt-1 font-semibold text-slate-900">{department.goalWeight.toFixed(2)}</p>
                               </div>
                               <div className="rounded-xl bg-white px-3 py-2">
-                                <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">kr_weight</p>
+                                <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Tỷ trọng KR</p>
                                 <p className="mt-1 font-semibold text-slate-900">{department.krWeight.toFixed(2)}</p>
                               </div>
                               <div className="rounded-xl bg-white px-3 py-2">
@@ -1080,58 +1003,29 @@ export default function GoalDetailPage() {
                     )}
                   </article>
 
-                  <article className="relative overflow-hidden rounded-[28px] border border-blue-200 bg-[linear-gradient(180deg,#eef6ff_0%,#f8fbff_46%,#ffffff_100%)] p-5 shadow-[0_24px_60px_-42px_rgba(37,99,235,0.55)]">
-                    <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-[radial-gradient(circle_at_top_left,rgba(59,130,246,0.22),transparent_58%)]" />
-                    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <article className="rounded-2xl border border-slate-200 bg-white p-5">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
-                        <p className="text-[11px] font-semibold tracking-[0.1em] text-blue-700 uppercase">
-                          Trọng tâm thực thi
+                        <h2 className="text-base font-semibold text-slate-900">Key result</h2>
+                        <p className="mt-1 text-sm text-slate-500">
+                          Hiển thị nhanh tiến độ, hiện tại so với mục tiêu và số task của từng KR.
                         </p>
-                        <h2 className="mt-1 text-[28px] font-semibold tracking-[-0.03em] text-slate-950">
-                          Key results theo phòng ban
-                        </h2>
                       </div>
-                      <span className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 shadow-sm">
-                        {keyResults.length} KR
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                          {keyResults.length} KR
+                        </span>
+                        <Link
+                          href={createKeyResultHref}
+                          className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          + Thêm key result
+                        </Link>
+                      </div>
                     </div>
 
-                    <div className="mb-4 flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowCreateKeyResult(false);
-                          setKeyResultSubmitError(null);
-                          setKeyResultNotice(null);
-                        }}
-                        className={`inline-flex h-9 items-center rounded-xl px-4 text-sm font-semibold ${
-                          !showCreateKeyResult
-                            ? "bg-blue-600 text-white shadow-sm"
-                            : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                        }`}
-                      >
-                        Danh sách KR
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowCreateKeyResult(true);
-                          setKeyResultSubmitError(null);
-                          setKeyResultNotice(null);
-                        }}
-                        disabled={isCheckingCreatePermission}
-                        className={`inline-flex h-9 items-center rounded-xl px-4 text-sm font-semibold ${
-                          showCreateKeyResult
-                            ? "bg-blue-600 text-white shadow-sm"
-                            : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                        } disabled:cursor-not-allowed disabled:opacity-60`}
-                      >
-                        + Thêm key result
-                      </button>
-                    </div>
-
-                    <div className="mb-5 grid gap-3 md:grid-cols-3">
-                      <div className="rounded-2xl border border-white/90 bg-white/90 px-4 py-4 backdrop-blur">
+                    <div className="mt-4 grid gap-3 md:grid-cols-3">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
                         <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
                           Tiến độ KR trung bình
                         </p>
@@ -1139,27 +1033,20 @@ export default function GoalDetailPage() {
                           {averageKeyResultProgress}%
                         </p>
                       </div>
-                      <div className="rounded-2xl border border-white/90 bg-white/90 px-4 py-4 backdrop-blur">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
                         <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
                           Số key result
                         </p>
                         <p className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-slate-950">
                           {keyResults.length}
                         </p>
-                        <button
-                          type="button"
-                          onClick={() => setShowCreateKeyResult(true)}
-                          className="mt-3 inline-flex text-xs font-semibold text-blue-700 hover:text-blue-800"
-                        >
-                          + Thêm KR
-                        </button>
                       </div>
-                      <div className="rounded-2xl border border-white/90 bg-white/90 px-4 py-4 backdrop-blur">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
                         <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                          Công việc theo KR
+                          Task đã gắn KR
                         </p>
                         <p className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-slate-950">
-                          {goalTasks.length - unassignedGoalTasks.length}
+                          {assignedGoalTaskCount}
                         </p>
                         {keyResults.length > 0 ? (
                           <Link
@@ -1175,409 +1062,250 @@ export default function GoalDetailPage() {
                     </div>
 
                     {!isCheckingCreatePermission && !canCreateKeyResult ? (
-                      <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
                         Quyền tạo KR đang dùng cùng logic với quyền tạo goal. Tài khoản hiện tại chưa có quyền này.
                       </div>
                     ) : null}
 
                     {keyResultNotice ? (
-                      <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                      <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
                         {keyResultNotice}
                       </div>
                     ) : null}
 
                     {keyResultLoadError ? (
-                      <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                      <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
                         {keyResultLoadError}
                       </p>
                     ) : null}
-
-                    {showCreateKeyResult ? (
-                      <form
-                        onSubmit={handleCreateKeyResult}
-                        className="mb-5 space-y-4 rounded-[24px] border border-blue-200 bg-white/90 p-4 shadow-[0_20px_40px_-36px_rgba(37,99,235,0.55)]"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <h3 className="text-lg font-semibold text-slate-900">Tạo key result mới</h3>
-                            <p className="mt-1 text-sm text-slate-500">
-                              Thiết lập mốc bắt đầu, mục tiêu đích và trọng số của KR.
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setShowCreateKeyResult(false);
-                              setKeyResultSubmitError(null);
-                            }}
-                            className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                          >
-                            Quay về danh sách
-                          </button>
-                        </div>
-
-                        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
-                          <div className="space-y-1.5">
-                            <label className="text-sm font-semibold text-slate-700">Tên key result *</label>
-                            <input
-                              value={keyResultForm.name}
-                              onChange={(event) =>
-                                setKeyResultForm((prev) => ({ ...prev, name: event.target.value }))
-                              }
-                              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                              placeholder="Ví dụ: Tăng MRR thêm 20%"
-                            />
-                          </div>
-
-                          <div className="space-y-1.5">
-                            <label className="text-sm font-semibold text-slate-700">Phòng ban phụ trách *</label>
-                            <select
-                              value={keyResultForm.responsibleDepartmentId}
-                              onChange={(event) =>
-                                setKeyResultForm((prev) => ({
-                                  ...prev,
-                                  responsibleDepartmentId: event.target.value,
-                                }))
-                              }
-                              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                            >
-                              <option value="">Chọn phòng ban phụ trách</option>
-                              {goalDepartments.map((department) => (
-                                <option key={department.departmentId} value={department.departmentId}>
-                                  {department.name}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          <div className="grid gap-3 md:grid-cols-5">
-                            <div className="space-y-1.5">
-                              <label className="text-sm font-semibold text-slate-700">Unit</label>
-                              <select
-                                value={keyResultForm.unit}
-                                onChange={(event) =>
-                                  setKeyResultForm((prev) => ({
-                                    ...prev,
-                                    unit: event.target.value as KeyResultUnitValue,
-                                  }))
-                                }
-                                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                              >
-                                {KEY_RESULT_UNITS.map((unit) => (
-                                  <option key={unit.value} value={unit.value}>
-                                    {unit.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <div className="space-y-1.5">
-                              <label className="text-sm font-semibold text-slate-700">Mốc đầu</label>
-                              <input
-                                type="number"
-                                min={0}
-                                step="0.01"
-                                value={keyResultForm.startValue}
-                                onChange={(event) =>
-                                  setKeyResultForm((prev) => ({
-                                    ...prev,
-                                    startValue: Number(event.target.value) || 0,
-                                  }))
-                                }
-                                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                              />
-                            </div>
-                            <div className="space-y-1.5">
-                              <label className="text-sm font-semibold text-slate-700">Target *</label>
-                              <input
-                                type="number"
-                                min={0}
-                                step="0.01"
-                                value={keyResultForm.target}
-                                onChange={(event) =>
-                                  setKeyResultForm((prev) => ({
-                                    ...prev,
-                                    target: Number(event.target.value) || 0,
-                                  }))
-                                }
-                                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                              />
-                            </div>
-                            <div className="space-y-1.5">
-                              <label className="text-sm font-semibold text-slate-700">Hiện tại</label>
-                              <input
-                                type="number"
-                                min={0}
-                                step="0.01"
-                                value={keyResultForm.current}
-                                onChange={(event) =>
-                                  setKeyResultForm((prev) => ({
-                                    ...prev,
-                                    current: Number(event.target.value) || 0,
-                                  }))
-                                }
-                                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                              />
-                            </div>
-                            <div className="space-y-1.5">
-                              <label className="text-sm font-semibold text-slate-700">Trọng số KR *</label>
-                              <input
-                                type="number"
-                                min={1}
-                                step="1"
-                                value={keyResultForm.weight}
-                                onChange={(event) =>
-                                  setKeyResultForm((prev) => ({
-                                    ...prev,
-                                    weight: Number(event.target.value) || 1,
-                                  }))
-                                }
-                                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                              />
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <label className="text-sm font-semibold text-slate-700">Mô tả</label>
-                          <textarea
-                            rows={3}
-                            value={keyResultForm.description}
-                            onChange={(event) =>
-                              setKeyResultForm((prev) => ({ ...prev, description: event.target.value }))
-                            }
-                            className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                            placeholder="Mô tả phạm vi và cách đo kết quả"
-                          />
-                        </div>
-
-                        <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-sm text-blue-800">
-                          {getKeyResultProgressHint(keyResultForm.unit)}
-                        </div>
-
-                        {keyResultSubmitError ? (
-                          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                            {keyResultSubmitError}
-                          </div>
-                        ) : null}
-
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setShowCreateKeyResult(false);
-                              setKeyResultForm({
-                                ...defaultKeyResultForm,
-                                responsibleDepartmentId: goalDepartments[0]?.departmentId ?? "",
-                              });
-                              setKeyResultSubmitError(null);
-                            }}
-                            className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                          >
-                            Hủy
-                          </button>
-                          <button
-                            type="submit"
-                            disabled={isCreatingKeyResult || isCheckingCreatePermission || !canCreateKeyResult}
-                            className="inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                          >
-                            {isCreatingKeyResult ? "Đang tạo..." : "Tạo key result"}
-                          </button>
-                        </div>
-                      </form>
-                    ) : null}
-
-                    {!showCreateKeyResult && !keyResultLoadError && keyResults.length === 0 ? (
-                      <div className="rounded-[24px] border border-dashed border-blue-200 bg-white/85 px-5 py-8 text-center">
+                    {!keyResultLoadError && keyResults.length === 0 ? (
+                      <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center">
                         <p className="text-lg font-semibold text-slate-900">Chưa có Key Result.</p>
                         <p className="mt-2 text-sm text-slate-500">
                           Hãy tạo KR để bắt đầu theo dõi mục tiêu.
                         </p>
-                        <button
-                          type="button"
-                          onClick={() => setShowCreateKeyResult(true)}
+                        <Link
+                          href={createKeyResultHref}
                           className="mt-4 inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
                         >
                           + Thêm Key Result
-                        </button>
+                        </Link>
                       </div>
                     ) : null}
 
-                    {!showCreateKeyResult && !keyResultLoadError && keyResults.length > 0 ? (
-                      <div className="space-y-4">
+                    {!keyResultLoadError && keyResults.length > 0 ? (
+                      <div className="mt-4 space-y-3">
                         {keyResults.map((keyResult) => {
                           const taskItems = tasksByKeyResultId[keyResult.id] ?? [];
                           const keyResultProgress = keyResultProgressMap[keyResult.id] ?? 0;
                           const keyResultTaskHref = `/tasks/new?goalId=${goal.id}&keyResultId=${keyResult.id}`;
-                          const keyResultStatus = getKeyResultStatusMeta(keyResultProgress, taskItems.length);
+                          const responsibleDepartmentName =
+                            goalDepartmentsById[keyResult.responsible_department_id ?? ""]?.name ?? "Chưa gán phòng ban";
+                          const isEditingKeyResult = editingKeyResultId === keyResult.id && keyResultScaleForm !== null;
+                          const isSavingKeyResult = savingKeyResultId === keyResult.id;
 
                           return (
                             <article
                               key={keyResult.id}
-                              className="overflow-hidden rounded-[24px] border border-blue-100 bg-white shadow-[0_18px_36px_-34px_rgba(37,99,235,0.5)]"
+                              className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
                             >
-                              <div className="border-b border-blue-100 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] px-4 py-4">
-                                <div className="flex flex-wrap items-start justify-between gap-3">
-                                  <div>
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700">
-                                        KEY RESULT
-                                      </span>
-                                      <span
-                                        className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${keyResultStatus.className}`}
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="text-base font-semibold text-slate-900">{keyResult.name}</p>
+                                  <p className="mt-1 text-sm text-slate-500">
+                                    {responsibleDepartmentName}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="rounded-full bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white">
+                                    {keyResultProgress}%
+                                  </span>
+                                  {canCreateKeyResult ? (
+                                    isEditingKeyResult ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={cancelEditingKeyResultScale}
+                                          disabled={isSavingKeyResult}
+                                          className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                        >
+                                          Hủy
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => void handleSaveKeyResultScale(keyResult)}
+                                          disabled={isSavingKeyResult}
+                                          className="inline-flex h-9 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                                        >
+                                          {isSavingKeyResult ? "Đang lưu..." : "Lưu scale"}
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => startEditingKeyResultScale(keyResult)}
+                                        className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100"
                                       >
-                                        {keyResultStatus.label}
-                                      </span>
-                                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
-                                        {taskItems.length} task
-                                      </span>
-                                      <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
-                                        {goalDepartmentsById[keyResult.responsible_department_id ?? ""]?.name ?? "Chưa gán phòng ban"}
-                                      </span>
-                                    </div>
-                                    <p className="mt-3 text-xl font-semibold tracking-[-0.02em] text-slate-900">
-                                      {keyResult.name}
-                                    </p>
-                                    <p className="mt-1 text-sm text-slate-500">
-                                      {keyResult.description?.trim() || "Chưa có mô tả cho key result."}
-                                    </p>
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    <span className="rounded-full bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white">
-                                      {keyResultProgress}%
-                                    </span>
-                                    <span className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-600">
-                                      {formatKeyResultUnit(keyResult.unit)}
-                                    </span>
-                                    <Link
-                                      href={keyResultTaskHref}
-                                      className="inline-flex h-9 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
-                                    >
-                                      + Thêm công việc
-                                    </Link>
-                                  </div>
+                                        Sửa scale
+                                      </button>
+                                    )
+                                  ) : null}
+                                  <Link
+                                    href={keyResultTaskHref}
+                                    className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                                  >
+                                    + Thêm công việc
+                                  </Link>
                                 </div>
+                              </div>
 
-                                <div className="mt-4 rounded-2xl border border-blue-100 bg-white px-4 py-3 text-sm text-slate-600">
-                                  <span className="font-semibold text-slate-800">Đo lường:</span>{" "}
-                                  {formatKeyResultMetric(keyResult.start_value, keyResult.unit)} →{" "}
-                                  {formatKeyResultMetric(keyResult.current, keyResult.unit)} →{" "}
-                                  {formatKeyResultMetric(keyResult.target, keyResult.unit)}
+                              {savedKeyResultId === keyResult.id ? (
+                                <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                                  Đã lưu scale key result.
                                 </div>
+                              ) : null}
 
-                                <div className="mt-4 grid gap-3 md:grid-cols-5">
-                                  <div className="rounded-2xl border border-blue-100 bg-blue-50/45 px-4 py-3">
-                                    <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                                      Start
-                                    </p>
-                                    <p className="mt-2 text-lg font-semibold text-slate-900">
-                                      {formatKeyResultMetric(keyResult.start_value, keyResult.unit)}
-                                    </p>
-                                  </div>
-                                  <div className="rounded-2xl border border-blue-100 bg-blue-50/45 px-4 py-3">
-                                    <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                                      Hiện tại
-                                    </p>
-                                    <p className="mt-2 text-lg font-semibold text-slate-900">
-                                      {formatKeyResultMetric(keyResult.current, keyResult.unit)}
-                                    </p>
-                                  </div>
-                                  <div className="rounded-2xl border border-blue-100 bg-blue-50/45 px-4 py-3">
-                                    <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                                      Target
-                                    </p>
-                                    <p className="mt-2 text-lg font-semibold text-slate-900">
-                                      {formatKeyResultMetric(keyResult.target, keyResult.unit)}
-                                    </p>
-                                  </div>
-                                  <div className="rounded-2xl border border-blue-100 bg-blue-50/45 px-4 py-3">
-                                    <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                              {isEditingKeyResult ? (
+                                <div className="mt-4 grid gap-3 md:grid-cols-4">
+                                  <label className="space-y-1.5">
+                                    <span className="text-xs font-semibold tracking-[0.08em] text-slate-500 uppercase">
                                       Đơn vị
-                                    </p>
-                                    <p className="mt-2 text-lg font-semibold text-slate-900">
-                                      {formatKeyResultUnit(keyResult.unit)}
-                                    </p>
-                                  </div>
-                                  <div className="rounded-2xl border border-blue-100 bg-blue-50/45 px-4 py-3">
-                                    <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                                      Trọng số KR
-                                    </p>
-                                    <p className="mt-2 text-lg font-semibold text-slate-900">
-                                      {Math.round(Number(keyResult.weight ?? 1))}
-                                    </p>
-                                  </div>
-                                  <div className="rounded-2xl border border-blue-100 bg-blue-50/45 px-4 py-3">
-                                    <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                                      Phòng ban phụ trách
-                                    </p>
-                                    <p className="mt-2 text-sm font-semibold text-slate-900">
-                                      {goalDepartmentsById[keyResult.responsible_department_id ?? ""]?.name ?? "Chưa gán"}
-                                    </p>
-                                  </div>
-                                  <div className="rounded-2xl border border-blue-100 bg-blue-50/45 px-4 py-3">
-                                    <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                                      Task
-                                    </p>
-                                    <p className="mt-2 text-lg font-semibold text-slate-900">{taskItems.length}</p>
-                                  </div>
-                                </div>
-
-                                <div className="mt-4">
-                                  <div className="mb-2 flex items-center justify-between text-sm">
-                                    <span className="font-semibold text-slate-700" title={goalProgressHelp}>
-                                      Tiến độ KR
                                     </span>
-                                    <span className="font-semibold text-slate-900">{keyResultProgress}%</span>
-                                  </div>
-                                  <ProgressBar value={keyResultProgress} />
-                                  <p className="mt-2 text-xs text-slate-500">
-                                    {getKeyResultProgressHint(keyResult.unit)}
+                                    <select
+                                      value={keyResultScaleForm.unit}
+                                      onChange={(event) =>
+                                        setKeyResultScaleForm((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                unit: toKeyResultUnitValue(event.target.value),
+                                              }
+                                            : prev,
+                                        )
+                                      }
+                                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                    >
+                                      {KEY_RESULT_UNITS.map((unit) => (
+                                        <option key={unit.value} value={unit.value}>
+                                          {unit.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+
+                                  <label className="space-y-1.5">
+                                    <span className="text-xs font-semibold tracking-[0.08em] text-slate-500 uppercase">
+                                      Hiện tại
+                                    </span>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step="0.01"
+                                      value={keyResultScaleForm.current}
+                                      onChange={(event) =>
+                                        setKeyResultScaleForm((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                current: event.target.value,
+                                              }
+                                            : prev,
+                                        )
+                                      }
+                                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                    />
+                                  </label>
+
+                                  <label className="space-y-1.5">
+                                    <span className="text-xs font-semibold tracking-[0.08em] text-slate-500 uppercase">
+                                      Target
+                                    </span>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step="0.01"
+                                      value={keyResultScaleForm.target}
+                                      onChange={(event) =>
+                                        setKeyResultScaleForm((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                target: event.target.value,
+                                              }
+                                            : prev,
+                                        )
+                                      }
+                                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                    />
+                                  </label>
+
+                                  <label className="space-y-1.5">
+                                    <span className="text-xs font-semibold tracking-[0.08em] text-slate-500 uppercase">
+                                      Trọng số KR (%)
+                                    </span>
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      step="1"
+                                      value={keyResultScaleForm.weight}
+                                      onChange={(event) =>
+                                        setKeyResultScaleForm((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                weight: event.target.value,
+                                              }
+                                            : prev,
+                                        )
+                                      }
+                                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                    />
+                                  </label>
+                                </div>
+                              ) : null}
+
+                              {isEditingKeyResult && keyResultScaleError ? (
+                                <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                                  {keyResultScaleError}
+                                </div>
+                              ) : null}
+
+                              <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1.6fr)_140px_200px]">
+                                <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                                    Hiện tại / mục tiêu
+                                  </p>
+                                  <p className="mt-2 text-lg font-semibold text-slate-900">
+                                    {formatKeyResultMetric(keyResult.current, keyResult.unit)}
+                                    {" / "}
+                                    {formatKeyResultMetric(keyResult.target, keyResult.unit)}
+                                  </p>
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    {formatKeyResultUnit(keyResult.unit)}
+                                  </p>
+                                </div>
+                                <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                                    Số task
+                                  </p>
+                                  <p className="mt-2 text-lg font-semibold text-slate-900">{taskItems.length}</p>
+                                </div>
+                                <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                                    Trọng số KR
+                                  </p>
+                                  <p className="mt-2 text-lg font-semibold text-slate-900">
+                                    {Math.round(Number(keyResult.weight ?? 1))}%
                                   </p>
                                 </div>
                               </div>
 
-                              <div className="divide-y divide-blue-100 bg-white">
-                                <div className="flex items-center justify-between px-4 py-3 text-sm">
-                                  <span className="font-semibold text-slate-800">Công việc thuộc key result</span>
-                                  <span className="text-xs text-slate-500">{taskItems.length} việc</span>
+                              <div className="mt-4">
+                                <div className="mb-2 flex items-center justify-between text-sm">
+                                  <span className="font-medium text-slate-600">Tiến độ KR</span>
+                                  <span className="font-semibold text-slate-900">{keyResultProgress}%</span>
                                 </div>
-                                {taskItems.length > 0 ? (
-                                  taskItems.map((task) => (
-                                    <Link
-                                      key={task.id}
-                                      href={`/tasks/${task.id}`}
-                                      className="block px-4 py-3 transition hover:bg-blue-50/55"
-                                    >
-                                      <div className="flex items-start justify-between gap-3">
-                                        <div>
-                                          <p className="text-sm font-semibold text-slate-800">{task.name}</p>
-                                          <p className="mt-1 text-xs text-slate-500">
-                                            {(TASK_TYPES.find((item) => item.value === task.type)?.label ?? "KPI")}
-                                            {" · "}
-                                            {task.status}
-                                            {" · "}
-                                            {task.assigneeName}
-                                          </p>
-                                          <p className="mt-1 text-[11px] text-slate-400">
-                                            {getTaskProgressHint(task.type)}
-                                          </p>
-                                        </div>
-                                        <span className="text-xs font-semibold text-slate-600">
-                                          {task.progress}%
-                                        </span>
-                                      </div>
-                                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
-                                        <div
-                                          className="h-full rounded-full bg-blue-600"
-                                          style={{ width: `${task.progress}%` }}
-                                        />
-                                      </div>
-                                    </Link>
-                                  ))
-                                ) : (
-                                  <p className="px-4 py-4 text-sm text-slate-500">
-                                    Chưa có task nào nằm dưới key result này.
-                                  </p>
-                                )}
+                                <ProgressBar value={keyResultProgress} />
                               </div>
                             </article>
                           );
@@ -1864,7 +1592,7 @@ export default function GoalDetailPage() {
                               </span>
                             </div>
                             <p className="mt-2 text-xs text-slate-500">
-                              goal_weight {department.goalWeight.toFixed(2)} · kr_weight {department.krWeight.toFixed(2)}
+                              Tỷ trọng mục tiêu {department.goalWeight.toFixed(2)} · Tỷ trọng KR {department.krWeight.toFixed(2)}
                             </p>
                           </div>
                         ))
