@@ -103,6 +103,12 @@ export default function AttendanceManagementPage() {
   const [searchKeyword, setSearchKeyword] = useState("");
   const [isLoadingProfiles, setIsLoadingProfiles] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const canViewAttendanceManagement = workspaceAccess.canManage && !workspaceAccess.error;
+  const permissionError =
+    workspaceAccess.error ??
+    (!workspaceAccess.isLoading && !workspaceAccess.canManage
+      ? "Bạn chưa có quyền xem quản lý chấm công theo phạm vi quản lý hiện tại."
+      : null);
 
   const memberRoleIds = useMemo(
     () =>
@@ -117,6 +123,14 @@ export default function AttendanceManagementPage() {
 
   useEffect(() => {
     if (workspaceAccess.isLoading) {
+      return;
+    }
+
+    if (!canViewAttendanceManagement) {
+      setIsLoadingProfiles(false);
+      setViewableProfiles([]);
+      setSelectedProfileId(null);
+      setLoadError(null);
       return;
     }
 
@@ -330,6 +344,7 @@ export default function AttendanceManagementPage() {
       isActive = false;
     };
   }, [
+    canViewAttendanceManagement,
     memberRoleIds,
     workspaceAccess.departments,
     workspaceAccess.hasDirectorRole,
@@ -364,7 +379,7 @@ export default function AttendanceManagementPage() {
       <div className="flex min-h-screen w-full">
         <WorkspaceSidebar active="attendanceManagement" />
 
-        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[280px]">
+        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <header className="sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-7">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -388,16 +403,16 @@ export default function AttendanceManagementPage() {
             </div>
           </header>
 
-          <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-7">
+          <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-7 xl:overflow-hidden">
             {workspaceAccess.isLoading || isLoadingProfiles ? (
               <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-500">
                 Đang tải phạm vi quản lý chấm công...
               </div>
             ) : null}
 
-            {!workspaceAccess.isLoading && roleScope === "member" ? (
+            {!workspaceAccess.isLoading && !canViewAttendanceManagement ? (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
-                Bạn chưa có quyền xem chấm công nhân sự. Mục này chỉ dành cho leader hoặc director.
+                {permissionError}
               </div>
             ) : null}
 
@@ -407,10 +422,10 @@ export default function AttendanceManagementPage() {
               </div>
             ) : null}
 
-            {!workspaceAccess.isLoading && roleScope !== "member" && !loadError ? (
-              <div className="grid gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
-                <aside className="space-y-4">
-                  <section className="rounded-2xl border border-slate-200 bg-white">
+            {!workspaceAccess.isLoading && !isLoadingProfiles && canViewAttendanceManagement && !loadError ? (
+              <div className="grid gap-5 xl:h-full xl:min-h-0 xl:grid-cols-[320px_minmax(0,1fr)]">
+                <aside className="space-y-4 xl:min-h-0">
+                  <section className="rounded-2xl border border-slate-200 bg-white xl:flex xl:h-full xl:min-h-0 xl:flex-col">
                     <div className="border-b border-slate-100 px-5 py-4">
                       <h2 className="text-xl font-semibold text-slate-900">Nhân sự trong phạm vi</h2>
                       <p className="mt-1 text-sm text-slate-500">{viewableProfiles.length} người có thể xem</p>
@@ -423,7 +438,7 @@ export default function AttendanceManagementPage() {
                         className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       />
                     </div>
-                    <div className="max-h-[calc(100vh-280px)] space-y-3 overflow-y-auto px-4 py-4">
+                    <div className="max-h-[calc(100vh-280px)] space-y-3 overflow-y-auto px-4 py-4 xl:max-h-none xl:min-h-0 xl:flex-1">
                       {filteredProfiles.length > 0 ? (
                         filteredProfiles.map((profile) => {
                           const isActive = profile.id === selectedProfileId;
@@ -464,7 +479,7 @@ export default function AttendanceManagementPage() {
                   </section>
                 </aside>
 
-                <section className="min-w-0">
+                <section className="min-w-0 xl:min-h-0 xl:overflow-y-auto xl:pr-1">
                   {selectedProfile ? (
                     <>
                       <article className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
@@ -488,7 +503,11 @@ export default function AttendanceManagementPage() {
                       </article>
 
                       <div className="mt-5">
-                        <TimesheetOverview profileId={selectedProfile.id} />
+                        <TimesheetOverview
+                          profileId={selectedProfile.id}
+                          showExportButton
+                          exportFileLabel={selectedProfile.name}
+                        />
                       </div>
                     </>
                   ) : (

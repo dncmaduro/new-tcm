@@ -75,7 +75,7 @@ export default function DepartmentPerformancePage() {
       <div className="flex min-h-screen w-full">
         <WorkspaceSidebar active="departmentPerformance" />
 
-        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[280px]">
+        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <header className="sticky top-0 z-10 border-b border-slate-200/80 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-8">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <div>
@@ -86,10 +86,10 @@ export default function DepartmentPerformancePage() {
                   <span className="px-2">›</span>
                   <span>Hiệu suất phòng ban</span>
                 </p>
-                <h1 className="mt-1 text-4xl font-semibold tracking-[-0.025em] text-slate-950">
+                <h1 className="mt-2 text-4xl font-semibold leading-[1.08] tracking-[-0.025em] text-slate-950">
                   Hiệu suất phòng ban
                 </h1>
-                <p className="text-sm text-slate-500">
+                <p className="mt-3 text-base leading-7 text-slate-500">
                   Theo dõi tiến độ thực thi theo mục tiêu, KR, công việc và thành viên phụ trách.
                 </p>
               </div>

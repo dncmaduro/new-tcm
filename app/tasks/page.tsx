@@ -2,8 +2,19 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  type ReactNode,
+  type WheelEvent as ReactWheelEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -15,13 +26,37 @@ import { formatKeyResultMetric, formatKeyResultUnit } from "@/lib/constants/key-
 import { getComputedTaskProgress } from "@/lib/okr";
 import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
+import {
+  buildTimelinePeriods,
+  clampTimelineZoom,
+  formatTimelineDurationVi,
+  getFitZoomLevel,
+  getPeriodWidthForZoom,
+  getTimelineBarLayout,
+  getTimelineDurationDays,
+  getTodayIndicatorOffsetPx,
+  startOfScale,
+  TIMELINE_MAX_ZOOM,
+  TIMELINE_MIN_ZOOM,
+  TIMELINE_ZOOM_STEP,
+  type TimelineScale,
+} from "@/lib/task-gantt";
+import {
+  formatDateOnlyVi,
+  formatTimelineRangeVi,
+  getTimelineMissingReason,
+  getTimelineRange,
+  getTimelineOutsideParentWarning,
+  isDateRangeOrdered,
+  startOfLocalDay,
+} from "@/lib/timeline";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LEFT_PANEL_WIDTH = 420;
 
-type TimelineScale = "day" | "week" | "month";
 type TimelineStatus = "todo" | "in_progress" | "done" | "blocked" | "cancelled";
 type TaskViewMode = "gantt" | "list";
+type StructureMode = "goal" | "key_result" | "task";
 
 type TaskRow = {
   id: string;
@@ -32,7 +67,8 @@ type TaskRow = {
   status: string | null;
   progress: number | null;
   weight: number | null;
-  deadline: string | null;
+  start_date: string | null;
+  end_date: string | null;
   created_at: string | null;
   key_result?: unknown;
   assignee?: unknown;
@@ -54,6 +90,8 @@ type KeyResultLiteRow = {
   unit: string | null;
   start_value: number | null;
   weight: number | null;
+  start_date: string | null;
+  end_date: string | null;
   goal: GoalLiteRow | null;
 };
 
@@ -68,11 +106,10 @@ type TaskItem = {
   name: string;
   goalId: string | null;
   goalName: string;
-  goalStartDate: string | null;
-  goalEndDate: string | null;
   keyResultId: string | null;
   keyResultName: string;
   keyResultMetric: string;
+  keyResult: KeyResultLiteRow | null;
   type: string | null;
   assigneeId: string | null;
   assigneeName: string;
@@ -80,9 +117,9 @@ type TaskItem = {
   status: TimelineStatus;
   rawStatus: string | null;
   progress: number;
-  deadlineAt: string | null;
-  startAt: string | null;
   createdAt: string | null;
+  startDate: string | null;
+  endDate: string | null;
 };
 
 type GoalGroup = {
@@ -98,20 +135,35 @@ type KeyResultGroup = {
   name: string;
   goalId: string;
   metric: string;
+  startDate: string | null;
+  endDate: string | null;
   tasks: TaskItem[];
 };
 
-type TimelinePeriod = {
-  key: string;
-  start: Date;
-  end: Date;
-  label: string;
-  subLabel: string;
+type GoalTimelineItem = {
+  id: string;
+  name: string;
+  startDate: string | null;
+  endDate: string | null;
+  keyResultCount: number;
+  taskCount: number;
+};
+
+type KeyResultTimelineItem = {
+  id: string;
+  goalId: string;
+  goalName: string;
+  name: string;
+  metric: string;
+  startDate: string | null;
+  endDate: string | null;
+  taskCount: number;
 };
 
 type QuickEditState = {
   progress: string;
-  deadline: string;
+  startDate: string;
+  endDate: string;
 };
 
 type TaskCreatePermissionDebug = {
@@ -174,17 +226,7 @@ const statusMetaMap: Record<
   },
 };
 
-const PERIOD_PADDING: Record<TimelineScale, number> = {
-  day: 7,
-  week: 3,
-  month: 1,
-};
-
-const PERIOD_WIDTH: Record<TimelineScale, number> = {
-  day: 56,
-  week: 92,
-  month: 128,
-};
+const STICKY_PANEL_SHADOW = "shadow-[10px_0_18px_-18px_rgba(15,23,42,0.35)]";
 
 const toShortName = (name: string) => {
   const parts = name
@@ -265,178 +307,83 @@ const normalizeKeyResultLite = (value: unknown): KeyResultLiteRow | null => {
     unit: record.unit ? String(record.unit) : null,
     start_value: typeof record.start_value === "number" ? record.start_value : Number(record.start_value ?? 0),
     weight: typeof record.weight === "number" ? record.weight : Number(record.weight ?? 1),
+    start_date: record.start_date ? String(record.start_date) : null,
+    end_date: record.end_date ? String(record.end_date) : null,
     goal: normalizeGoalLite(rawGoal),
   };
 };
 
-const formatDate = (value: string | null) => {
-  if (!value) {
-    return "Chưa đặt";
+const getTaskTimeline = (task: TaskItem) => getTimelineRange(task.startDate, task.endDate);
+
+const getTaskTimelineIssue = (task: TaskItem) => {
+  const timelineReason = getTimelineMissingReason(
+    task.startDate,
+    task.endDate,
+    "Công việc chưa có mốc thời gian",
+    "Mốc thời gian công việc không hợp lệ",
+  );
+
+  if (timelineReason) {
+    return timelineReason;
   }
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Không hợp lệ";
+  if (task.keyResultId && !task.keyResult) {
+    return "Không tải được dữ liệu Key Result liên kết.";
   }
 
-  return new Intl.DateTimeFormat("vi-VN", {
-    dateStyle: "short",
-  }).format(date);
+  if (!task.keyResultId) {
+    return "Công việc chưa gắn Key Result.";
+  }
+
+  return "Không thể đặt công việc lên timeline.";
 };
 
-const toDateInputValue = (value: string | null) => {
-  if (!value) {
-    return "";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-
-  return date.toISOString().slice(0, 10);
-};
-
-const startOfDay = (value: Date) => {
-  const next = new Date(value);
-  next.setHours(0, 0, 0, 0);
-  return next;
-};
-
-const startOfWeek = (value: Date) => {
-  const next = startOfDay(value);
-  const day = next.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  next.setDate(next.getDate() + diff);
-  return next;
-};
-
-const startOfMonth = (value: Date) => {
-  const next = startOfDay(value);
-  next.setDate(1);
-  return next;
-};
-
-const startOfScale = (value: Date, scale: TimelineScale) => {
-  if (scale === "week") {
-    return startOfWeek(value);
-  }
-  if (scale === "month") {
-    return startOfMonth(value);
-  }
-  return startOfDay(value);
-};
-
-const addScale = (value: Date, scale: TimelineScale, amount: number) => {
-  const next = new Date(value);
-  if (scale === "week") {
-    next.setDate(next.getDate() + amount * 7);
-    return next;
-  }
-  if (scale === "month") {
-    next.setMonth(next.getMonth() + amount);
-    return next;
-  }
-  next.setDate(next.getDate() + amount);
-  return next;
-};
-
-const endOfScale = (value: Date, scale: TimelineScale) => {
-  const next = addScale(startOfScale(value, scale), scale, 1);
-  next.setMilliseconds(next.getMilliseconds() - 1);
-  return next;
-};
-
-const formatPeriodLabel = (date: Date, scale: TimelineScale) => {
-  if (scale === "day") {
-    return {
-      label: new Intl.DateTimeFormat("vi-VN", { weekday: "short" }).format(date),
-      subLabel: new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit" }).format(date),
-    };
-  }
-
-  if (scale === "week") {
-    const end = endOfScale(date, scale);
-    return {
-      label: `Tuần ${new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit" }).format(date)}`,
-      subLabel: new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit" }).format(end),
-    };
-  }
-
-  return {
-    label: new Intl.DateTimeFormat("vi-VN", { month: "long" }).format(date),
-    subLabel: new Intl.DateTimeFormat("vi-VN", { year: "numeric" }).format(date),
-  };
-};
-
-const getTaskStartDate = (task: TaskItem) => {
-  if (task.createdAt) {
-    return startOfDay(new Date(task.createdAt));
-  }
-  if (task.goalStartDate) {
-    return startOfDay(new Date(task.goalStartDate));
-  }
-  if (task.deadlineAt) {
-    return startOfDay(new Date(task.deadlineAt));
-  }
-  return startOfDay(new Date());
-};
-
-const getTaskEndDate = (task: TaskItem) => {
-  if (!task.deadlineAt) {
-    return null;
-  }
-
-  const deadline = startOfDay(new Date(task.deadlineAt));
-  const start = getTaskStartDate(task);
-  return deadline.getTime() >= start.getTime() ? deadline : start;
-};
-
-const buildTimelinePeriods = (tasks: TaskItem[], scale: TimelineScale) => {
-  const today = new Date();
-  const allDates = tasks.flatMap((task) => {
-    const start = getTaskStartDate(task);
-    const end = getTaskEndDate(task) ?? start;
-    return [start, end];
+const getTaskTimelineAlignmentWarning = (task: TaskItem) =>
+  getTimelineOutsideParentWarning(task.startDate, task.endDate, task.keyResult?.start_date ?? null, task.keyResult?.end_date ?? null, {
+    subjectLabel: "Thời gian công việc",
+    parentLabel: "KR",
   });
 
-  const minDate = allDates.length
-    ? new Date(Math.min(...allDates.map((date) => date.getTime()), today.getTime()))
-    : today;
-  const maxDate = allDates.length
-    ? new Date(Math.max(...allDates.map((date) => date.getTime()), today.getTime()))
-    : today;
+const buildGoalGroups = (sourceTasks: TaskItem[]) => {
+  const goalMap = new Map<string, GoalGroup>();
 
-  const paddedStart = addScale(startOfScale(minDate, scale), scale, -PERIOD_PADDING[scale]);
-  const paddedEnd = addScale(startOfScale(maxDate, scale), scale, PERIOD_PADDING[scale]);
-  const periods: TimelinePeriod[] = [];
+  sourceTasks
+    .slice()
+    .sort((a, b) => {
+      const aTime = getTaskTimeline(a)?.end.getTime() ?? Number.MAX_SAFE_INTEGER;
+      const bTime = getTaskTimeline(b)?.end.getTime() ?? Number.MAX_SAFE_INTEGER;
+      return aTime - bTime;
+    })
+    .forEach((task) => {
+      const goalId = task.goalId ?? "no-goal";
+      if (!goalMap.has(goalId)) {
+        goalMap.set(goalId, {
+          id: goalId,
+          name: task.goalName,
+          startDate: task.keyResult?.goal?.start_date ?? null,
+          endDate: task.keyResult?.goal?.end_date ?? null,
+          keyResults: [],
+        });
+      }
 
-  for (
-    let cursor = startOfScale(paddedStart, scale);
-    cursor.getTime() <= paddedEnd.getTime();
-    cursor = addScale(cursor, scale, 1)
-  ) {
-    const formatted = formatPeriodLabel(cursor, scale);
-    periods.push({
-      key: `${scale}-${cursor.toISOString()}`,
-      start: cursor,
-      end: endOfScale(cursor, scale),
-      label: formatted.label,
-      subLabel: formatted.subLabel,
+      const goal = goalMap.get(goalId)!;
+      let keyResult = goal.keyResults.find((item) => item.id === (task.keyResultId ?? "no-kr"));
+      if (!keyResult) {
+        keyResult = {
+          id: task.keyResultId ?? "no-kr",
+          name: task.keyResultName,
+          goalId,
+          metric: task.keyResultMetric,
+          startDate: task.keyResult?.start_date ?? null,
+          endDate: task.keyResult?.end_date ?? null,
+          tasks: [],
+        };
+        goal.keyResults.push(keyResult);
+      }
+      keyResult.tasks.push(task);
     });
-  }
 
-  return periods;
-};
-
-const getScaleDiff = (base: Date, value: Date, scale: TimelineScale) => {
-  if (scale === "day") {
-    return Math.floor((startOfDay(value).getTime() - startOfDay(base).getTime()) / DAY_MS);
-  }
-  if (scale === "week") {
-    return Math.floor((startOfWeek(value).getTime() - startOfWeek(base).getTime()) / (DAY_MS * 7));
-  }
-  return (value.getFullYear() - base.getFullYear()) * 12 + (value.getMonth() - base.getMonth());
+  return Array.from(goalMap.values());
 };
 
 const buildTaskTooltip = (task: TaskItem) =>
@@ -446,9 +393,23 @@ const buildTaskTooltip = (task: TaskItem) =>
     `Kết quả then chốt: ${task.keyResultName}`,
     `Người phụ trách: ${task.assigneeName}`,
     `Tiến độ: ${task.progress}%`,
-    `Hạn chót: ${formatDate(task.deadlineAt)}`,
+    `Thời gian thực thi: ${formatTimelineRangeVi(task.startDate, task.endDate, {
+      fallback: "Công việc chưa có mốc thời gian",
+    })}`,
+    `Khung thời gian KR: ${formatTimelineRangeVi(task.keyResult?.start_date ?? null, task.keyResult?.end_date ?? null, {
+      fallback: "KR chưa có mốc thời gian",
+    })}`,
     `Trạng thái: ${statusMetaMap[task.status].label}`,
   ].join("\n");
+
+const buildTaskAccessibilityLabel = (task: TaskItem) =>
+  `${task.name}. ${statusMetaMap[task.status].label}. Tiến độ ${task.progress}%. ${formatTimelineRangeVi(
+    task.startDate,
+    task.endDate,
+    {
+      fallback: "Chưa có mốc thời gian",
+    },
+  )}`;
 
 function StatusBadge({ status }: { status: TimelineStatus }) {
   return (
@@ -470,21 +431,195 @@ function ScaleButton({
   active,
   children,
   onClick,
+  disabled = false,
 }: {
   active: boolean;
   children: string;
   onClick: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
         active ? "bg-white text-blue-700 shadow-sm" : "text-slate-500 hover:text-slate-800"
-      }`}
+      } ${disabled ? "cursor-not-allowed opacity-45" : ""}`}
     >
       {children}
     </button>
+  );
+}
+
+function ToolbarButton({
+  children,
+  onClick,
+  active = false,
+  disabled = false,
+}: {
+  children: ReactNode;
+  onClick: () => void;
+  active?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex h-9 items-center rounded-lg border px-3 text-sm font-semibold transition ${
+        active
+          ? "border-blue-200 bg-blue-50 text-blue-700"
+          : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+      } ${disabled ? "cursor-not-allowed opacity-45" : ""}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function TaskTimelineBar({
+  task,
+  left,
+  width,
+  isClamped,
+}: {
+  task: TaskItem;
+  left: number;
+  width: number;
+  isClamped: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showLabel = width >= 130;
+  const showProgress = width >= 84;
+  const durationLabel = formatTimelineDurationVi(task.startDate, task.endDate);
+  const durationDays = getTimelineDurationDays(task.startDate, task.endDate);
+
+  const clearCloseTimer = () => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+
+  const openPopover = () => {
+    clearCloseTimer();
+    setOpen(true);
+  };
+
+  const closePopover = () => {
+    clearCloseTimer();
+    closeTimerRef.current = setTimeout(() => {
+      setOpen(false);
+    }, 120);
+  };
+
+  useEffect(() => {
+    return () => {
+      clearCloseTimer();
+    };
+  }, []);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          onMouseEnter={openPopover}
+          onMouseLeave={closePopover}
+          onFocus={openPopover}
+          onBlur={closePopover}
+          onClick={() => setOpen((prev) => !prev)}
+          className={`absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl px-3 text-left shadow-sm transition hover:brightness-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 ${statusMetaMap[task.status].barClassName} ${
+            isClamped ? "ring-2 ring-white/70" : ""
+          }`}
+          style={{ left, width }}
+          aria-label={buildTaskAccessibilityLabel(task)}
+        >
+          <span
+            className={`absolute inset-y-0 left-0 ${statusMetaMap[task.status].fillClassName}`}
+            style={{ width: `${task.progress}%` }}
+          />
+          <span className="relative z-[1] flex w-full items-center justify-between gap-3">
+            {showLabel ? (
+              <span className="truncate text-sm font-semibold">{task.name}</span>
+            ) : (
+              <span className="sr-only">{task.name}</span>
+            )}
+            {showProgress ? <span className="text-xs font-semibold">{task.progress}%</span> : null}
+          </span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="center"
+        collisionPadding={16}
+        className="w-[320px] max-w-[calc(100vw-24px)] rounded-2xl p-4"
+        onMouseEnter={openPopover}
+        onMouseLeave={closePopover}
+      >
+        <div className="space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Công việc</p>
+              <p className="mt-1 text-base font-semibold text-slate-900">{task.name}</p>
+            </div>
+            <StatusBadge status={task.status} />
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl bg-slate-50 p-3">
+              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Tiến độ</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">{task.progress}%</p>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-3">
+              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Thời lượng</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">{durationLabel}</p>
+              {durationDays ? <p className="mt-1 text-xs text-slate-500">{durationDays} ngày theo lịch</p> : null}
+            </div>
+          </div>
+
+          <div className="space-y-2 text-sm text-slate-600">
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-slate-500">Người phụ trách</span>
+              <span className="text-right font-medium text-slate-900">{task.assigneeName}</span>
+            </div>
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-slate-500">Bắt đầu</span>
+              <span className="text-right font-medium text-slate-900">
+                {formatDateOnlyVi(task.startDate, "Chưa đặt")}
+              </span>
+            </div>
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-slate-500">Kết thúc</span>
+              <span className="text-right font-medium text-slate-900">
+                {formatDateOnlyVi(task.endDate, "Chưa đặt")}
+              </span>
+            </div>
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-slate-500">KR</span>
+              <span className="text-right font-medium text-slate-900">{task.keyResultName}</span>
+            </div>
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-slate-500">Mục tiêu</span>
+              <span className="text-right font-medium text-slate-900">{task.goalName}</span>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
+            <p className="text-xs text-slate-500">Hover để xem nhanh hoặc chạm vào bar trên thiết bị cảm ứng.</p>
+            <Link
+              href={`/tasks/${task.id}`}
+              className="inline-flex h-9 items-center rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700"
+            >
+              Mở chi tiết
+            </Link>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -506,12 +641,20 @@ export default function TasksPage() {
   const [keyResultFilter, setKeyResultFilter] = useState<"all" | string>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<"all" | string>("all");
   const [viewMode, setViewMode] = useState<TaskViewMode>("gantt");
+  const [structureMode, setStructureMode] = useState<StructureMode>("task");
   const [timeScale, setTimeScale] = useState<TimelineScale>("week");
-  const [showNoDeadlineSection, setShowNoDeadlineSection] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [showNoTimelineSection, setShowNoTimelineSection] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const [quickEditState, setQuickEditState] = useState<QuickEditState>({ progress: "0", deadline: "" });
+  const [quickEditState, setQuickEditState] = useState<QuickEditState>({
+    progress: "0",
+    startDate: "",
+    endDate: "",
+  });
   const [savingTaskId, setSavingTaskId] = useState<string | null>(null);
   const timelineScrollRef = useRef<HTMLDivElement | null>(null);
+  const pendingViewportRatioRef = useRef<number | null>(null);
+  const hasAutoScrolledToTodayRef = useRef(false);
 
   const showPermissionDebug = searchParams.get("debugPermission") === "1";
   const canCreateTask = workspaceAccess.canManage && !workspaceAccess.error;
@@ -556,7 +699,8 @@ export default function TasksPage() {
             status,
             progress,
             weight,
-            deadline,
+            start_date,
+            end_date,
             created_at,
             key_result:key_results!tasks_key_result_id_fkey(
               id,
@@ -567,6 +711,8 @@ export default function TasksPage() {
               unit,
               start_value,
               weight,
+              start_date,
+              end_date,
               goal:goals!key_results_goal_id_fkey(
                 id,
                 name,
@@ -597,10 +743,12 @@ export default function TasksPage() {
 
         const mappedTasks = ((data ?? []) as Array<Record<string, unknown>>).map((rawRow) => {
           const row = rawRow as TaskRow;
-          const keyResult = normalizeKeyResultLite(Array.isArray(rawRow.key_result) ? rawRow.key_result[0] ?? null : rawRow.key_result);
+          const keyResult = normalizeKeyResultLite(
+            Array.isArray(rawRow.key_result) ? rawRow.key_result[0] ?? null : rawRow.key_result,
+          );
           const assignee = normalizeProfileLite(Array.isArray(rawRow.assignee) ? rawRow.assignee[0] ?? null : rawRow.assignee);
           const goalName = keyResult?.goal?.name ?? "Chưa có mục tiêu";
-          const keyResultName = keyResult?.name ?? "Chưa gắn key result";
+          const keyResultName = keyResult?.name ?? (row.key_result_id ? "KR không khả dụng" : "Chưa gắn key result");
           const keyResultMetric = keyResult
             ? `${formatKeyResultMetric(keyResult.start_value, keyResult.unit)} → ${formatKeyResultMetric(
                 keyResult.current,
@@ -614,11 +762,10 @@ export default function TasksPage() {
             name: String(row.name),
             goalId: keyResult?.goal?.id ?? (keyResult?.goal_id ? String(keyResult.goal_id) : null),
             goalName,
-            goalStartDate: keyResult?.goal?.start_date ?? null,
-            goalEndDate: keyResult?.goal?.end_date ?? null,
             keyResultId: row.key_result_id ? String(row.key_result_id) : null,
             keyResultName,
             keyResultMetric,
+            keyResult,
             type: row.type ? String(row.type) : null,
             assigneeId: row.assignee_id ? String(row.assignee_id) : null,
             assigneeName,
@@ -630,9 +777,9 @@ export default function TasksPage() {
               status: row.status,
               progress: row.progress,
             }),
-            deadlineAt: row.deadline ? String(row.deadline) : null,
-            startAt: row.created_at ? String(row.created_at) : null,
             createdAt: row.created_at ? String(row.created_at) : null,
+            startDate: row.start_date ? String(row.start_date) : null,
+            endDate: row.end_date ? String(row.end_date) : null,
           } satisfies TaskItem;
         });
 
@@ -727,64 +874,88 @@ export default function TasksPage() {
     return keyResultFilters.filter((keyResult) => keyResult.goalId === goalFilter);
   }, [goalFilter, keyResultFilters]);
 
-  const noDeadlineTasks = useMemo(
-    () => filteredTasks.filter((task) => !task.deadlineAt),
+  const noTimelineTasks = useMemo(
+    () => filteredTasks.filter((task) => !getTaskTimeline(task)),
     [filteredTasks],
   );
 
   const visibleTasks = useMemo(
-    () => filteredTasks.filter((task) => Boolean(task.deadlineAt)),
+    () => filteredTasks.filter((task) => Boolean(getTaskTimeline(task))),
     [filteredTasks],
   );
 
-  const groupedGoals = useMemo(() => {
-    const goalMap = new Map<string, GoalGroup>();
-
-    visibleTasks
-      .slice()
-      .sort((a, b) => {
-        const aTime = getTaskEndDate(a)?.getTime() ?? Number.MAX_SAFE_INTEGER;
-        const bTime = getTaskEndDate(b)?.getTime() ?? Number.MAX_SAFE_INTEGER;
-        return aTime - bTime;
-      })
-      .forEach((task) => {
-        const goalId = task.goalId ?? "no-goal";
-        if (!goalMap.has(goalId)) {
-          goalMap.set(goalId, {
-            id: goalId,
-            name: task.goalName,
-            startDate: task.goalStartDate,
-            endDate: task.goalEndDate,
-            keyResults: [],
-          });
-        }
-
-        const goal = goalMap.get(goalId)!;
-        let keyResult = goal.keyResults.find((item) => item.id === (task.keyResultId ?? "no-kr"));
-        if (!keyResult) {
-          keyResult = {
-            id: task.keyResultId ?? "no-kr",
-            name: task.keyResultName,
-            goalId,
-            metric: task.keyResultMetric,
-            tasks: [],
-          };
-          goal.keyResults.push(keyResult);
-        }
-        keyResult.tasks.push(task);
-      });
-
-    return Array.from(goalMap.values());
-  }, [visibleTasks]);
-
-  const periods = useMemo(() => buildTimelinePeriods(visibleTasks, timeScale), [timeScale, visibleTasks]);
-  const periodWidth = PERIOD_WIDTH[timeScale];
+  const groupedGoalsAll = useMemo(() => buildGoalGroups(filteredTasks), [filteredTasks]);
+  const goalTimelineItems = useMemo<GoalTimelineItem[]>(
+    () =>
+      groupedGoalsAll.map((goal) => ({
+        id: goal.id,
+        name: goal.name,
+        startDate: goal.startDate,
+        endDate: goal.endDate,
+        keyResultCount: goal.keyResults.length,
+        taskCount: goal.keyResults.reduce((total, keyResult) => total + keyResult.tasks.length, 0),
+      })),
+    [groupedGoalsAll],
+  );
+  const keyResultTimelineItems = useMemo<KeyResultTimelineItem[]>(
+    () =>
+      groupedGoalsAll.flatMap((goal) =>
+        goal.keyResults.map((keyResult) => ({
+          id: keyResult.id,
+          goalId: goal.id,
+          goalName: goal.name,
+          name: keyResult.name,
+          metric: keyResult.metric,
+          startDate: keyResult.startDate,
+          endDate: keyResult.endDate,
+          taskCount: keyResult.tasks.length,
+        })),
+      ),
+    [groupedGoalsAll],
+  );
+  const visibleGoalTimelineItems = useMemo(
+    () => goalTimelineItems.filter((goal) => Boolean(getTimelineRange(goal.startDate, goal.endDate))),
+    [goalTimelineItems],
+  );
+  const noTimelineGoalItems = useMemo(
+    () => goalTimelineItems.filter((goal) => !getTimelineRange(goal.startDate, goal.endDate)),
+    [goalTimelineItems],
+  );
+  const visibleKeyResultTimelineItems = useMemo(
+    () => keyResultTimelineItems.filter((keyResult) => Boolean(getTimelineRange(keyResult.startDate, keyResult.endDate))),
+    [keyResultTimelineItems],
+  );
+  const noTimelineKeyResultItems = useMemo(
+    () => keyResultTimelineItems.filter((keyResult) => !getTimelineRange(keyResult.startDate, keyResult.endDate)),
+    [keyResultTimelineItems],
+  );
+  const timelineSourceItems = useMemo(() => {
+    if (structureMode === "goal") {
+      return visibleGoalTimelineItems;
+    }
+    if (structureMode === "key_result") {
+      return visibleKeyResultTimelineItems;
+    }
+    return visibleTasks;
+  }, [structureMode, visibleGoalTimelineItems, visibleKeyResultTimelineItems, visibleTasks]);
+  const periods = useMemo(() => buildTimelinePeriods(timelineSourceItems, timeScale), [timeScale, timelineSourceItems]);
+  const periodWidth = useMemo(() => getPeriodWidthForZoom(timeScale, zoomLevel), [timeScale, zoomLevel]);
   const timelineWidth = periods.length * periodWidth;
   const firstPeriodStart = periods[0]?.start ?? startOfScale(new Date(), timeScale);
   const todayIndex = useMemo(() => {
     const today = new Date();
     return periods.findIndex((period) => today >= period.start && today <= period.end);
   }, [periods]);
+  const todayIndicatorOffset = useMemo(() => {
+    if (periods.length === 0) {
+      return null;
+    }
+    const offset = getTodayIndicatorOffsetPx(firstPeriodStart, timeScale, periodWidth);
+    if (offset < 0 || offset > timelineWidth) {
+      return null;
+    }
+    return offset;
+  }, [firstPeriodStart, periodWidth, periods.length, timeScale, timelineWidth]);
 
   const tasksInProgress = useMemo(
     () => filteredTasks.filter((task) => task.status === "in_progress").length,
@@ -793,34 +964,222 @@ export default function TasksPage() {
   const overdueTaskCount = useMemo(
     () =>
       filteredTasks.filter((task) => {
-        if (!task.deadlineAt) {
+        const timeline = getTaskTimeline(task);
+        if (!timeline) {
           return false;
         }
-        const deadline = startOfDay(new Date(task.deadlineAt));
-        const today = startOfDay(new Date());
-        return deadline < today && !["done", "cancelled"].includes(task.status);
+        const today = startOfLocalDay(new Date());
+        return timeline.end < today && !["done", "cancelled"].includes(task.status);
       }).length,
     [filteredTasks],
   );
   const dueThisWeekCount = useMemo(
     () =>
       filteredTasks.filter((task) => {
-        if (!task.deadlineAt) {
+        const timeline = getTaskTimeline(task);
+        if (!timeline) {
           return false;
         }
-        const deadline = startOfDay(new Date(task.deadlineAt));
-        const today = startOfDay(new Date());
-        const diffDays = Math.round((deadline.getTime() - today.getTime()) / DAY_MS);
+        const today = startOfLocalDay(new Date());
+        const diffDays = Math.round((timeline.end.getTime() - today.getTime()) / DAY_MS);
         return diffDays >= 0 && diffDays <= 7 && !["done", "cancelled"].includes(task.status);
       }).length,
     [filteredTasks],
   );
+  const structureModeMeta = useMemo(
+    () =>
+      ({
+        goal: {
+          label: "Mục tiêu",
+          pluralLabel: "mục tiêu",
+          subtitle: "Chế độ xem theo cấp mục tiêu",
+          ganttTitle: "Biểu đồ mục tiêu",
+          listTitle: "Danh sách mục tiêu",
+          description:
+            "Xem khung thực thi ở cấp mục tiêu, dùng timeline của goal làm lớp kế hoạch tổng.",
+          missingTitle: "Mục tiêu chưa có thời gian thực thi",
+          missingDescription:
+            "Các mục tiêu này chưa có đủ ngày bắt đầu và ngày kết thúc nên chưa thể hiển thị như timeline bar.",
+        },
+        key_result: {
+          label: "Key Result",
+          pluralLabel: "key result",
+          subtitle: "Chế độ xem theo cấp key result",
+          ganttTitle: "Biểu đồ key result",
+          listTitle: "Danh sách key result",
+          description:
+            "Xem khung thực thi của từng KR và giữ mục tiêu làm ngữ cảnh kế hoạch phía trên.",
+          missingTitle: "Key Result chưa có thời gian thực thi",
+          missingDescription:
+            "Các key result này chưa có đủ ngày bắt đầu và ngày kết thúc nên chưa thể hiển thị như timeline bar.",
+        },
+        task: {
+          label: "Công việc",
+          pluralLabel: "công việc",
+          subtitle: "Chế độ xem theo cấp công việc",
+          ganttTitle: "Biểu đồ tiến độ công việc",
+          listTitle: "Danh sách công việc",
+          description:
+            "Theo dõi thực thi theo ngày bắt đầu và ngày kết thúc của từng công việc, đồng thời đối chiếu với khung thời gian của KR.",
+          missingTitle: "Công việc chưa có thời gian thực thi",
+          missingDescription:
+            "Các công việc này chưa có đủ ngày bắt đầu và ngày kết thúc nên chưa thể hiển thị như timeline bar.",
+        },
+      }) satisfies Record<
+        StructureMode,
+        {
+          label: string;
+          pluralLabel: string;
+          subtitle: string;
+          ganttTitle: string;
+          listTitle: string;
+          description: string;
+          missingTitle: string;
+          missingDescription: string;
+        }
+      >,
+    [],
+  );
+  const currentModeMeta = structureModeMeta[structureMode];
+  const currentNoTimelineCount =
+    structureMode === "goal"
+      ? noTimelineGoalItems.length
+      : structureMode === "key_result"
+        ? noTimelineKeyResultItems.length
+        : noTimelineTasks.length;
+  const zoomPercentLabel = `${Math.round(zoomLevel * 100)}%`;
+  const canZoomOut = zoomLevel > TIMELINE_MIN_ZOOM;
+  const canZoomIn = zoomLevel < TIMELINE_MAX_ZOOM;
+
+  const getItemBarLayout = useCallback(
+    (startDate: string | null, endDate: string | null, minBarWidth?: number) =>
+      getTimelineBarLayout({
+        startDate,
+        endDate,
+        axisStart: firstPeriodStart,
+        timelineWidth,
+        scale: timeScale,
+        periodWidth,
+        minBarWidth,
+      }),
+    [firstPeriodStart, periodWidth, timeScale, timelineWidth],
+  );
+
+  const captureViewportRatio = useCallback(() => {
+    const container = timelineScrollRef.current;
+    if (!container || timelineWidth <= 0) {
+      return null;
+    }
+
+    const centeredOffset = Math.max(0, container.scrollLeft + container.clientWidth / 2 - LEFT_PANEL_WIDTH);
+    return centeredOffset / Math.max(1, timelineWidth);
+  }, [timelineWidth]);
+
+  const restoreViewportRatio = useCallback(
+    (ratio: number) => {
+      const container = timelineScrollRef.current;
+      if (!container || timelineWidth <= 0) {
+        return;
+      }
+
+      const nextCenter = LEFT_PANEL_WIDTH + timelineWidth * Math.min(1, Math.max(0, ratio));
+      container.scrollLeft = Math.max(0, nextCenter - container.clientWidth / 2);
+    },
+    [timelineWidth],
+  );
+
+  const preserveTimelineViewport = useCallback(() => {
+    pendingViewportRatioRef.current = captureViewportRatio();
+  }, [captureViewportRatio]);
+
+  const scrollTimelineToToday = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
+      const container = timelineScrollRef.current;
+      if (!container || todayIndicatorOffset === null) {
+        return;
+      }
+
+      const targetScrollLeft = Math.max(0, LEFT_PANEL_WIDTH + todayIndicatorOffset - container.clientWidth * 0.42);
+      container.scrollTo({
+        left: targetScrollLeft,
+        behavior,
+      });
+    },
+    [todayIndicatorOffset],
+  );
+
+  const handleTimelineWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
+    const container = timelineScrollRef.current;
+    if (!container || !event.shiftKey || Math.abs(event.deltaY) < Math.abs(event.deltaX)) {
+      return;
+    }
+
+    event.preventDefault();
+    container.scrollLeft += event.deltaY;
+  }, []);
+
+  const updateStructureMode = useCallback(
+    (nextMode: StructureMode) => {
+      if (nextMode === structureMode) {
+        return;
+      }
+      preserveTimelineViewport();
+      setStructureMode(nextMode);
+    },
+    [preserveTimelineViewport, structureMode],
+  );
+
+  const updateTimeScale = useCallback(
+    (nextScale: TimelineScale) => {
+      if (nextScale === timeScale) {
+        return;
+      }
+      preserveTimelineViewport();
+      setTimeScale(nextScale);
+    },
+    [preserveTimelineViewport, timeScale],
+  );
+
+  const handleZoomChange = useCallback(
+    (delta: number) => {
+      const nextZoom = clampTimelineZoom(zoomLevel + delta);
+      if (nextZoom === zoomLevel) {
+        return;
+      }
+      preserveTimelineViewport();
+      setZoomLevel(nextZoom);
+    },
+    [preserveTimelineViewport, zoomLevel],
+  );
+
+  const handleFitTimeline = useCallback(() => {
+    const container = timelineScrollRef.current;
+    if (!container || periods.length === 0) {
+      return;
+    }
+
+    const availableWidth = Math.max(240, container.clientWidth - LEFT_PANEL_WIDTH - 24);
+    pendingViewportRatioRef.current = 0;
+    setZoomLevel(
+      getFitZoomLevel({
+        availableWidth,
+        periodCount: periods.length,
+        scale: timeScale,
+      }),
+    );
+  }, [periods.length, timeScale]);
+
+  const handleJumpToToday = useCallback(() => {
+    hasAutoScrolledToTodayRef.current = true;
+    scrollTimelineToToday("smooth");
+  }, [scrollTimelineToToday]);
 
   const openQuickEdit = (task: TaskItem) => {
     setEditingTaskId(task.id);
     setQuickEditState({
       progress: String(task.progress),
-      deadline: toDateInputValue(task.deadlineAt),
+      startDate: task.startDate ?? task.keyResult?.start_date ?? "",
+      endDate: task.endDate ?? task.keyResult?.end_date ?? "",
     });
   };
 
@@ -830,19 +1189,30 @@ export default function TasksPage() {
     }
 
     const safeProgress = clampProgress(Number(quickEditState.progress));
-    const nextDeadline = quickEditState.deadline || null;
+    if (
+      (quickEditState.startDate && !quickEditState.endDate) ||
+      (!quickEditState.startDate && quickEditState.endDate)
+    ) {
+      setTaskLoadError("Vui lòng nhập đủ ngày bắt đầu và ngày kết thúc hoặc để trống cả hai.");
+      return;
+    }
+    if (!isDateRangeOrdered(quickEditState.startDate || null, quickEditState.endDate || null)) {
+      setTaskLoadError("Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.");
+      return;
+    }
     setSavingTaskId(task.id);
 
-    const { error } = await supabase
+    const taskUpdateResult = await supabase
       .from("tasks")
       .update({
         progress: safeProgress,
-        deadline: nextDeadline,
+        start_date: quickEditState.startDate.trim() || null,
+        end_date: quickEditState.endDate.trim() || null,
       })
       .eq("id", task.id);
 
-    if (error) {
-      setTaskLoadError(error.message || "Không thể cập nhật nhanh công việc.");
+    if (taskUpdateResult.error) {
+      setTaskLoadError(taskUpdateResult.error.message || "Không thể cập nhật nhanh công việc.");
       setSavingTaskId(null);
       return;
     }
@@ -853,7 +1223,8 @@ export default function TasksPage() {
           ? {
               ...item,
               progress: safeProgress,
-              deadlineAt: nextDeadline,
+              startDate: quickEditState.startDate.trim() || null,
+              endDate: quickEditState.endDate.trim() || null,
             }
           : item,
       ),
@@ -879,26 +1250,34 @@ export default function TasksPage() {
   }, [goalFilter, keyResultFilter, rootDepartments]);
 
   useEffect(() => {
-    if (viewMode !== "gantt" || todayIndex < 0 || !timelineScrollRef.current) {
+    if (viewMode === "gantt") {
+      hasAutoScrolledToTodayRef.current = false;
+    }
+  }, [viewMode]);
+
+  useLayoutEffect(() => {
+    if (viewMode !== "gantt" || !timelineScrollRef.current) {
       return;
     }
 
-    const container = timelineScrollRef.current;
-    const todayOffset = LEFT_PANEL_WIDTH + todayIndex * periodWidth;
-    const targetScrollLeft = Math.max(0, todayOffset - container.clientWidth * 0.4);
+    if (pendingViewportRatioRef.current !== null) {
+      restoreViewportRatio(pendingViewportRatioRef.current);
+      pendingViewportRatioRef.current = null;
+      return;
+    }
 
-    container.scrollTo({
-      left: targetScrollLeft,
-      behavior: "smooth",
-    });
-  }, [periodWidth, timeScale, todayIndex, viewMode]);
+    if (!hasAutoScrolledToTodayRef.current && todayIndicatorOffset !== null) {
+      scrollTimelineToToday("auto");
+      hasAutoScrolledToTodayRef.current = true;
+    }
+  }, [restoreViewportRatio, scrollTimelineToToday, todayIndicatorOffset, viewMode]);
 
   return (
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
       <div className="flex min-h-screen w-full">
         <WorkspaceSidebar active="tasks" />
 
-        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[280px]">
+        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <header className="sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-7">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -913,7 +1292,7 @@ export default function TasksPage() {
                   Timeline thực thi
                 </h1>
                 <p className="mt-1 text-sm text-slate-500">
-                  Mục tiêu → Kết quả then chốt → Công việc · {filteredTasks.length} / {tasks.length} công việc
+                  {currentModeMeta.subtitle} · {filteredTasks.length} / {tasks.length} công việc theo bộ lọc
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-3">
@@ -923,6 +1302,17 @@ export default function TasksPage() {
                   </ScaleButton>
                   <ScaleButton active={viewMode === "list"} onClick={() => setViewMode("list")}>
                     Danh sách
+                  </ScaleButton>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-1">
+                  <ScaleButton active={structureMode === "goal"} onClick={() => updateStructureMode("goal")}>
+                    Mục tiêu
+                  </ScaleButton>
+                  <ScaleButton active={structureMode === "key_result"} onClick={() => updateStructureMode("key_result")}>
+                    KR
+                  </ScaleButton>
+                  <ScaleButton active={structureMode === "task"} onClick={() => updateStructureMode("task")}>
+                    Công việc
                   </ScaleButton>
                 </div>
                 <input
@@ -1040,30 +1430,45 @@ export default function TasksPage() {
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
                   <h2 className="text-base font-semibold text-slate-900">
-                    {viewMode === "gantt" ? "Biểu đồ tiến độ công việc" : "Danh sách công việc"}
+                    {viewMode === "gantt" ? currentModeMeta.ganttTitle : currentModeMeta.listTitle}
                   </h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {viewMode === "gantt"
-                      ? "Theo dõi thực thi theo mục tiêu, kết quả then chốt và hạn chót của từng công việc."
-                      : "Xem nhanh công việc theo cấu trúc Mục tiêu → Kết quả then chốt → Công việc."}
-                  </p>
+                  <p className="mt-1 text-sm text-slate-500">{currentModeMeta.description}</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
                   {viewMode === "gantt" ? (
                     <>
                       <div className="rounded-xl border border-slate-200 bg-slate-100 p-1">
-                        <ScaleButton active={timeScale === "day"} onClick={() => setTimeScale("day")}>
+                        <ScaleButton active={timeScale === "day"} onClick={() => updateTimeScale("day")}>
                           Ngày
                         </ScaleButton>
-                        <ScaleButton active={timeScale === "week"} onClick={() => setTimeScale("week")}>
+                        <ScaleButton active={timeScale === "week"} onClick={() => updateTimeScale("week")}>
                           Tuần
                         </ScaleButton>
-                        <ScaleButton active={timeScale === "month"} onClick={() => setTimeScale("month")}>
+                        <ScaleButton active={timeScale === "month"} onClick={() => updateTimeScale("month")}>
                           Tháng
                         </ScaleButton>
                       </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <ToolbarButton onClick={() => handleZoomChange(-TIMELINE_ZOOM_STEP)} disabled={!canZoomOut}>
+                          Thu nhỏ
+                        </ToolbarButton>
+                        <div className="inline-flex h-9 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700">
+                          {zoomPercentLabel}
+                        </div>
+                        <ToolbarButton onClick={() => handleZoomChange(TIMELINE_ZOOM_STEP)} disabled={!canZoomIn}>
+                          Phóng to
+                        </ToolbarButton>
+                        <ToolbarButton onClick={handleFitTimeline}>Vừa khung</ToolbarButton>
+                        <ToolbarButton
+                          onClick={handleJumpToToday}
+                          active={todayIndicatorOffset !== null}
+                          disabled={todayIndicatorOffset === null}
+                        >
+                          Hôm nay
+                        </ToolbarButton>
+                      </div>
                       <p className="text-sm text-slate-500">
-                        Cuộn ngang trên timeline để xem thêm mốc thời gian.
+                        Cuộn ngang hoặc giữ Shift + lăn chuột để xem thêm mốc thời gian. Dùng scale và zoom để đổi mật độ hiển thị.
                       </p>
                     </>
                   ) : null}
@@ -1073,12 +1478,12 @@ export default function TasksPage() {
               <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                   <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                    Công việc quá hạn
+                    Quá thời gian thực thi
                   </p>
                   <p className="mt-2 text-2xl font-semibold text-slate-900">{overdueTaskCount}</p>
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">Đến hạn 7 ngày</p>
+                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">Kết thúc 7 ngày</p>
                   <p className="mt-2 text-2xl font-semibold text-slate-900">{dueThisWeekCount}</p>
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
@@ -1086,8 +1491,10 @@ export default function TasksPage() {
                   <p className="mt-2 text-2xl font-semibold text-slate-900">{tasksInProgress}</p>
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">Chưa có hạn chót</p>
-                  <p className="mt-2 text-2xl font-semibold text-slate-900">{noDeadlineTasks.length}</p>
+                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                    {currentModeMeta.label} thiếu mốc
+                  </p>
+                  <p className="mt-2 text-2xl font-semibold text-slate-900">{currentNoTimelineCount}</p>
                 </div>
               </div>
             </section>
@@ -1120,29 +1527,23 @@ export default function TasksPage() {
 
             {!isLoadingTasks && filteredTasks.length > 0 ? (
               viewMode === "gantt" ? (
-              <section className="rounded-2xl border border-slate-200 bg-white">
+              structureMode === "goal" ? (
+              <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
                 <div
                   ref={timelineScrollRef}
-                  className="overflow-x-auto overflow-y-hidden rounded-2xl scroll-smooth"
+                  onWheel={handleTimelineWheel}
+                  className="overflow-x-auto overflow-y-hidden rounded-2xl overscroll-x-contain scroll-smooth [scrollbar-gutter:stable]"
                 >
-                  <div
-                    className="min-w-full"
-                    style={{ width: LEFT_PANEL_WIDTH + timelineWidth }}
-                  >
+                  <div className="min-w-full" style={{ width: LEFT_PANEL_WIDTH + timelineWidth }}>
                     <div
                       className="grid border-b border-slate-200 bg-slate-50"
                       style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
                     >
-                      <div className="px-5 py-4">
-                        <p className="text-sm font-semibold text-slate-900">Cấu trúc thực thi</p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          Mục tiêu → Kết quả then chốt → Công việc
-                        </p>
+                      <div className={`sticky left-0 z-30 border-r border-slate-200 bg-slate-50 px-5 py-4 ${STICKY_PANEL_SHADOW}`}>
+                        <p className="text-sm font-semibold text-slate-900">Danh sách mục tiêu</p>
+                        <p className="mt-1 text-xs text-slate-500">Mỗi dòng là một mục tiêu với khung thời gian thực thi tổng.</p>
                       </div>
-                      <div
-                        className="grid"
-                        style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}
-                      >
+                      <div className="relative grid" style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}>
                         {periods.map((period, index) => (
                           <div
                             key={period.key}
@@ -1154,26 +1555,39 @@ export default function TasksPage() {
                             <p className="mt-1 text-[11px] text-slate-500">{period.subLabel}</p>
                           </div>
                         ))}
+                        {todayIndicatorOffset !== null ? (
+                          <div
+                            className="pointer-events-none absolute bottom-0 top-0 z-[1] w-px bg-blue-400/80"
+                            style={{ left: todayIndicatorOffset }}
+                          />
+                        ) : null}
                       </div>
                     </div>
 
-                    {groupedGoals.map((goal) => (
-                      <Fragment key={goal.id}>
+                    {visibleGoalTimelineItems.map((goal) => {
+                      const barLayout = getItemBarLayout(goal.startDate, goal.endDate, 12);
+                      if (!barLayout) {
+                        return null;
+                      }
+
+                      return (
                         <div
+                          key={goal.id}
                           className="grid border-b border-slate-100"
                           style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
                         >
-                          <div className="bg-slate-50 px-5 py-4">
+                          <div className={`sticky left-0 z-20 border-r border-slate-200 bg-white px-5 py-4 ${STICKY_PANEL_SHADOW}`}>
                             <div className="flex items-center justify-between gap-3">
                               <div>
-                                <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                                  Mục tiêu
-                                </p>
+                                <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">Mục tiêu</p>
                                 <p className="mt-1 text-base font-semibold text-slate-900">{goal.name}</p>
                                 <p className="mt-1 text-xs text-slate-500">
-                                  {goal.startDate || goal.endDate
-                                    ? `${formatDate(goal.startDate)} → ${formatDate(goal.endDate)}`
-                                    : "Chưa đặt khung thời gian"}
+                                  {formatTimelineRangeVi(goal.startDate, goal.endDate, {
+                                    fallback: "Chưa đặt khung thời gian",
+                                  })}
+                                </p>
+                                <p className="mt-1 text-[11px] text-slate-400">
+                                  {goal.keyResultCount} KR · {goal.taskCount} công việc
                                 </p>
                               </div>
                               {goal.id !== "no-goal" ? (
@@ -1186,7 +1600,7 @@ export default function TasksPage() {
                               ) : null}
                             </div>
                           </div>
-                          <div className="relative h-full min-h-[64px] bg-slate-50">
+                          <div className="relative min-h-[86px] bg-white">
                             <div
                               className="absolute inset-0 grid"
                               style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}
@@ -1194,204 +1608,452 @@ export default function TasksPage() {
                               {periods.map((period, index) => (
                                 <div
                                   key={`${goal.id}-${period.key}`}
-                                  className={`border-l border-slate-100 ${index === todayIndex ? "bg-blue-50/50" : ""}`}
+                                  className={`border-l border-slate-100 ${index === todayIndex ? "bg-blue-50/40" : ""}`}
                                 />
                               ))}
                             </div>
+                            {todayIndicatorOffset !== null ? (
+                              <div
+                                className="pointer-events-none absolute inset-y-0 z-[1] w-px bg-blue-400/75"
+                                style={{ left: todayIndicatorOffset }}
+                              />
+                            ) : null}
+                            <Link
+                              href={goal.id !== "no-goal" ? `/goals/${goal.id}` : "/goals"}
+                              title={`${goal.name}\n${formatTimelineRangeVi(goal.startDate, goal.endDate, {
+                                fallback: "Chưa đặt khung thời gian",
+                              })}`}
+                              className="absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl bg-blue-600 px-3 text-left text-white shadow-sm transition hover:bg-blue-700"
+                              style={{ left: barLayout.left, width: barLayout.width }}
+                            >
+                              <span className="truncate text-sm font-semibold">{goal.name}</span>
+                            </Link>
                           </div>
                         </div>
-
-                        {goal.keyResults.map((keyResult) => (
-                          <Fragment key={keyResult.id}>
-                            <div
-                              className="grid border-b border-slate-100"
-                              style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
-                            >
-                              <div className="bg-white px-5 py-4">
-                                <div className="flex items-start justify-between gap-3">
-                                  <div>
-                                    <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                                      Kết quả then chốt
-                                    </p>
-                                    <p className="mt-1 text-sm font-semibold text-slate-900">{keyResult.name}</p>
-                                    <p className="mt-1 text-xs text-slate-500">{keyResult.metric}</p>
-                                  </div>
-                                  {keyResult.goalId !== "no-goal" && keyResult.id !== "no-kr" ? (
-                                    <Link
-                                      href={`/tasks/new?goalId=${keyResult.goalId}&keyResultId=${keyResult.id}`}
-                                      className="text-xs font-semibold text-blue-700 hover:text-blue-800"
-                                    >
-                                      + Thêm công việc
-                                    </Link>
-                                  ) : null}
-                                </div>
-                              </div>
-                              <div className="relative h-full min-h-[62px] bg-white">
-                                <div
-                                  className="absolute inset-0 grid"
-                                  style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}
-                                >
-                                  {periods.map((period, index) => (
-                                    <div
-                                      key={`${keyResult.id}-${period.key}`}
-                                      className={`border-l border-slate-100 ${index === todayIndex ? "bg-blue-50/40" : ""}`}
-                                    />
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-
-                            {keyResult.tasks.map((task) => {
-                              const startDate = getTaskStartDate(task);
-                              const endDate = getTaskEndDate(task);
-                              const rawStartIndex = getScaleDiff(firstPeriodStart, startDate, timeScale);
-                              const rawEndIndex = endDate ? getScaleDiff(firstPeriodStart, endDate, timeScale) : rawStartIndex;
-                              const visibleStartIndex = Math.max(0, rawStartIndex);
-                              const visibleEndIndex = Math.min(periods.length - 1, Math.max(rawEndIndex, rawStartIndex));
-                              const isVisible = rawEndIndex >= 0 && rawStartIndex <= periods.length - 1;
-                              const span = Math.max(1, visibleEndIndex - visibleStartIndex + 1);
-                              const barLeft = visibleStartIndex * periodWidth + 6;
-                              const barWidth = Math.max(periodWidth - 12, span * periodWidth - 12);
-                              const tooltip = buildTaskTooltip(task);
-                              const quickEditing = editingTaskId === task.id;
-
-                              return (
-                                <div
-                                  key={task.id}
-                                  className="grid border-b border-slate-100 last:border-b-0"
-                                  style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
-                                >
-                                  <div className="bg-white px-5 py-3">
-                                    <div className="flex items-start justify-between gap-3">
-                                      <div className="min-w-0 flex-1">
-                                        <Link
-                                          href={`/tasks/${task.id}`}
-                                          className="block truncate text-sm font-semibold text-slate-900 hover:text-blue-700"
-                                          title={tooltip}
-                                        >
-                                          {task.name}
-                                        </Link>
-                                        <p className="mt-1 text-xs text-slate-500">
-                                          {task.type === "okr" ? "Công việc OKR" : "Công việc KPI"}
-                                          {" · "}
-                                          {task.assigneeName}
-                                        </p>
-                                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                                          <StatusBadge status={task.status} />
-                                          <span className="text-xs font-medium text-slate-500">{task.progress}%</span>
-                                          <span className="text-xs text-slate-500">{formatDate(task.deadlineAt)}</span>
-                                        </div>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => openQuickEdit(task)}
-                                        className="text-xs font-semibold text-blue-700 hover:text-blue-800"
-                                      >
-                                        Sửa nhanh
-                                      </button>
-                                    </div>
-
-                                    {quickEditing ? (
-                                      <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                                        <div className="grid gap-3 md:grid-cols-2">
-                                          <label className="space-y-1 text-xs font-medium text-slate-600">
-                                            <span>Tiến độ</span>
-                                            <input
-                                              type="number"
-                                              min={0}
-                                              max={100}
-                                              value={quickEditState.progress}
-                                              onChange={(event) =>
-                                                setQuickEditState((prev) => ({
-                                                  ...prev,
-                                                  progress: event.target.value,
-                                                }))
-                                              }
-                                              className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                                            />
-                                          </label>
-                                          <label className="space-y-1 text-xs font-medium text-slate-600">
-                                            <span>Deadline</span>
-                                            <input
-                                              type="date"
-                                              value={quickEditState.deadline}
-                                              onChange={(event) =>
-                                                setQuickEditState((prev) => ({
-                                                  ...prev,
-                                                  deadline: event.target.value,
-                                                }))
-                                              }
-                                              className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                                            />
-                                          </label>
-                                        </div>
-                                        <div className="mt-3 flex items-center justify-end gap-2">
-                                          <button
-                                            type="button"
-                                            onClick={() => setEditingTaskId(null)}
-                                            className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                                          >
-                                            Hủy
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => void handleSaveQuickEdit(task)}
-                                            disabled={savingTaskId === task.id}
-                                            className="inline-flex h-8 items-center rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                                          >
-                                            {savingTaskId === task.id ? "Đang lưu..." : "Lưu nhanh"}
-                                          </button>
-                                        </div>
-                                      </div>
-                                    ) : null}
-                                  </div>
-
-                                  <div className="relative min-h-[92px] bg-white">
-                                    <div
-                                      className="absolute inset-0 grid"
-                                      style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}
-                                    >
-                                      {periods.map((period, index) => (
-                                        <div
-                                          key={`${task.id}-${period.key}`}
-                                          className={`border-l border-slate-100 ${index === todayIndex ? "bg-blue-50/40" : ""}`}
-                                        />
-                                      ))}
-                                    </div>
-
-                                    {isVisible && endDate ? (
-                                      <button
-                                        type="button"
-                                        title={tooltip}
-                                        onClick={() => router.push(`/tasks/${task.id}`)}
-                                        className={`absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl px-3 text-left shadow-sm transition hover:brightness-[0.98] ${statusMetaMap[task.status].barClassName}`}
-                                        style={{ left: barLeft, width: barWidth }}
-                                      >
-                                        <span
-                                          className={`absolute inset-y-0 left-0 ${statusMetaMap[task.status].fillClassName}`}
-                                          style={{ width: `${task.progress}%` }}
-                                        />
-                                        <span className="relative z-[1] flex w-full items-center justify-between gap-3">
-                                          <span className="truncate text-sm font-semibold">{task.name}</span>
-                                          <span className="text-xs font-semibold">{task.progress}%</span>
-                                        </span>
-                                      </button>
-                                    ) : (
-                                      <div className="absolute inset-y-0 left-0 flex items-center px-4 text-xs text-slate-400">
-                                        Ngoài khung thời gian
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </Fragment>
-                        ))}
-                      </Fragment>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </section>
+              ) : structureMode === "key_result" ? (
+              <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <div
+                  ref={timelineScrollRef}
+                  onWheel={handleTimelineWheel}
+                  className="overflow-x-auto overflow-y-hidden rounded-2xl overscroll-x-contain scroll-smooth [scrollbar-gutter:stable]"
+                >
+                  <div className="min-w-full" style={{ width: LEFT_PANEL_WIDTH + timelineWidth }}>
+                    <div
+                      className="grid border-b border-slate-200 bg-slate-50"
+                      style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
+                    >
+                      <div className={`sticky left-0 z-30 border-r border-slate-200 bg-slate-50 px-5 py-4 ${STICKY_PANEL_SHADOW}`}>
+                        <p className="text-sm font-semibold text-slate-900">Danh sách key result</p>
+                        <p className="mt-1 text-xs text-slate-500">Mỗi dòng là một KR, vẫn giữ mục tiêu làm ngữ cảnh đi kèm.</p>
+                      </div>
+                      <div className="relative grid" style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}>
+                        {periods.map((period, index) => (
+                          <div
+                            key={period.key}
+                            className={`border-l border-slate-200 px-2 py-3 text-center ${
+                              index === todayIndex ? "bg-blue-50/70" : ""
+                            }`}
+                          >
+                            <p className="text-xs font-semibold text-slate-700">{period.label}</p>
+                            <p className="mt-1 text-[11px] text-slate-500">{period.subLabel}</p>
+                          </div>
+                        ))}
+                        {todayIndicatorOffset !== null ? (
+                          <div
+                            className="pointer-events-none absolute bottom-0 top-0 z-[1] w-px bg-blue-400/80"
+                            style={{ left: todayIndicatorOffset }}
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+
+                    {visibleKeyResultTimelineItems.map((keyResult) => {
+                      const barLayout = getItemBarLayout(keyResult.startDate, keyResult.endDate, 12);
+                      if (!barLayout) {
+                        return null;
+                      }
+
+                      return (
+                        <div
+                          key={keyResult.id}
+                          className="grid border-b border-slate-100"
+                          style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
+                        >
+                          <div className={`sticky left-0 z-20 border-r border-slate-200 bg-white px-5 py-4 ${STICKY_PANEL_SHADOW}`}>
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">Key Result</p>
+                                <p className="mt-1 text-sm font-semibold text-slate-900">{keyResult.name}</p>
+                                <p className="mt-1 text-xs text-slate-500">{keyResult.goalName}</p>
+                                <p className="mt-1 text-xs text-slate-500">{keyResult.metric}</p>
+                                <p className="mt-1 text-[11px] text-slate-400">
+                                  {keyResult.taskCount} công việc ·{" "}
+                                  {formatTimelineRangeVi(keyResult.startDate, keyResult.endDate, {
+                                    fallback: "KR chưa có mốc thời gian",
+                                  })}
+                                </p>
+                              </div>
+                              {keyResult.goalId !== "no-goal" && keyResult.id !== "no-kr" ? (
+                                <Link
+                                  href={`/tasks/new?goalId=${keyResult.goalId}&keyResultId=${keyResult.id}`}
+                                  className="text-xs font-semibold text-blue-700 hover:text-blue-800"
+                                >
+                                  + Thêm công việc
+                                </Link>
+                              ) : null}
+                            </div>
+                          </div>
+                          <div className="relative min-h-[86px] bg-white">
+                            <div
+                              className="absolute inset-0 grid"
+                              style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}
+                            >
+                              {periods.map((period, index) => (
+                                <div
+                                  key={`${keyResult.id}-${period.key}`}
+                                  className={`border-l border-slate-100 ${index === todayIndex ? "bg-blue-50/40" : ""}`}
+                                />
+                              ))}
+                            </div>
+                            {todayIndicatorOffset !== null ? (
+                              <div
+                                className="pointer-events-none absolute inset-y-0 z-[1] w-px bg-blue-400/75"
+                                style={{ left: todayIndicatorOffset }}
+                              />
+                            ) : null}
+                            <Link
+                              href={
+                                keyResult.goalId !== "no-goal" && keyResult.id !== "no-kr"
+                                  ? `/tasks/new?goalId=${keyResult.goalId}&keyResultId=${keyResult.id}`
+                                  : "/tasks"
+                              }
+                              title={`${keyResult.name}\n${formatTimelineRangeVi(keyResult.startDate, keyResult.endDate, {
+                                fallback: "KR chưa có mốc thời gian",
+                              })}`}
+                              className="absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl bg-slate-900 px-3 text-left text-white shadow-sm transition hover:bg-slate-800"
+                              style={{ left: barLayout.left, width: barLayout.width }}
+                            >
+                              <span className="truncate text-sm font-semibold">{keyResult.name}</span>
+                            </Link>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </section>
+              ) : (
+              <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <div
+                  ref={timelineScrollRef}
+                  onWheel={handleTimelineWheel}
+                  className="overflow-x-auto overflow-y-hidden rounded-2xl overscroll-x-contain scroll-smooth [scrollbar-gutter:stable]"
+                >
+                  <div
+                    className="min-w-full"
+                    style={{ width: LEFT_PANEL_WIDTH + timelineWidth }}
+                  >
+                    <div
+                      className="grid border-b border-slate-200 bg-slate-50"
+                      style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
+                    >
+                      <div className={`sticky left-0 z-30 border-r border-slate-200 bg-slate-50 px-5 py-4 ${STICKY_PANEL_SHADOW}`}>
+                        <p className="text-sm font-semibold text-slate-900">Danh sách công việc</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Mỗi dòng là một công việc với mốc thực thi riêng.
+                        </p>
+                      </div>
+                      <div className="relative grid" style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}>
+                        {periods.map((period, index) => (
+                          <div
+                            key={period.key}
+                            className={`border-l border-slate-200 px-2 py-3 text-center ${
+                              index === todayIndex ? "bg-blue-50/70" : ""
+                            }`}
+                          >
+                            <p className="text-xs font-semibold text-slate-700">{period.label}</p>
+                            <p className="mt-1 text-[11px] text-slate-500">{period.subLabel}</p>
+                          </div>
+                        ))}
+                        {todayIndicatorOffset !== null ? (
+                          <div
+                            className="pointer-events-none absolute bottom-0 top-0 z-[1] w-px bg-blue-400/80"
+                            style={{ left: todayIndicatorOffset }}
+                          />
+                        ) : null}
+                      </div>
+                    </div>
+
+                    {visibleTasks.map((task) => {
+                      const barLayout = getItemBarLayout(task.startDate, task.endDate);
+                      const tooltip = buildTaskTooltip(task);
+                      const quickEditing = editingTaskId === task.id;
+                      const alignmentWarning = getTaskTimelineAlignmentWarning(task);
+                      const quickEditAlignmentWarning =
+                        quickEditing
+                          ? getTimelineOutsideParentWarning(
+                              quickEditState.startDate || null,
+                              quickEditState.endDate || null,
+                              task.keyResult?.start_date ?? null,
+                              task.keyResult?.end_date ?? null,
+                              {
+                                subjectLabel: "Thời gian công việc",
+                                parentLabel: "KR",
+                              },
+                            )
+                          : alignmentWarning;
+
+                      return (
+                        <div
+                          key={task.id}
+                          className="grid border-b border-slate-100 last:border-b-0"
+                          style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
+                        >
+                          <div className={`sticky left-0 z-10 border-r border-slate-200 bg-white px-5 py-3 ${STICKY_PANEL_SHADOW}`}>
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <Link
+                                  href={`/tasks/${task.id}`}
+                                  className="block truncate text-sm font-semibold text-slate-900 hover:text-blue-700"
+                                  title={tooltip}
+                                >
+                                  {task.name}
+                                </Link>
+                                <p className="mt-1 text-xs text-slate-500">
+                                  {task.type === "okr" ? "Công việc OKR" : "Công việc KPI"}
+                                  {" · "}
+                                  {task.assigneeName}
+                                </p>
+                                <div className="mt-2 flex flex-wrap items-center gap-2">
+                                  <StatusBadge status={task.status} />
+                                  <span className="text-xs font-medium text-slate-500">{task.progress}%</span>
+                                  <span className="text-xs text-slate-500">
+                                    {formatTimelineRangeVi(task.startDate, task.endDate, {
+                                      fallback: "Công việc chưa có mốc thời gian",
+                                    })}
+                                  </span>
+                                </div>
+                                {alignmentWarning ? (
+                                  <p className="mt-1 text-[11px] text-amber-600">{alignmentWarning}</p>
+                                ) : null}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => openQuickEdit(task)}
+                                className="text-xs font-semibold text-blue-700 hover:text-blue-800"
+                              >
+                                Sửa nhanh
+                              </button>
+                            </div>
+
+                            {quickEditing ? (
+                              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                <div className="grid gap-3 md:grid-cols-[140px_160px_160px]">
+                                  <label className="space-y-1 text-xs font-medium text-slate-600">
+                                    <span>Tiến độ</span>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={100}
+                                      value={quickEditState.progress}
+                                      onChange={(event) =>
+                                        setQuickEditState((prev) => ({
+                                          ...prev,
+                                          progress: event.target.value,
+                                        }))
+                                      }
+                                      className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                    />
+                                  </label>
+                                  <label className="space-y-1 text-xs font-medium text-slate-600">
+                                    <span>Ngày bắt đầu</span>
+                                    <input
+                                      type="date"
+                                      value={quickEditState.startDate}
+                                      onChange={(event) =>
+                                        setQuickEditState((prev) => ({
+                                          ...prev,
+                                          startDate: event.target.value,
+                                        }))
+                                      }
+                                      className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                    />
+                                  </label>
+                                  <label className="space-y-1 text-xs font-medium text-slate-600">
+                                    <span>Ngày kết thúc</span>
+                                    <input
+                                      type="date"
+                                      min={quickEditState.startDate || undefined}
+                                      value={quickEditState.endDate}
+                                      onChange={(event) =>
+                                        setQuickEditState((prev) => ({
+                                          ...prev,
+                                          endDate: event.target.value,
+                                        }))
+                                      }
+                                      className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                    />
+                                  </label>
+                                </div>
+                                <p className="mt-2 text-[11px] text-slate-500">
+                                  {task.keyResultId
+                                    ? "Giá trị ban đầu được autofill từ KR nếu task chưa có ngày. Khi lưu, thay đổi chỉ áp dụng cho công việc này."
+                                    : "Task này chưa gắn Key Result. Bạn vẫn có thể đặt mốc thời gian riêng cho công việc."}
+                                </p>
+                                {quickEditAlignmentWarning ? (
+                                  <p className="mt-1 text-[11px] text-amber-600">{quickEditAlignmentWarning}</p>
+                                ) : null}
+                                <div className="mt-3 flex items-center justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingTaskId(null)}
+                                    className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                  >
+                                    Hủy
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleSaveQuickEdit(task)}
+                                    disabled={savingTaskId === task.id}
+                                    className="inline-flex h-8 items-center rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                                  >
+                                    {savingTaskId === task.id ? "Đang lưu..." : "Lưu nhanh"}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+
+                          <div className="relative min-h-[92px] bg-white">
+                            <div
+                              className="absolute inset-0 grid"
+                              style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}
+                            >
+                              {periods.map((period, index) => (
+                                <div
+                                  key={`${task.id}-${period.key}`}
+                                  className={`border-l border-slate-100 ${index === todayIndex ? "bg-blue-50/40" : ""}`}
+                                />
+                              ))}
+                            </div>
+                            {todayIndicatorOffset !== null ? (
+                              <div
+                                className="pointer-events-none absolute inset-y-0 z-[1] w-px bg-blue-400/75"
+                                style={{ left: todayIndicatorOffset }}
+                              />
+                            ) : null}
+
+                            {barLayout ? (
+                              <TaskTimelineBar
+                                task={task}
+                                left={barLayout.left}
+                                width={barLayout.width}
+                                isClamped={barLayout.isClamped}
+                              />
+                            ) : (
+                              <div className="absolute inset-y-0 left-0 flex items-center px-4 text-xs text-slate-400">
+                                Công việc chưa có mốc thời gian
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </section>
+              )) : structureMode === "goal" ? (
+                <section className="rounded-2xl border border-slate-200 bg-white">
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[920px] text-left">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-[11px] uppercase tracking-[0.08em] text-slate-400">
+                          <th className="px-5 py-3 font-semibold">Mục tiêu</th>
+                          <th className="px-4 py-3 font-semibold">Khung thời gian</th>
+                          <th className="px-4 py-3 font-semibold">Key Result</th>
+                          <th className="px-4 py-3 font-semibold">Công việc</th>
+                          <th className="px-4 py-3 font-semibold">Thao tác</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {goalTimelineItems.map((goal) => (
+                          <tr key={goal.id} className="border-b border-slate-100 align-top">
+                            <td className="px-5 py-4">
+                              <p className="text-sm font-semibold text-slate-900">{goal.name}</p>
+                              <p className="mt-1 text-xs text-slate-500">{goal.taskCount} công việc theo bộ lọc</p>
+                            </td>
+                            <td className="px-4 py-4 text-sm text-slate-600">
+                              {formatTimelineRangeVi(goal.startDate, goal.endDate, {
+                                fallback: "Mục tiêu chưa có mốc thời gian",
+                              })}
+                            </td>
+                            <td className="px-4 py-4 text-sm text-slate-700">{goal.keyResultCount}</td>
+                            <td className="px-4 py-4 text-sm text-slate-700">{goal.taskCount}</td>
+                            <td className="px-4 py-4">
+                              {goal.id !== "no-goal" ? (
+                                <Link
+                                  href={`/goals/${goal.id}`}
+                                  className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                >
+                                  Mở mục tiêu
+                                </Link>
+                              ) : null}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              ) : structureMode === "key_result" ? (
+                <section className="rounded-2xl border border-slate-200 bg-white">
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[1080px] text-left">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-[11px] uppercase tracking-[0.08em] text-slate-400">
+                          <th className="px-5 py-3 font-semibold">Key Result</th>
+                          <th className="px-4 py-3 font-semibold">Mục tiêu</th>
+                          <th className="px-4 py-3 font-semibold">Chỉ số</th>
+                          <th className="px-4 py-3 font-semibold">Khung thời gian</th>
+                          <th className="px-4 py-3 font-semibold">Công việc</th>
+                          <th className="px-4 py-3 font-semibold">Thao tác</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {keyResultTimelineItems.map((keyResult) => (
+                          <tr key={keyResult.id} className="border-b border-slate-100 align-top">
+                            <td className="px-5 py-4">
+                              <p className="text-sm font-semibold text-slate-900">{keyResult.name}</p>
+                            </td>
+                            <td className="px-4 py-4 text-sm text-slate-700">{keyResult.goalName}</td>
+                            <td className="px-4 py-4 text-sm text-slate-500">{keyResult.metric}</td>
+                            <td className="px-4 py-4 text-sm text-slate-600">
+                              {formatTimelineRangeVi(keyResult.startDate, keyResult.endDate, {
+                                fallback: "KR chưa có mốc thời gian",
+                              })}
+                            </td>
+                            <td className="px-4 py-4 text-sm text-slate-700">{keyResult.taskCount}</td>
+                            <td className="px-4 py-4">
+                              {keyResult.goalId !== "no-goal" && keyResult.id !== "no-kr" ? (
+                                <Link
+                                  href={`/tasks/new?goalId=${keyResult.goalId}&keyResultId=${keyResult.id}`}
+                                  className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                >
+                                  + Thêm công việc
+                                </Link>
+                              ) : null}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
               ) : (
                 <section className="rounded-2xl border border-slate-200 bg-white">
                   <div className="overflow-x-auto">
@@ -1404,13 +2066,27 @@ export default function TasksPage() {
                           <th className="px-4 py-3 font-semibold">Người phụ trách</th>
                           <th className="px-4 py-3 font-semibold">Trạng thái</th>
                           <th className="px-4 py-3 font-semibold">Tiến độ</th>
-                          <th className="px-4 py-3 font-semibold">Deadline</th>
+                          <th className="px-4 py-3 font-semibold">Thời gian thực thi</th>
                           <th className="px-4 py-3 font-semibold">Thao tác</th>
                         </tr>
                       </thead>
                       <tbody>
                         {filteredTasks.map((task) => {
                           const quickEditing = editingTaskId === task.id;
+                          const alignmentWarning = getTaskTimelineAlignmentWarning(task);
+                          const quickEditAlignmentWarning =
+                            quickEditing
+                              ? getTimelineOutsideParentWarning(
+                                  quickEditState.startDate || null,
+                                  quickEditState.endDate || null,
+                                  task.keyResult?.start_date ?? null,
+                                  task.keyResult?.end_date ?? null,
+                                  {
+                                    subjectLabel: "Thời gian công việc",
+                                    parentLabel: "KR",
+                                  },
+                                )
+                              : alignmentWarning;
                           return (
                             <Fragment key={task.id}>
                               <tr className="border-b border-slate-100 align-top">
@@ -1445,7 +2121,20 @@ export default function TasksPage() {
                                   </div>
                                 </td>
                                 <td className="px-4 py-4 text-sm text-slate-600">
-                                  {formatDate(task.deadlineAt)}
+                                  <p>
+                                    {formatTimelineRangeVi(task.startDate, task.endDate, {
+                                      fallback: "Công việc chưa có mốc thời gian",
+                                    })}
+                                  </p>
+                                  <p className="mt-1 text-xs text-slate-400">
+                                    Khung thời gian của KR:{" "}
+                                    {formatTimelineRangeVi(task.keyResult?.start_date ?? null, task.keyResult?.end_date ?? null, {
+                                      fallback: "KR chưa có mốc thời gian",
+                                    })}
+                                  </p>
+                                  {alignmentWarning ? (
+                                    <p className="mt-1 text-xs text-amber-600">{alignmentWarning}</p>
+                                  ) : null}
                                 </td>
                                 <td className="px-4 py-4">
                                   <div className="flex items-center gap-2">
@@ -1468,7 +2157,7 @@ export default function TasksPage() {
                               {quickEditing ? (
                                 <tr className="border-b border-slate-100 bg-slate-50">
                                   <td colSpan={8} className="px-5 py-4">
-                                    <div className="grid gap-3 md:grid-cols-[180px_180px_auto]">
+                                    <div className="grid gap-3 md:grid-cols-[140px_180px_180px_auto]">
                                       <label className="space-y-1 text-xs font-medium text-slate-600">
                                         <span>Tiến độ</span>
                                         <input
@@ -1486,14 +2175,29 @@ export default function TasksPage() {
                                         />
                                       </label>
                                       <label className="space-y-1 text-xs font-medium text-slate-600">
-                                        <span>Deadline</span>
+                                        <span>Ngày bắt đầu</span>
                                         <input
                                           type="date"
-                                          value={quickEditState.deadline}
+                                          value={quickEditState.startDate}
                                           onChange={(event) =>
                                             setQuickEditState((prev) => ({
                                               ...prev,
-                                              deadline: event.target.value,
+                                              startDate: event.target.value,
+                                            }))
+                                          }
+                                          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                        />
+                                      </label>
+                                      <label className="space-y-1 text-xs font-medium text-slate-600">
+                                        <span>Ngày kết thúc</span>
+                                        <input
+                                          type="date"
+                                          min={quickEditState.startDate || undefined}
+                                          value={quickEditState.endDate}
+                                          onChange={(event) =>
+                                            setQuickEditState((prev) => ({
+                                              ...prev,
+                                              endDate: event.target.value,
                                             }))
                                           }
                                           className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
@@ -1517,6 +2221,14 @@ export default function TasksPage() {
                                         </button>
                                       </div>
                                     </div>
+                                    <p className="mt-2 text-[11px] text-slate-500">
+                                      {task.keyResultId
+                                        ? "Giá trị ban đầu được autofill từ KR nếu task chưa có ngày. Khi lưu, thay đổi chỉ áp dụng cho công việc này."
+                                        : "Task này chưa gắn Key Result. Bạn vẫn có thể đặt mốc thời gian riêng cho công việc."}
+                                    </p>
+                                    {quickEditAlignmentWarning ? (
+                                      <p className="mt-1 text-[11px] text-amber-600">{quickEditAlignmentWarning}</p>
+                                    ) : null}
                                   </td>
                                 </tr>
                               ) : null}
@@ -1530,56 +2242,101 @@ export default function TasksPage() {
               )
             ) : null}
 
-            {!isLoadingTasks && viewMode === "gantt" && noDeadlineTasks.length > 0 ? (
+            {!isLoadingTasks && viewMode === "gantt" && currentNoTimelineCount > 0 ? (
               <section className="rounded-2xl border border-slate-200 bg-white p-5">
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-base font-semibold text-slate-900">Công việc chưa có hạn chót</h2>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Các công việc này chưa thể đặt lên trục thời gian nên được tách riêng để xử lý.
-                    </p>
+                    <h2 className="text-base font-semibold text-slate-900">{currentModeMeta.missingTitle}</h2>
+                    <p className="mt-1 text-sm text-slate-500">{currentModeMeta.missingDescription}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
-                      {noDeadlineTasks.length} công việc
+                      {currentNoTimelineCount} {currentModeMeta.pluralLabel}
                     </span>
                     <button
                       type="button"
-                      onClick={() => setShowNoDeadlineSection((prev) => !prev)}
+                      onClick={() => setShowNoTimelineSection((prev) => !prev)}
                       className="inline-flex h-9 items-center rounded-xl border border-slate-200 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                     >
-                      {showNoDeadlineSection ? "Thu gọn" : "Mở rộng"}
+                      {showNoTimelineSection ? "Thu gọn" : "Mở rộng"}
                     </button>
                   </div>
                 </div>
 
-                {showNoDeadlineSection ? (
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                    {noDeadlineTasks.map((task) => (
-                      <div key={task.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <Link
-                              href={`/tasks/${task.id}`}
-                              className="text-sm font-semibold text-slate-900 hover:text-blue-700"
-                            >
-                              {task.name}
-                            </Link>
-                            <p className="mt-1 text-xs text-slate-500">{task.goalName}</p>
-                            <p className="mt-1 text-xs font-medium text-slate-600">{task.keyResultName}</p>
+                {showNoTimelineSection ? (
+                  <>
+                    <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                      Thêm đầy đủ ngày bắt đầu và ngày kết thúc để mục tiêu, KR hoặc công việc xuất hiện trong timeline và Gantt.
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {structureMode === "goal"
+                        ? noTimelineGoalItems.map((goal) => (
+                          <div key={goal.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900">{goal.name}</p>
+                                <p className="mt-1 text-xs text-slate-500">
+                                  {goal.keyResultCount} KR · {goal.taskCount} công việc
+                                </p>
+                              </div>
+                            </div>
+                            <p className="mt-3 text-xs text-slate-500">
+                              {getTimelineMissingReason(
+                                goal.startDate,
+                                goal.endDate,
+                                "Mục tiêu chưa có mốc thời gian",
+                                "Mốc thời gian mục tiêu không hợp lệ",
+                              )}
+                            </p>
                           </div>
-                          <StatusBadge status={task.status} />
-                        </div>
-                        <div className="mt-3">
-                          <ProgressBar value={task.progress} />
-                          <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-                            <span>{task.progress}%</span>
-                            <span>{task.assigneeName}</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                        ))
+                      : structureMode === "key_result"
+                        ? noTimelineKeyResultItems.map((keyResult) => (
+                            <div key={keyResult.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="text-sm font-semibold text-slate-900">{keyResult.name}</p>
+                                  <p className="mt-1 text-xs text-slate-500">{keyResult.goalName}</p>
+                                  <p className="mt-1 text-xs font-medium text-slate-600">{keyResult.metric}</p>
+                                </div>
+                              </div>
+                              <p className="mt-3 text-xs text-slate-500">
+                                {getTimelineMissingReason(
+                                  keyResult.startDate,
+                                  keyResult.endDate,
+                                  "KR chưa có mốc thời gian",
+                                  "Mốc thời gian KR không hợp lệ",
+                                )}
+                              </p>
+                            </div>
+                          ))
+                        : noTimelineTasks.map((task) => (
+                            <div key={task.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <Link
+                                    href={`/tasks/${task.id}`}
+                                    className="text-sm font-semibold text-slate-900 hover:text-blue-700"
+                                  >
+                                    {task.name}
+                                  </Link>
+                                  <p className="mt-1 text-xs text-slate-500">{task.goalName}</p>
+                                  <p className="mt-1 text-xs font-medium text-slate-600">{task.keyResultName}</p>
+                                </div>
+                                <StatusBadge status={task.status} />
+                              </div>
+                              <div className="mt-3">
+                                <ProgressBar value={task.progress} />
+                                <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                                  <span>{task.progress}%</span>
+                                  <span>{task.assigneeName}</span>
+                                </div>
+                                <p className="mt-2 text-xs text-slate-500">{getTaskTimelineIssue(task)}</p>
+                              </div>
+                            </div>
+                          ))}
+                    </div>
+                  </>
                 ) : null}
               </section>
             ) : null}

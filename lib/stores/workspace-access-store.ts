@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { create } from "zustand";
 import { supabase } from "@/lib/supabase";
 
@@ -124,7 +124,7 @@ const getRootDepartmentId = (
     }
 
     visitedDepartmentIds.add(currentDepartmentId);
-    const currentDepartment = departmentsById[currentDepartmentId];
+    const currentDepartment: WorkspaceDepartment | undefined = departmentsById[currentDepartmentId];
 
     if (!currentDepartment) {
       return departmentId;
@@ -280,26 +280,31 @@ export function useWorkspaceAccess() {
     void load();
   }, [load]);
 
-  const leaderRoleIds = getLeaderRoleIds(state.roles);
-  const directorRoleIds = getDirectorRoleIds(state.roles);
-  const hasLeaderRole = state.memberships.some(
-    (membership) => membership.roleId && leaderRoleIds.includes(membership.roleId),
+  const leaderRoleIds = useMemo(() => getLeaderRoleIds(state.roles), [state.roles]);
+  const directorRoleIds = useMemo(() => getDirectorRoleIds(state.roles), [state.roles]);
+  const hasLeaderRole = useMemo(
+    () => state.memberships.some((membership) => membership.roleId && leaderRoleIds.includes(membership.roleId)),
+    [leaderRoleIds, state.memberships],
   );
-  const hasDirectorRole = state.memberships.some(
-    (membership) => membership.roleId && directorRoleIds.includes(membership.roleId),
+  const hasDirectorRole = useMemo(
+    () => state.memberships.some((membership) => membership.roleId && directorRoleIds.includes(membership.roleId)),
+    [directorRoleIds, state.memberships],
   );
 
-  return {
-    ...state,
-    profileId: state.profile?.id ?? null,
-    profileName: state.profile?.name ?? null,
-    leaderRoleIds,
-    directorRoleIds,
-    hasLeaderRole,
-    hasDirectorRole,
-    canManage: state.managedDepartments.length > 0,
-    canManageAttendance: hasLeaderRole || hasDirectorRole,
-  };
+  return useMemo(
+    () => ({
+      ...state,
+      profileId: state.profile?.id ?? null,
+      profileName: state.profile?.name ?? null,
+      leaderRoleIds,
+      directorRoleIds,
+      hasLeaderRole,
+      hasDirectorRole,
+      canManage: state.managedDepartments.length > 0,
+      canManageAttendance: hasLeaderRole || hasDirectorRole,
+    }),
+    [directorRoleIds, hasDirectorRole, hasLeaderRole, leaderRoleIds, state],
+  );
 }
 
 export function buildWorkspaceAccessDebug(params: {

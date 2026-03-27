@@ -3,6 +3,7 @@
 :root {
   --background: #f3f5fa;
   --foreground: #171717;
+  --workspace-sidebar-width: 280px;
 }
 
 @theme inline {

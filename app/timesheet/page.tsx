@@ -64,7 +64,7 @@ export default function TimesheetPage() {
       <div className="flex min-h-screen w-full">
         <WorkspaceSidebar active="timesheet" />
 
-        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[280px]">
+        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <header className="sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-7">
             <div className="flex items-center justify-between gap-3">
               <h1 className="text-3xl font-semibold tracking-[-0.02em] text-slate-900">Chấm công</h1>
@@ -77,7 +77,6 @@ export default function TimesheetPage() {
               isProfileLoading={isLoadingProfile}
               profileError={profileError}
               createRequestHref="/timesheet/time-request/new"
-              showExportButton
             />
           </main>
         </div>

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { ClearableNumberInput } from "@/components/ui/clearable-number-input";
 import {
   getKeyResultProgressHint,
   KEY_RESULT_UNITS,
@@ -18,12 +19,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { formatTimelineRangeVi, isDateRangeOrdered } from "@/lib/timeline";
 
 type GoalDetailRow = {
   id: string;
   name: string;
   department_id: string | null;
   parent_goal_id: string | null;
+  start_date: string | null;
+  end_date: string | null;
 };
 
 type GoalDepartmentLinkRow = {
@@ -52,6 +56,8 @@ type KeyResultFormState = {
   current: number;
   weight: number;
   responsibleDepartmentId: string;
+  startDate: string;
+  endDate: string;
 };
 
 type KeyResultCreatePermissionDebug = {
@@ -77,6 +83,8 @@ const defaultKeyResultForm: KeyResultFormState = {
   current: 0,
   weight: 1,
   responsibleDepartmentId: "",
+  startDate: "",
+  endDate: "",
 };
 
 const DEFAULT_KEY_RESULT_START_VALUE = 0;
@@ -152,7 +160,7 @@ export default function NewGoalKeyResultPage() {
         await Promise.all([
           supabase
             .from("goals")
-            .select("id,name,department_id,parent_goal_id")
+            .select("id,name,department_id,parent_goal_id,start_date,end_date")
             .eq("id", goalId)
             .maybeSingle(),
           supabase
@@ -229,6 +237,8 @@ export default function NewGoalKeyResultPage() {
         ...prev,
         responsibleDepartmentId:
           prev.responsibleDepartmentId || normalizedGoalDepartments[0]?.departmentId || "",
+        startDate: prev.startDate || typedGoal.start_date || "",
+        endDate: prev.endDate || typedGoal.end_date || "",
       }));
       setIsLoading(false);
 
@@ -281,6 +291,10 @@ export default function NewGoalKeyResultPage() {
       setSubmitError("Vui lòng chọn phòng ban phụ trách KR.");
       return;
     }
+    if (!isDateRangeOrdered(form.startDate || null, form.endDate || null)) {
+      setSubmitError("Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.");
+      return;
+    }
     if (
       goalDepartments.length > 0 &&
       !goalDepartments.some((item) => item.departmentId === form.responsibleDepartmentId)
@@ -303,6 +317,8 @@ export default function NewGoalKeyResultPage() {
         current: safeCurrent,
         weight: Math.round(safeWeight),
         responsible_department_id: form.responsibleDepartmentId,
+        start_date: form.startDate || null,
+        end_date: form.endDate || null,
       };
 
       const { error } = await supabase.from("key_results").insert(payload);
@@ -332,7 +348,7 @@ export default function NewGoalKeyResultPage() {
       <div className="flex h-full w-full">
         <WorkspaceSidebar active="goals" />
 
-        <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-[#f3f5fa] lg:pl-[280px]">
+        <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-[#f3f5fa] lg:pl-[var(--workspace-sidebar-width)]">
           <header className="border-b border-slate-200 bg-[#f3f5fa] px-4 py-4 lg:px-7">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm text-slate-500">
@@ -379,8 +395,18 @@ export default function NewGoalKeyResultPage() {
                   Tạo key result mới
                 </h1>
                 <p className="mt-1 text-sm text-slate-500">
-                  {goal ? `Mục tiêu: ${goal.name}` : "Thiết lập chỉ số, mục tiêu đích và phòng ban phụ trách KR."}
+                  {goal
+                    ? `Mục tiêu: ${goal.name}`
+                    : "Thiết lập chỉ số, mục tiêu đích, timeline và phòng ban phụ trách KR."}
                 </p>
+                {goal?.start_date || goal?.end_date ? (
+                  <p className="mt-2 text-xs text-slate-500">
+                    Khung thời gian mục tiêu:{" "}
+                    {formatTimelineRangeVi(goal.start_date, goal.end_date, {
+                      fallback: "Chưa đặt khung thời gian",
+                    })}
+                  </p>
+                ) : null}
               </div>
 
               {isLoading ? (
@@ -474,13 +500,12 @@ export default function NewGoalKeyResultPage() {
 
                     <div className="space-y-1.5">
                       <label className="text-sm font-semibold text-slate-700">Target *</label>
-                      <input
-                        type="number"
+                      <ClearableNumberInput
                         min={0}
                         step="0.01"
                         value={form.target}
-                        onChange={(event) =>
-                          setForm((prev) => ({ ...prev, target: Number(event.target.value) || 0 }))
+                        onValueChange={(value) =>
+                          setForm((prev) => ({ ...prev, target: value }))
                         }
                         className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       />
@@ -488,13 +513,12 @@ export default function NewGoalKeyResultPage() {
 
                     <div className="space-y-1.5">
                       <label className="text-sm font-semibold text-slate-700">Hiện tại</label>
-                      <input
-                        type="number"
+                      <ClearableNumberInput
                         min={0}
                         step="0.01"
                         value={form.current}
-                        onChange={(event) =>
-                          setForm((prev) => ({ ...prev, current: Number(event.target.value) || 0 }))
+                        onValueChange={(value) =>
+                          setForm((prev) => ({ ...prev, current: value }))
                         }
                         className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       />
@@ -503,13 +527,12 @@ export default function NewGoalKeyResultPage() {
                     <div className="space-y-1.5">
                       <label className="text-sm font-semibold text-slate-700">Trọng số KR (%) *</label>
                       <div className="relative">
-                        <input
-                          type="number"
+                        <ClearableNumberInput
                           min={1}
                           step="1"
                           value={form.weight}
-                          onChange={(event) =>
-                            setForm((prev) => ({ ...prev, weight: Number(event.target.value) || 1 }))
+                          onValueChange={(value) =>
+                            setForm((prev) => ({ ...prev, weight: value }))
                           }
                           className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 pr-10 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />
@@ -520,6 +543,39 @@ export default function NewGoalKeyResultPage() {
                       <p className="text-xs text-slate-500">Nhập theo phần trăm, ví dụ `25` nghĩa là `25%`.</p>
                     </div>
                   </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-semibold text-slate-700">Ngày bắt đầu</label>
+                      <input
+                        type="date"
+                        value={form.startDate}
+                        onChange={(event) =>
+                          setForm((prev) => ({ ...prev, startDate: event.target.value }))
+                        }
+                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-semibold text-slate-700">Ngày kết thúc</label>
+                      <input
+                        type="date"
+                        min={form.startDate || undefined}
+                        value={form.endDate}
+                        onChange={(event) =>
+                          setForm((prev) => ({ ...prev, endDate: event.target.value }))
+                        }
+                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      />
+                    </div>
+                  </div>
+
+                  {!isDateRangeOrdered(form.startDate || null, form.endDate || null) ? (
+                    <p className="-mt-2 text-xs text-rose-600">
+                      Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.
+                    </p>
+                  ) : null}
 
                   <div className="space-y-1.5">
                     <label className="text-sm font-semibold text-slate-700">Mô tả</label>
@@ -533,7 +589,13 @@ export default function NewGoalKeyResultPage() {
                   </div>
 
                   <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-sm text-blue-800">
-                    {getKeyResultProgressHint(form.unit)}
+                    <p>{getKeyResultProgressHint(form.unit)}</p>
+                    <p className="mt-2">
+                      Khung thời gian của KR:{" "}
+                      {formatTimelineRangeVi(form.startDate || null, form.endDate || null, {
+                        fallback: "KR chưa có mốc thời gian",
+                      })}
+                    </p>
                   </div>
 
                   <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">

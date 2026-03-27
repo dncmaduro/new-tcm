@@ -9,14 +9,15 @@ import {
   formatTimeVi,
   getWorkedMinutes,
   type DashboardActivityItem,
-  type DashboardDeadlineItem,
   type DashboardGoalItem,
   type DashboardMyTaskItem,
   type DashboardSummaryCard,
   type DashboardTeamPerformanceItem,
   type DashboardTimeTrackerData,
   type DashboardTrendPoint,
+  type DashboardUpcomingTaskItem,
 } from "@/lib/dashboard";
+import { formatTimelineRangeVi } from "@/lib/timeline";
 
 function TinyDot({ className }: { className: string }) {
   return <span className={`inline-flex h-2.5 w-2.5 rounded-full ${className}`} />;
@@ -323,7 +324,7 @@ export function DashboardMyTasks({
                 <th className="px-5 py-3 font-semibold">Liên kết OKR</th>
                 <th className="px-5 py-3 font-semibold">Trạng thái</th>
                 <th className="px-5 py-3 font-semibold">Tiến độ</th>
-                <th className="px-5 py-3 font-semibold">Hạn chót</th>
+                <th className="px-5 py-3 font-semibold">Thời gian thực thi</th>
               </tr>
             </thead>
             <tbody>
@@ -351,7 +352,11 @@ export function DashboardMyTasks({
                       colorClass={task.progress === 100 ? "bg-emerald-500" : "bg-blue-600"}
                     />
                   </td>
-                  <td className="px-5 py-4 text-sm text-slate-500">{formatDateShortVi(task.deadlineAt)}</td>
+                  <td className="px-5 py-4 text-sm text-slate-500">
+                    {formatTimelineRangeVi(task.executionStartAt, task.executionEndAt, {
+                      fallback: "Công việc chưa có mốc thời gian",
+                    })}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -367,7 +372,7 @@ export function DashboardUpcomingDeadlines({
   loading,
   error,
 }: {
-  items: DashboardDeadlineItem[];
+  items: DashboardUpcomingTaskItem[];
   loading: boolean;
   error: string | null;
 }) {
@@ -389,7 +394,7 @@ export function DashboardUpcomingDeadlines({
             {items.map((item) => (
               <div key={item.id} className="flex items-start gap-3">
                 <div className="w-14 rounded-xl bg-slate-50 px-2 py-1 text-center text-[11px] font-bold text-slate-700 uppercase">
-                  {formatDateShortVi(item.deadlineAt)}
+                  {formatDateShortVi(item.endDateAt)}
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-slate-800">{item.title}</p>

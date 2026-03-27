@@ -76,7 +76,7 @@ export default function DashboardPage() {
       <div className="flex min-h-screen w-full">
         <WorkspaceSidebar active="dashboard" />
 
-        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[280px]">
+        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <header className="sticky top-0 z-10 border-b border-slate-200/80 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-8">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex items-center gap-3">

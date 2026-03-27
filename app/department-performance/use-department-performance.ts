@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   formatActivityMessage,
+  getDateDiffFromToday,
+  getDateUrgencyMeta,
   formatHoursShort,
   formatRelativeTimeVi,
-  getDeadlineMeta,
   getInitial,
   getWorkedMinutes,
   normalizeDashboardStatus,
@@ -47,6 +48,8 @@ type KeyResultRow = {
   target: number | null;
   weight: number | null;
   responsible_department_id: string | null;
+  start_date: string | null;
+  end_date: string | null;
 };
 
 type TaskRow = {
@@ -57,7 +60,8 @@ type TaskRow = {
   status: string | null;
   progress: number | null;
   weight: number | null;
-  deadline: string | null;
+  start_date: string | null;
+  end_date: string | null;
   created_at: string | null;
   updated_at: string | null;
   type: string | null;
@@ -127,6 +131,8 @@ export type DepartmentGoalExecutionItem = {
     taskCount: number;
     assigneeDistribution: string;
     ownedBySelectedDepartment: boolean;
+    startDate: string | null;
+    endDate: string | null;
   }>;
 };
 
@@ -147,13 +153,13 @@ export type DepartmentMemberPerformanceItem = {
   activeTasks: number;
 };
 
-export type DepartmentUpcomingDeadlineItem = {
+export type DepartmentUpcomingTaskItem = {
   id: string;
   taskName: string;
   assigneeName: string;
   keyResultName: string;
   goalName: string;
-  deadlineAt: string;
+  endDateAt: string;
   urgencyLabel: string;
   urgencyClassName: string;
 };
@@ -249,10 +255,10 @@ const toAssigneeDistribution = (tasks: TaskRow[], profilesById: Record<string, s
 };
 
 const isTaskOverdue = (task: TaskRow, now = new Date()) => {
-  if (!task.deadline) {
+  if (!task.end_date) {
     return false;
   }
-  const deadline = new Date(task.deadline);
+  const deadline = new Date(task.end_date);
   const today = new Date(now);
   deadline.setHours(0, 0, 0, 0);
   today.setHours(0, 0, 0, 0);
@@ -367,7 +373,7 @@ export function useDepartmentPerformance(filters: FilterParams) {
           goalIds.length > 0
             ? supabase
                 .from("key_results")
-                .select("id,goal_id,name,start_value,current,target,weight,responsible_department_id")
+                .select("id,goal_id,name,start_value,current,target,weight,responsible_department_id,start_date,end_date")
                 .in("goal_id", goalIds)
             : Promise.resolve({ data: [] }),
           Promise.resolve({ data: profileRows ?? [] }),
@@ -387,6 +393,8 @@ export function useDepartmentPerformance(filters: FilterParams) {
           target: typeof item.target === "number" ? item.target : Number(item.target ?? 0),
           weight: typeof item.weight === "number" ? item.weight : Number(item.weight ?? 1),
           responsible_department_id: item.responsible_department_id ? String(item.responsible_department_id) : null,
+          start_date: item.start_date ? String(item.start_date) : null,
+          end_date: item.end_date ? String(item.end_date) : null,
         }));
         const relatedDepartmentIds = [
           ...new Set(
@@ -409,7 +417,7 @@ export function useDepartmentPerformance(filters: FilterParams) {
           keyResultIds.length > 0
             ? supabase
                 .from("tasks")
-                .select("id,name,key_result_id,assignee_id,status,progress,weight,deadline,created_at,updated_at,type")
+                .select("id,name,key_result_id,assignee_id,status,progress,weight,start_date,end_date,created_at,updated_at,type")
                 .in("key_result_id", keyResultIds)
             : Promise.resolve({ data: [] }),
           memberProfileIds.length > 0
@@ -434,6 +442,12 @@ export function useDepartmentPerformance(filters: FilterParams) {
           id: String(task.id),
           key_result_id: task.key_result_id ? String(task.key_result_id) : null,
           assignee_id: task.assignee_id ? String(task.assignee_id) : null,
+          status: task.status ? String(task.status) : null,
+          start_date: task.start_date ? String(task.start_date) : null,
+          end_date: task.end_date ? String(task.end_date) : null,
+          created_at: task.created_at ? String(task.created_at) : null,
+          updated_at: task.updated_at ? String(task.updated_at) : null,
+          type: task.type ? String(task.type) : null,
         }));
         const taskIds = typedTasks.map((task) => task.id);
 
@@ -564,6 +578,7 @@ export function useDepartmentPerformance(filters: FilterParams) {
   }, [filters.departmentId]);
 
   const filtered = useMemo(() => {
+    const today = new Date();
     const keyword = filters.search.trim().toLowerCase();
     const goalsById = rawData.goals.reduce<Record<string, GoalRow>>((acc, goal) => {
       acc[String(goal.id)] = goal;
@@ -734,6 +749,8 @@ export function useDepartmentPerformance(filters: FilterParams) {
           taskCount: krTasks.length,
           assigneeDistribution: toAssigneeDistribution(krTasks, rawData.profilesById),
           ownedBySelectedDepartment: keyResult.responsible_department_id === filters.departmentId,
+          startDate: keyResult.start_date ?? null,
+          endDate: keyResult.end_date ?? null,
         };
       });
       const departmentPerformance = departmentPerformanceMeta?.performance ?? 0;
@@ -854,10 +871,10 @@ export function useDepartmentPerformance(filters: FilterParams) {
         })),
     ].slice(0, 8);
 
-    const upcomingDeadlines: DepartmentUpcomingDeadlineItem[] = departmentVisibleTasks
-      .filter((task) => task.deadline)
+    const upcomingDeadlines: DepartmentUpcomingTaskItem[] = departmentVisibleTasks
+      .filter((task) => task.end_date)
       .map((task) => {
-        const deadlineMeta = getDeadlineMeta(task.deadline as string);
+        const urgencyMeta = getDateUrgencyMeta(task.end_date, today);
         return {
           id: task.id,
           taskName: task.name,
@@ -867,16 +884,16 @@ export function useDepartmentPerformance(filters: FilterParams) {
             goalsById[
               String(visibleKeyResults.find((item) => item.id === task.key_result_id)?.goal_id ?? "")
             ]?.name ?? "Chưa có goal",
-          deadlineAt: task.deadline as string,
-          urgencyLabel: deadlineMeta.label,
-          urgencyClassName: deadlineMeta.className,
+          endDateAt: task.end_date as string,
+          urgencyLabel: urgencyMeta.label,
+          urgencyClassName: urgencyMeta.className,
         };
       })
       .filter((item) => {
-        const diff = Math.round((new Date(item.deadlineAt).getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000);
-        return diff <= 7;
+        const diff = getDateDiffFromToday(item.endDateAt, today);
+        return diff !== null && diff <= 7;
       })
-      .sort((a, b) => new Date(a.deadlineAt).getTime() - new Date(b.deadlineAt).getTime())
+      .sort((a, b) => new Date(a.endDateAt).getTime() - new Date(b.endDateAt).getTime())
       .slice(0, 10);
 
     const recentActivities = visibleActivities.map((activity) => {

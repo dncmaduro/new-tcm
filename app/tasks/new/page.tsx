@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { ClearableNumberInput } from "@/components/ui/clearable-number-input";
 import { supabase } from "@/lib/supabase";
 import {
   getTaskProgressByType,
@@ -27,6 +28,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  formatTimelineRangeVi,
+  getTimelineMissingReason,
+  getTimelineOutsideParentWarning,
+  isDateRangeOrdered,
+} from "@/lib/timeline";
 
 type GoalOption = {
   id: string;
@@ -54,6 +61,8 @@ type KeyResultOption = {
   current: number;
   unit: string | null;
   weight: number;
+  startDate: string | null;
+  endDate: string | null;
 };
 
 type TaskCreatePermissionDebug = {
@@ -82,6 +91,8 @@ type TaskFormState = {
   status: TaskStatusValue;
   note: string;
   weight: number;
+  startDate: string;
+  endDate: string;
 };
 
 const defaultForm: TaskFormState = {
@@ -95,6 +106,8 @@ const defaultForm: TaskFormState = {
   status: TASK_STATUSES[0].value,
   note: "",
   weight: 1,
+  startDate: "",
+  endDate: "",
 };
 
 export default function NewTaskPage() {
@@ -186,6 +199,8 @@ export default function NewTaskPage() {
                 current,
                 unit,
                 weight,
+                start_date,
+                end_date,
                 created_at,
                 goal:goals!key_results_goal_id_fkey(
                   id,
@@ -257,14 +272,13 @@ export default function NewTaskPage() {
             current: typeof keyResult.current === "number" ? keyResult.current : Number(keyResult.current ?? 0),
             unit: keyResult.unit ? String(keyResult.unit) : null,
             weight: typeof keyResult.weight === "number" ? keyResult.weight : Number(keyResult.weight ?? 1),
+            startDate: keyResult.start_date ? String(keyResult.start_date) : null,
+            endDate: keyResult.end_date ? String(keyResult.end_date) : null,
           };
         });
         setKeyResultOptions(mappedKeyResults);
 
-        const goalIdsWithKr = new Set(
-          mappedKeyResults.map((keyResult) => keyResult.goalId).filter((goalId): goalId is string => Boolean(goalId)),
-        );
-        setGoalOptions(mappedGoals.filter((goal) => goalIdsWithKr.has(goal.id)));
+        setGoalOptions(mappedGoals);
 
         let mappedProfiles: ProfileOption[] = [];
         if (!profilesError) {
@@ -320,6 +334,8 @@ export default function NewTaskPage() {
           goalId: preselectedGoalId,
           keyResultId: preselectedGoalKeyResult?.id ?? "",
           profileId: mappedProfiles[0]?.id ?? "",
+          startDate: preselectedGoalKeyResult?.startDate ?? "",
+          endDate: preselectedGoalKeyResult?.endDate ?? "",
         }));
       } catch {
         if (isActive) {
@@ -375,6 +391,29 @@ export default function NewTaskPage() {
     () => keyResultOptions.find((keyResult) => keyResult.id === form.keyResultId) ?? null,
     [form.keyResultId, keyResultOptions],
   );
+  const taskTimelineInputError = useMemo(() => {
+    if ((form.startDate && !form.endDate) || (!form.startDate && form.endDate)) {
+      return "Vui lòng nhập đủ ngày bắt đầu và ngày kết thúc hoặc để trống cả hai.";
+    }
+    if (!isDateRangeOrdered(form.startDate || null, form.endDate || null)) {
+      return "Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.";
+    }
+    return null;
+  }, [form.endDate, form.startDate]);
+  const taskTimelineAlignmentWarning = useMemo(
+    () =>
+      getTimelineOutsideParentWarning(
+        form.startDate || null,
+        form.endDate || null,
+        selectedKeyResult?.startDate ?? null,
+        selectedKeyResult?.endDate ?? null,
+        {
+          subjectLabel: "Thời gian công việc",
+          parentLabel: "KR",
+        },
+      ),
+    [form.endDate, form.startDate, selectedKeyResult?.endDate, selectedKeyResult?.startDate],
+  );
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -390,6 +429,10 @@ export default function NewTaskPage() {
     }
     if (!creatorProfileId) {
       setSubmitError("Không xác định được người tạo công việc hiện tại.");
+      return;
+    }
+    if (taskTimelineInputError) {
+      setSubmitError(taskTimelineInputError);
       return;
     }
 
@@ -408,6 +451,8 @@ export default function NewTaskPage() {
         status: form.status,
         note: form.note.trim() || null,
         weight: Math.round(form.weight),
+        start_date: form.startDate.trim() || null,
+        end_date: form.endDate.trim() || null,
       };
 
       const { error } = await supabase.from("tasks").insert(payload);
@@ -436,7 +481,7 @@ export default function NewTaskPage() {
       <div className="flex min-h-screen w-full">
         <WorkspaceSidebar active="tasks" />
 
-        <div className="flex h-screen w-full flex-1 flex-col overflow-hidden lg:pl-[280px]">
+        <div className="flex h-screen w-full flex-1 flex-col overflow-hidden lg:pl-[var(--workspace-sidebar-width)]">
           <header className="border-b border-slate-200 bg-[#f3f5fa] px-4 py-4 lg:px-7">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm text-slate-500">
@@ -536,6 +581,20 @@ export default function NewTaskPage() {
                                       keyResult.id === prev.keyResultId && keyResult.goalId === nextGoalId,
                                   )?.id ?? nextGoalKeyResults[0]?.id ?? ""
                                 : nextGoalKeyResults[0]?.id ?? "",
+                            startDate:
+                              (nextGoalId && prev.keyResultId
+                                ? keyResultOptions.find(
+                                    (keyResult) =>
+                                      keyResult.id === prev.keyResultId && keyResult.goalId === nextGoalId,
+                                  )?.startDate
+                                : nextGoalKeyResults[0]?.startDate) ?? "",
+                            endDate:
+                              (nextGoalId && prev.keyResultId
+                                ? keyResultOptions.find(
+                                    (keyResult) =>
+                                      keyResult.id === prev.keyResultId && keyResult.goalId === nextGoalId,
+                                  )?.endDate
+                                : nextGoalKeyResults[0]?.endDate) ?? "",
                           }));
                         }}
                       >
@@ -565,6 +624,8 @@ export default function NewTaskPage() {
                             ...prev,
                             goalId: matchedKeyResult?.goalId ?? prev.goalId,
                             keyResultId: value,
+                            startDate: matchedKeyResult?.startDate ?? "",
+                            endDate: matchedKeyResult?.endDate ?? "",
                           }));
                         }}
                       >
@@ -595,7 +656,9 @@ export default function NewTaskPage() {
                           : "Mục tiêu này chưa có key result nên chưa thể tạo task theo schema mới."}
                         {" "}
                         {selectedGoal.startDate || selectedGoal.endDate
-                          ? `Khung thời gian: ${selectedGoal.startDate ?? "?"} đến ${selectedGoal.endDate ?? "?"}.`
+                          ? `Khung thời gian mục tiêu: ${formatTimelineRangeVi(selectedGoal.startDate, selectedGoal.endDate, {
+                              fallback: "Chưa đặt khung thời gian",
+                            })}.`
                           : "Mục tiêu này chưa có ngày bắt đầu/kết thúc."}
                       </p>
                     </div>
@@ -613,15 +676,81 @@ export default function NewTaskPage() {
                             {" / "}
                             {formatKeyResultMetric(selectedKeyResult.target, selectedKeyResult.unit)} · {formatKeyResultUnit(selectedKeyResult.unit)}
                           </p>
+                          <p className="mt-1 text-xs text-slate-600">
+                            Khung thời gian của KR:{" "}
+                            {formatTimelineRangeVi(selectedKeyResult.startDate, selectedKeyResult.endDate, {
+                              fallback: "KR chưa có mốc thời gian",
+                            })}
+                          </p>
                           <p className="mt-1 text-[11px] text-slate-500">
-                            {getKeyResultProgressHint(selectedKeyResult.unit)}
+                            {getTimelineMissingReason(
+                              selectedKeyResult.startDate,
+                              selectedKeyResult.endDate,
+                              "KR chưa có mốc thời gian",
+                              "Mốc thời gian KR không hợp lệ",
+                            ) ?? "Ngày của công việc được autofill từ KR nhưng vẫn có thể chỉnh riêng."}
                           </p>
                         </div>
                         <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-blue-700">
                           Trọng số KR {Math.round(Number(selectedKeyResult.weight ?? 1))}%
                         </span>
                       </div>
+                      <p className="mt-3 text-[11px] text-slate-500">
+                        {getKeyResultProgressHint(selectedKeyResult.unit)}
+                      </p>
                     </div>
+                  ) : null}
+
+                  {selectedKeyResult ? (
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <label className="text-sm font-semibold text-slate-700">Ngày bắt đầu</label>
+                        <input
+                          type="date"
+                          value={form.startDate}
+                          onChange={(event) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              startDate: event.target.value,
+                            }))
+                          }
+                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-sm font-semibold text-slate-700">Ngày kết thúc</label>
+                        <input
+                          type="date"
+                          min={form.startDate || undefined}
+                          value={form.endDate}
+                          onChange={(event) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              endDate: event.target.value,
+                            }))
+                          }
+                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        />
+                      </div>
+                      <p className="md:col-span-2 text-[11px] text-slate-500">
+                        Giá trị ban đầu được autofill từ Key Result đã chọn. Khi lưu, mốc thời gian này thuộc riêng công việc và không làm thay đổi KR.
+                      </p>
+                    </div>
+                  ) : null}
+
+                  {taskTimelineInputError ? (
+                    <p className="-mt-2 text-xs text-rose-600">
+                      {taskTimelineInputError}
+                    </p>
+                  ) : null}
+
+                  {selectedKeyResult && !taskTimelineInputError && taskTimelineAlignmentWarning ? (
+                    <p className="-mt-2 text-xs text-amber-600">
+                      {taskTimelineAlignmentWarning} Khung thời gian của KR:{" "}
+                      {formatTimelineRangeVi(selectedKeyResult.startDate, selectedKeyResult.endDate, {
+                        fallback: "KR chưa có mốc thời gian",
+                      })}
+                    </p>
                   ) : null}
 
                   <div className="grid gap-4 md:grid-cols-2">
@@ -682,19 +811,19 @@ export default function NewTaskPage() {
                       <label htmlFor="task-weight" className="text-sm font-semibold text-slate-700">
                         Trọng số task *
                       </label>
-                      <input
+                      <ClearableNumberInput
                         id="task-weight"
-                        type="number"
                         min={1}
                         value={form.weight}
-                        onChange={(event) =>
+                        onValueChange={(value) =>
                           setForm((prev) => ({
                             ...prev,
-                            weight: Number(event.target.value) || 1,
+                            weight: value,
                           }))
                         }
                         className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       />
+                      <p className="text-xs text-slate-500">Nhập theo phần trăm, ví dụ `15` nghĩa là 15%.</p>
                     </div>
 
                     <div className="space-y-1.5">
@@ -757,15 +886,14 @@ export default function NewTaskPage() {
                       <label htmlFor="task-progress" className="text-sm font-semibold text-slate-700">
                         Tiến độ (%)
                       </label>
-                      <input
+                      <ClearableNumberInput
                         id="task-progress"
-                        type="number"
                         value={getTaskProgressByType(form.type, form.status, form.progress)}
                         disabled={form.type === "okr"}
-                        onChange={(event) =>
+                        onValueChange={(value) =>
                           setForm((prev) => ({
                             ...prev,
-                            progress: Number(event.target.value) || 0,
+                            progress: value,
                           }))
                         }
                         className="h-11 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 text-sm font-semibold text-slate-600 outline-none disabled:cursor-not-allowed"

@@ -23,6 +23,12 @@ import {
 } from "@/lib/okr";
 import { useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
+import {
+  formatTimelineRangeVi,
+  getTimelineMissingReason,
+  getTimelineOutsideParentWarning,
+  isDateRangeOrdered,
+} from "@/lib/timeline";
 
 type GoalDetailRow = {
   id: string;
@@ -49,6 +55,8 @@ type TaskRow = {
   progress: number | null;
   weight: number | null;
   profile_id: string | null;
+  start_date: string | null;
+  end_date: string | null;
   key_result_id: string | null;
   key_result?: { id: string; goal_id: string | null; goal?: { id: string; name: string } | null } | null;
 };
@@ -75,6 +83,8 @@ type KeyResultRow = {
   unit: string | null;
   weight: number | null;
   responsible_department_id: string | null;
+  start_date: string | null;
+  end_date: string | null;
   created_at: string | null;
   updated_at: string | null;
 };
@@ -117,6 +127,8 @@ type GoalTaskItem = {
   profileId: string | null;
   assigneeName: string;
   keyResultId: string | null;
+  startDate: string | null;
+  endDate: string | null;
 };
 
 type KeyResultScaleFormState = {
@@ -124,6 +136,8 @@ type KeyResultScaleFormState = {
   target: string;
   unit: KeyResultUnitValue;
   weight: string;
+  startDate: string;
+  endDate: string;
 };
 
 const typeLabelMap = GOAL_TYPES.reduce<Record<string, string>>((acc, item) => {
@@ -175,6 +189,8 @@ const createKeyResultScaleForm = (keyResult: KeyResultRow): KeyResultScaleFormSt
   target: String(Number.isFinite(keyResult.target) ? Number(keyResult.target) : 0),
   unit: toKeyResultUnitValue(keyResult.unit),
   weight: String(Math.round(Number(keyResult.weight ?? 1))),
+  startDate: keyResult.start_date ?? "",
+  endDate: keyResult.end_date ?? "",
 });
 
 const getReadableKeyResultSaveError = (message: string | null | undefined) => {
@@ -308,7 +324,7 @@ export default function GoalDetailPage() {
         supabase
           .from("key_results")
           .select(
-            "id,goal_id,name,description,start_value,target,current,unit,weight,responsible_department_id,created_at,updated_at",
+            "id,goal_id,name,description,start_value,target,current,unit,weight,responsible_department_id,start_date,end_date,created_at,updated_at",
           )
           .eq("goal_id", typedGoal.id)
           .order("created_at", { ascending: true }),
@@ -346,6 +362,8 @@ export default function GoalDetailPage() {
         responsible_department_id: keyResult.responsible_department_id
           ? String(keyResult.responsible_department_id)
           : null,
+        start_date: keyResult.start_date ? String(keyResult.start_date) : null,
+        end_date: keyResult.end_date ? String(keyResult.end_date) : null,
       }));
       setKeyResults(mappedKeyResults);
 
@@ -361,6 +379,8 @@ export default function GoalDetailPage() {
               progress,
               weight,
               profile_id,
+              start_date,
+              end_date,
               key_result_id,
               key_result:key_results!tasks_key_result_id_fkey(
                 id,
@@ -414,6 +434,8 @@ export default function GoalDetailPage() {
           profileId: task.profile_id ? String(task.profile_id) : null,
           assigneeName: task.profile_id ? profileNameById[task.profile_id] ?? "Chưa gán" : "Chưa gán",
           keyResultId: task.key_result_id ? String(task.key_result_id) : null,
+          startDate: task.start_date ? String(task.start_date) : null,
+          endDate: task.end_date ? String(task.end_date) : null,
         })),
       );
 
@@ -749,6 +771,10 @@ export default function GoalDetailPage() {
       setKeyResultScaleError("Trọng số KR phải lớn hơn 0.");
       return;
     }
+    if (!isDateRangeOrdered(keyResultScaleForm.startDate || null, keyResultScaleForm.endDate || null)) {
+      setKeyResultScaleError("Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.");
+      return;
+    }
 
     setKeyResultScaleError(null);
     setSavingKeyResultId(keyResult.id);
@@ -759,6 +785,8 @@ export default function GoalDetailPage() {
         target: safeTarget,
         unit: keyResultScaleForm.unit,
         weight: Math.round(safeWeight),
+        start_date: keyResultScaleForm.startDate || null,
+        end_date: keyResultScaleForm.endDate || null,
       };
 
       const { error: updateError } = await supabase
@@ -786,6 +814,8 @@ export default function GoalDetailPage() {
                 target: safeTarget,
                 unit: keyResultScaleForm.unit,
                 weight: Math.round(safeWeight),
+                start_date: keyResultScaleForm.startDate || null,
+                end_date: keyResultScaleForm.endDate || null,
                 updated_at: new Date().toISOString(),
               }
             : item,
@@ -806,7 +836,7 @@ export default function GoalDetailPage() {
       <div className="flex h-full w-full">
         <WorkspaceSidebar active="goals" />
 
-        <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden lg:pl-[280px]">
+        <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden lg:pl-[var(--workspace-sidebar-width)]">
           <header className="border-b border-slate-200 bg-[#f3f5fa] px-4 py-4 lg:px-7">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm text-slate-500">
@@ -1131,25 +1161,25 @@ export default function GoalDetailPage() {
                                         >
                                           Hủy
                                         </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => void handleSaveKeyResultScale(keyResult)}
-                                          disabled={isSavingKeyResult}
-                                          className="inline-flex h-9 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                                        >
-                                          {isSavingKeyResult ? "Đang lưu..." : "Lưu scale"}
-                                        </button>
-                                      </>
-                                    ) : (
                                       <button
                                         type="button"
-                                        onClick={() => startEditingKeyResultScale(keyResult)}
-                                        className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                                        onClick={() => void handleSaveKeyResultScale(keyResult)}
+                                        disabled={isSavingKeyResult}
+                                        className="inline-flex h-9 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
                                       >
-                                        Sửa scale
+                                          {isSavingKeyResult ? "Đang lưu..." : "Lưu KR"}
                                       </button>
-                                    )
-                                  ) : null}
+                                    </>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => startEditingKeyResultScale(keyResult)}
+                                      className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                                    >
+                                      Sửa KR
+                                    </button>
+                                  )
+                                ) : null}
                                   <Link
                                     href={keyResultTaskHref}
                                     className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100"
@@ -1161,7 +1191,7 @@ export default function GoalDetailPage() {
 
                               {savedKeyResultId === keyResult.id ? (
                                 <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                                  Đã lưu scale key result.
+                                  Đã lưu key result.
                                 </div>
                               ) : null}
 
@@ -1261,6 +1291,49 @@ export default function GoalDetailPage() {
                                       className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                                     />
                                   </label>
+
+                                  <label className="space-y-1.5">
+                                    <span className="text-xs font-semibold tracking-[0.08em] text-slate-500 uppercase">
+                                      Ngày bắt đầu
+                                    </span>
+                                    <input
+                                      type="date"
+                                      value={keyResultScaleForm.startDate}
+                                      onChange={(event) =>
+                                        setKeyResultScaleForm((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                startDate: event.target.value,
+                                              }
+                                            : prev,
+                                        )
+                                      }
+                                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                    />
+                                  </label>
+
+                                  <label className="space-y-1.5">
+                                    <span className="text-xs font-semibold tracking-[0.08em] text-slate-500 uppercase">
+                                      Ngày kết thúc
+                                    </span>
+                                    <input
+                                      type="date"
+                                      min={keyResultScaleForm.startDate || undefined}
+                                      value={keyResultScaleForm.endDate}
+                                      onChange={(event) =>
+                                        setKeyResultScaleForm((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                endDate: event.target.value,
+                                              }
+                                            : prev,
+                                        )
+                                      }
+                                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                    />
+                                  </label>
                                 </div>
                               ) : null}
 
@@ -1270,7 +1343,17 @@ export default function GoalDetailPage() {
                                 </div>
                               ) : null}
 
-                              <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1.6fr)_140px_200px]">
+                              {isEditingKeyResult &&
+                              !isDateRangeOrdered(
+                                keyResultScaleForm?.startDate ?? null,
+                                keyResultScaleForm?.endDate ?? null,
+                              ) ? (
+                                <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                                  Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.
+                                </div>
+                              ) : null}
+
+                              <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1.6fr)_160px_200px_240px]">
                                 <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
                                   <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
                                     Hiện tại / mục tiêu
@@ -1298,6 +1381,24 @@ export default function GoalDetailPage() {
                                     {Math.round(Number(keyResult.weight ?? 1))}%
                                   </p>
                                 </div>
+                                <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                                    Khung thời gian KR
+                                  </p>
+                                  <p className="mt-2 text-sm font-semibold text-slate-900">
+                                    {formatTimelineRangeVi(keyResult.start_date, keyResult.end_date, {
+                                      fallback: "KR chưa có mốc thời gian",
+                                    })}
+                                  </p>
+                                  <p className="mt-1 text-[11px] text-slate-400">
+                                    {getTimelineMissingReason(
+                                      keyResult.start_date,
+                                      keyResult.end_date,
+                                      "KR chưa có mốc thời gian",
+                                      "Mốc thời gian KR không hợp lệ",
+                                    ) ?? "Đây là khung kế hoạch cha cho các task liên kết."}
+                                  </p>
+                                </div>
                               </div>
 
                               <div className="mt-4">
@@ -1307,6 +1408,66 @@ export default function GoalDetailPage() {
                                 </div>
                                 <ProgressBar value={keyResultProgress} />
                               </div>
+
+                              {taskItems.length > 0 ? (
+                                <div className="mt-4 space-y-3">
+                                  <p className="text-xs text-slate-500">
+                                    Khung thời gian của KR:{" "}
+                                    {formatTimelineRangeVi(keyResult.start_date, keyResult.end_date, {
+                                      fallback: "KR chưa có mốc thời gian",
+                                    })}
+                                  </p>
+                                  <div className="grid gap-3 md:grid-cols-2">
+                                    {taskItems.map((task) => {
+                                      const alignmentWarning = getTimelineOutsideParentWarning(
+                                        task.startDate,
+                                        task.endDate,
+                                        keyResult.start_date,
+                                        keyResult.end_date,
+                                        {
+                                          subjectLabel: "Thời gian công việc",
+                                          parentLabel: "KR",
+                                        },
+                                      );
+
+                                      return (
+                                        <Link
+                                          key={task.id}
+                                          href={`/tasks/${task.id}`}
+                                          className="rounded-xl border border-slate-200 bg-white px-4 py-3 hover:border-blue-300 hover:bg-blue-50/30"
+                                        >
+                                          <div className="flex items-start justify-between gap-2">
+                                            <div>
+                                              <p className="text-sm font-semibold text-slate-900">{task.name}</p>
+                                              <p className="mt-1 text-xs text-slate-500">
+                                                {task.assigneeName} · {task.status}
+                                              </p>
+                                            </div>
+                                            <span className="text-xs font-semibold text-slate-600">{task.progress}%</span>
+                                          </div>
+                                          <p className="mt-2 text-xs font-medium text-slate-700">
+                                            Thời gian thực thi:{" "}
+                                            {formatTimelineRangeVi(task.startDate, task.endDate, {
+                                              fallback: "Công việc chưa có mốc thời gian",
+                                            })}
+                                          </p>
+                                          <p className="mt-1 text-[11px] text-slate-400">
+                                            {getTimelineMissingReason(
+                                              task.startDate,
+                                              task.endDate,
+                                              "Công việc chưa có mốc thời gian",
+                                              "Mốc thời gian công việc không hợp lệ",
+                                            ) ?? "Khung thời gian của KR được hiển thị phía trên để đối chiếu."}
+                                          </p>
+                                          {alignmentWarning ? (
+                                            <p className="mt-1 text-[11px] text-amber-600">{alignmentWarning}</p>
+                                          ) : null}
+                                        </Link>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              ) : null}
                             </article>
                           );
                         })}
@@ -1355,6 +1516,12 @@ export default function GoalDetailPage() {
                             </div>
                             <div className="mt-1 text-[11px] text-slate-400">
                               {getTaskProgressHint(task.type)}
+                            </div>
+                            <div className="mt-2 text-xs text-slate-600">
+                              Thời gian thực thi:{" "}
+                              {formatTimelineRangeVi(task.startDate, task.endDate, {
+                                fallback: "Công việc chưa có mốc thời gian",
+                              })}
                             </div>
                             <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
                               <div

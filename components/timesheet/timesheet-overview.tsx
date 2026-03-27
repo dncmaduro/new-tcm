@@ -69,6 +69,8 @@ type TimesheetOverviewProps = {
   profileError?: string | null;
   createRequestHref?: string | null;
   showExportButton?: boolean;
+  exportFileLabel?: string | null;
+  onExportCsv?: (context: { selectedMonth: Date }) => Promise<void> | void;
 };
 
 const weekDayLabels = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
@@ -194,6 +196,33 @@ function formatDateVi(isoDate: string) {
   return new Intl.DateTimeFormat("vi-VN", { dateStyle: "short" }).format(date);
 }
 
+function formatWeekdayVi(isoDate: string) {
+  if (!isoDate) {
+    return "--";
+  }
+  const date = new Date(`${isoDate}T00:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return "--";
+  }
+
+  return new Intl.DateTimeFormat("vi-VN", { weekday: "long" }).format(date);
+}
+
+function escapeCsvValue(value: string | number | null | undefined) {
+  const normalized = value == null ? "" : String(value);
+  const escaped = normalized.replace(/"/g, "\"\"");
+  return `"${escaped}"`;
+}
+
+function sanitizeFileSegment(value: string | null | undefined) {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+}
+
 function StatusDot({ status }: { status: AttendanceStatus }) {
   if (status === "missing") {
     return <span className="h-2.5 w-2.5 rounded-full bg-rose-500" />;
@@ -255,6 +284,8 @@ export function TimesheetOverview({
   profileError = null,
   createRequestHref = null,
   showExportButton = false,
+  exportFileLabel = null,
+  onExportCsv,
 }: TimesheetOverviewProps) {
   const [selectedMonth, setSelectedMonth] = useState<Date>(() => {
     const now = new Date();
@@ -275,6 +306,7 @@ export function TimesheetOverview({
   const [isLoadingRequests, setIsLoadingRequests] = useState<boolean>(false);
   const [requestsError, setRequestsError] = useState<string>("");
   const [openedFormDateIso, setOpenedFormDateIso] = useState<string | null>(null);
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
 
   useEffect(() => {
     setOpenedFormDateIso(null);
@@ -652,6 +684,127 @@ export function TimesheetOverview({
 
     return { approvedLeaveMinutes, unauthorizedLeaveMinutes, remoteMinutes, requestedOvertimeMinutes };
   }, [correctionRequests, selectedMonth]);
+
+  const requestsByDate = useMemo(() => {
+    return correctionRequests.reduce<Record<string, CorrectionRequest[]>>((acc, item) => {
+      if (!item.correctionDateISO) {
+        return acc;
+      }
+
+      if (!acc[item.correctionDateISO]) {
+        acc[item.correctionDateISO] = [];
+      }
+
+      acc[item.correctionDateISO].push(item);
+      return acc;
+    }, {});
+  }, [correctionRequests]);
+
+  const exportRows = useMemo(() => {
+    return Array.from({ length: totalDays }, (_, index) => {
+      const day = index + 1;
+      const dateIso = toIsoDate(calendarYear, calendarMonth, day);
+      const date = new Date(`${dateIso}T00:00:00`);
+      const isSunday = date.getDay() === 0;
+      const meta = dayMap[day];
+      const dayRequests = requestsByDate[dateIso] ?? [];
+
+      let statusLabel = "Chưa có dữ liệu";
+      if (meta?.status === "ontime") {
+        statusLabel = "Đúng giờ";
+      } else if (meta?.status === "late") {
+        statusLabel = "Trễ/Sớm";
+      } else if (meta?.status === "missing") {
+        statusLabel = "Thiếu công";
+      } else if (isSunday) {
+        statusLabel = "Chủ nhật";
+      }
+
+      const requestSummary = dayRequests
+        .map((item) => {
+          const durationLabel = item.minutes > 0 ? formatDurationLabel(item.minutes) : "--";
+          return `${item.type} | ${item.status} | ${durationLabel} | ${item.reason}`;
+        })
+        .join(" ; ");
+
+      return {
+        dateIso,
+        weekday: formatWeekdayVi(dateIso),
+        checkIn: meta?.checkIn ?? "--:--",
+        checkOut: meta?.checkOut ?? "--:--",
+        statusLabel,
+        missingHours:
+          typeof meta?.missingMinutes === "number" && meta.missingMinutes > 0
+            ? formatDurationLabel(meta.missingMinutes)
+            : "0h",
+        requestCount: dayRequests.length,
+        requestSummary,
+      };
+    });
+  }, [calendarMonth, calendarYear, dayMap, requestsByDate, totalDays]);
+
+  const handleExportCsv = async () => {
+    if (isExportingCsv) {
+      return;
+    }
+
+    setIsExportingCsv(true);
+
+    try {
+      if (onExportCsv) {
+        await onExportCsv({ selectedMonth: new Date(selectedMonth.getTime()) });
+        return;
+      }
+
+      const header = [
+        "Ngay",
+        "Thu",
+        "Check-in",
+        "Check-out",
+        "Trang thai",
+        "Thieu gio",
+        "So yeu cau",
+        "Chi tiet yeu cau",
+      ];
+
+      const lines = [
+        header.map(escapeCsvValue).join(","),
+        ...exportRows.map((row) =>
+          [
+            row.dateIso,
+            row.weekday,
+            row.checkIn,
+            row.checkOut,
+            row.statusLabel,
+            row.missingHours,
+            row.requestCount,
+            row.requestSummary,
+          ]
+            .map(escapeCsvValue)
+            .join(","),
+        ),
+      ];
+
+      const csvContent = `\uFEFF${lines.join("\n")}`;
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const monthToken = `${selectedMonth.getFullYear()}-${String(selectedMonth.getMonth() + 1).padStart(2, "0")}`;
+      const labelToken = sanitizeFileSegment(exportFileLabel) || "timesheet";
+
+      link.href = objectUrl;
+      link.download = `cham-cong-${labelToken}-${monthToken}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.setTimeout(() => {
+        URL.revokeObjectURL(objectUrl);
+      }, 0);
+    } finally {
+      setIsExportingCsv(false);
+    }
+  };
+
   const statCards = [
     { label: "Tổng ngày làm việc", value: String(adjustedAttendanceStats.totalWorkDays), accent: "text-blue-600" },
     { label: "Ngày vắng mặt", value: String(adjustedAttendanceStats.absentDays), accent: "text-rose-500" },
@@ -670,7 +823,7 @@ export function TimesheetOverview({
           {createRequestHref ? (
             <Link
               href={createRequestHref}
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
             >
               Tạo yêu cầu
             </Link>
@@ -708,9 +861,14 @@ export function TimesheetOverview({
           {showExportButton ? (
             <button
               type="button"
-              className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+              onClick={handleExportCsv}
+              disabled={
+                isExportingCsv ||
+                (!onExportCsv && (isProfileLoading || isLoadingAttendance || !profileId))
+              }
+              className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
             >
-              Xuất CSV
+              {isExportingCsv ? "Đang xuất..." : "Xuất CSV"}
             </button>
           ) : null}
         </div>

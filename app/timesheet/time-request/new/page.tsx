@@ -601,7 +601,7 @@ export default function CreateTimeRequestPage() {
       <div className="flex min-h-screen w-full">
         <WorkspaceSidebar active="timesheet" />
 
-        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[280px]">
+        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <header className="sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-7">
             <div className="space-y-2">
               <p className="text-sm text-slate-500">

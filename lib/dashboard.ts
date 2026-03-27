@@ -13,7 +13,8 @@ export type DashboardBaseTask = {
   assigneeName: string;
   status: DashboardTaskStatus;
   progress: number;
-  deadlineAt: string | null;
+  executionStartAt: string | null;
+  executionEndAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
 };
@@ -24,12 +25,12 @@ export type DashboardMyTaskItem = DashboardBaseTask & {
   urgencyRank: number;
 };
 
-export type DashboardDeadlineItem = {
+export type DashboardUpcomingTaskItem = {
   id: string;
   title: string;
   goalName: string;
   keyResultName: string;
-  deadlineAt: string;
+  endDateAt: string;
   tag: string;
   tagClassName: string;
 };
@@ -94,7 +95,7 @@ export type DashboardPayload = {
   taskTrend: DashboardTrendPoint[];
   timeTracker: DashboardTimeTrackerData;
   myTasks: DashboardMyTaskItem[];
-  upcomingDeadlines: DashboardDeadlineItem[];
+  upcomingDeadlines: DashboardUpcomingTaskItem[];
   goalProgress: DashboardGoalItem[];
   teamPerformance: DashboardTeamPerformanceItem[];
   recentActivities: DashboardActivityItem[];
@@ -127,6 +128,20 @@ export const dashboardStatusMeta: Record<
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+const toStartOfDay = (value: Date) => {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const toValidDate = (value: string | null | undefined) => {
+  if (!value) {
+    return null;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
 
 export const normalizeDashboardStatus = (value: string | null | undefined): DashboardTaskStatus => {
   const raw = (value ?? "").trim().toLowerCase();
@@ -243,12 +258,26 @@ export const buildTaskTrend = (tasks: Array<{ createdAt: string | null; updatedA
   });
 };
 
-export const getDeadlineMeta = (value: string, now = new Date()) => {
-  const deadline = new Date(value);
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
-  deadline.setHours(0, 0, 0, 0);
-  const diffDays = Math.round((deadline.getTime() - today.getTime()) / DAY_MS);
+export const getDateDiffFromToday = (value: string | null | undefined, now = new Date()) => {
+  const targetDate = toValidDate(value);
+  if (!targetDate) {
+    return null;
+  }
+
+  const today = toStartOfDay(now);
+  targetDate.setHours(0, 0, 0, 0);
+  return Math.round((targetDate.getTime() - today.getTime()) / DAY_MS);
+};
+
+export const getDateUrgencyMeta = (value: string | null | undefined, now = new Date()) => {
+  const diffDays = getDateDiffFromToday(value, now);
+  if (diffDays === null) {
+    return {
+      rank: 5,
+      label: "Chưa đặt",
+      className: "text-slate-400",
+    };
+  }
 
   if (diffDays < 0) {
     return {
@@ -482,9 +511,9 @@ export const sortMyTasks = (tasks: DashboardMyTaskItem[]) => {
         const bPriority = b.status === "doing" ? 0 : b.status === "blocked" ? 1 : b.status === "todo" ? 2 : 3;
         return aPriority - bPriority;
       }
-      const aDeadline = a.deadlineAt ? new Date(a.deadlineAt).getTime() : Number.MAX_SAFE_INTEGER;
-      const bDeadline = b.deadlineAt ? new Date(b.deadlineAt).getTime() : Number.MAX_SAFE_INTEGER;
-      return aDeadline - bDeadline;
+      const aSchedule = toValidDate(a.executionEndAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      const bSchedule = toValidDate(b.executionEndAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      return aSchedule - bSchedule;
     });
 };
 

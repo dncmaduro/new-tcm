@@ -18,6 +18,11 @@ import { TASK_STATUSES } from "@/lib/constants/tasks";
 import { buildGoalProgressMap, buildKeyResultProgressMap, getComputedTaskProgress } from "@/lib/okr";
 import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
+import {
+  formatTimelineRangeVi,
+  getTimelineMissingReason,
+  getTimelineOutsideParentWarning,
+} from "@/lib/timeline";
 
 type Mode = "canvas" | "list";
 const GOALS_LIST_PAGE_SIZE = 10;
@@ -52,6 +57,7 @@ type GoalNode = {
   taskCount: number;
   keyResultsPreview: GoalKeyResultPreview[];
   ownerId: string | null;
+  startDate: string | null;
   endDate: string | null;
   healthStatus: "on_track" | "at_risk" | "off_track";
   x: number;
@@ -86,6 +92,8 @@ type KeyResultRow = {
   goal_id: string;
   name: string;
   weight: number | null;
+  start_date: string | null;
+  end_date: string | null;
 };
 
 type GoalDepartmentParticipationRow = {
@@ -101,6 +109,8 @@ type GoalTaskRow = {
   progress: number | null;
   weight: number | null;
   profile_id: string | null;
+  start_date: string | null;
+  end_date: string | null;
   key_result_id: string | null;
   key_result?: { id: string; name: string; goal_id: string | null; goal?: { id: string; name: string } | null } | null;
 };
@@ -112,6 +122,8 @@ type GoalTaskItem = {
   trangThai: string;
   nguoiPhuTrach: string;
   tienDo: number;
+  startDate: string | null;
+  endDate: string | null;
 };
 
 type GoalKeyResultPanelItem = {
@@ -121,6 +133,8 @@ type GoalKeyResultPanelItem = {
   current: number;
   target: number;
   unit: string | null;
+  startDate: string | null;
+  endDate: string | null;
   tasks: GoalTaskItem[];
 };
 
@@ -247,17 +261,6 @@ const formatQuarterYear = (quarter: number | null, year: number | null) => {
     return `Năm ${year}`;
   }
   return "Chưa đặt quý";
-};
-
-const formatDateVi = (value: string | null) => {
-  if (!value) {
-    return "Chưa đặt";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Không hợp lệ";
-  }
-  return new Intl.DateTimeFormat("vi-VN", { dateStyle: "short" }).format(date);
 };
 
 const getGoalHealthStatus = ({
@@ -530,6 +533,7 @@ const buildGoalGraph = (
         taskCount: taskCountByGoalId[row.id] ?? 0,
         keyResultsPreview: (keyResultsByGoalId[row.id] ?? []).slice(0, 3),
         ownerId: row.owner_id ? String(row.owner_id) : null,
+        startDate: row.start_date ?? null,
         endDate: row.end_date ?? null,
         healthStatus,
         x: Math.min(
@@ -754,7 +758,7 @@ export default function GoalsPage() {
             .order("created_at", { ascending: true }),
           supabase.from("departments").select("id,name"),
           supabase.from("goal_departments").select("goal_id,department_id"),
-          supabase.from("key_results").select("id,goal_id,name,weight"),
+          supabase.from("key_results").select("id,goal_id,name,weight,start_date,end_date"),
           supabase.from("tasks").select("id,key_result_id,type,status,progress,weight"),
         ]);
 
@@ -875,6 +879,8 @@ export default function GoalsPage() {
         goal_id: String(keyResult.goal_id),
         name: String(keyResult.name),
         weight: typeof keyResult.weight === "number" ? keyResult.weight : Number(keyResult.weight ?? 1),
+        start_date: keyResult.start_date ? String(keyResult.start_date) : null,
+        end_date: keyResult.end_date ? String(keyResult.end_date) : null,
       }));
       const goalIdByKeyResultId = typedKeyResults.reduce<Record<string, string>>((acc, keyResult) => {
         acc[keyResult.id] = keyResult.goal_id;
@@ -964,7 +970,7 @@ export default function GoalsPage() {
 
       const { data: keyResultsData, error: keyResultsError } = await supabase
         .from("key_results")
-        .select("id,name,current,target,unit")
+        .select("id,name,current,target,unit,start_date,end_date")
         .eq("goal_id", selectedGoal.id)
         .order("created_at", { ascending: true });
 
@@ -985,6 +991,8 @@ export default function GoalsPage() {
         current: number | null;
         target: number | null;
         unit: string | null;
+        start_date: string | null;
+        end_date: string | null;
       }>;
       const keyResultIds = goalKeyResults.map((item) => String(item.id));
       const { data: tasksData, error: tasksError } = keyResultIds.length > 0
@@ -998,6 +1006,8 @@ export default function GoalsPage() {
               progress,
               weight,
               profile_id,
+              start_date,
+              end_date,
               key_result_id,
               key_result:key_results!tasks_key_result_id_fkey(
                 id,
@@ -1053,6 +1063,8 @@ export default function GoalsPage() {
           trangThai: task.status ? taskStatusLabelMap[task.status] ?? task.status : "Chưa cập nhật",
           nguoiPhuTrach: task.profile_id ? profileNameById[task.profile_id] ?? "Chưa gán" : "Chưa gán",
           tienDo: getComputedTaskProgress(task),
+          startDate: task.start_date ? String(task.start_date) : null,
+          endDate: task.end_date ? String(task.end_date) : null,
         };
       });
       const progressMap = buildKeyResultProgressMap(
@@ -1086,6 +1098,8 @@ export default function GoalsPage() {
           current: typeof keyResult.current === "number" ? keyResult.current : Number(keyResult.current ?? 0),
           target: typeof keyResult.target === "number" ? keyResult.target : Number(keyResult.target ?? 0),
           unit: keyResult.unit ? String(keyResult.unit) : null,
+          startDate: keyResult.start_date ? String(keyResult.start_date) : null,
+          endDate: keyResult.end_date ? String(keyResult.end_date) : null,
           tasks: tasksByKeyResultId[String(keyResult.id)] ?? [],
         })),
       );
@@ -1568,7 +1582,7 @@ export default function GoalsPage() {
       <div className="flex min-h-screen w-full">
         <WorkspaceSidebar active="goals" />
 
-        <div className="flex h-screen w-full flex-1 flex-col overflow-hidden lg:pl-[280px]">
+        <div className="flex h-screen w-full flex-1 flex-col overflow-hidden lg:pl-[var(--workspace-sidebar-width)]">
           <main
             className={`grid h-screen w-full ${
               isDetailOpen ? "xl:grid-cols-[minmax(0,1fr)_390px]" : "xl:grid-cols-1"
@@ -1876,8 +1890,12 @@ export default function GoalsPage() {
                           )}
 
                           <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-                            <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Deadline</p>
-                            <p className="mt-1 text-sm font-semibold text-slate-700">{formatDateVi(goal.endDate)}</p>
+                            <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Khung thời gian</p>
+                            <p className="mt-1 text-sm font-semibold text-slate-700">
+                              {formatTimelineRangeVi(goal.startDate, goal.endDate, {
+                                fallback: "Chưa đặt khung thời gian",
+                              })}
+                            </p>
                           </div>
                         </div>
                       </div>
@@ -2186,7 +2204,11 @@ export default function GoalsPage() {
                         {goalHealthLabelMap[selectedGoal.healthStatus]}
                       </span>
                     </div>
-                    <p className="mt-2 text-sm text-slate-500">Hạn chót {formatDateVi(selectedGoal.endDate)}</p>
+                    <p className="mt-2 text-sm text-slate-500">
+                      Khung thời gian {formatTimelineRangeVi(selectedGoal.startDate, selectedGoal.endDate, {
+                        fallback: "Chưa đặt khung thời gian",
+                      })}
+                    </p>
                   </div>
                 </div>
 
@@ -2245,6 +2267,20 @@ export default function GoalsPage() {
                                 {keyResult.current}/{keyResult.target}
                                 {keyResult.unit ? ` · ${keyResult.unit}` : ""}
                               </p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                Khung thời gian của KR:{" "}
+                                {formatTimelineRangeVi(keyResult.startDate, keyResult.endDate, {
+                                  fallback: "KR chưa có mốc thời gian",
+                                })}
+                              </p>
+                              <p className="mt-1 text-[11px] text-slate-400">
+                                {getTimelineMissingReason(
+                                  keyResult.startDate,
+                                  keyResult.endDate,
+                                  "KR chưa có mốc thời gian",
+                                  "Mốc thời gian KR không hợp lệ",
+                                ) ?? "KR là khung kế hoạch cha; từng task bên dưới có lịch thực thi riêng."}
+                              </p>
                             </div>
                             <div className="flex items-center gap-2">
                               <Link
@@ -2261,27 +2297,59 @@ export default function GoalsPage() {
                           <ProgressBar value={keyResult.progress} />
                           {keyResult.tasks.length > 0 ? (
                             <div className="space-y-2">
-                              {keyResult.tasks.map((task) => (
-                                <div key={task.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
-                                  <div className="flex items-start justify-between gap-2">
-                                    <p className="text-sm font-medium text-slate-800">{task.tieuDe}</p>
-                                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
-                                      {task.loai}
-                                    </span>
-                                  </div>
-                                  <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
-                                    <span>{task.trangThai}</span>
-                                    <span>{task.nguoiPhuTrach}</span>
-                                  </div>
-                                  <div className="mt-2 space-y-1">
-                                    <div className="flex items-center justify-between text-[11px] text-slate-500">
-                                      <span>Tiến độ</span>
-                                      <span className="font-semibold">{task.tienDo}%</span>
+                              {keyResult.tasks.map((task) => {
+                                const alignmentWarning = getTimelineOutsideParentWarning(
+                                  task.startDate,
+                                  task.endDate,
+                                  keyResult.startDate,
+                                  keyResult.endDate,
+                                  {
+                                    subjectLabel: "Thời gian công việc",
+                                    parentLabel: "KR",
+                                  },
+                                );
+
+                                return (
+                                  <div key={task.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+                                    <div className="flex items-start justify-between gap-2">
+                                      <p className="text-sm font-medium text-slate-800">{task.tieuDe}</p>
+                                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                                        {task.loai}
+                                      </span>
                                     </div>
-                                    <ProgressBar value={task.tienDo} />
+                                    <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+                                      <span>{task.trangThai}</span>
+                                      <span>{task.nguoiPhuTrach}</span>
+                                    </div>
+                                    <p className="mt-2 text-xs font-medium text-slate-700">
+                                      Thời gian thực thi:{" "}
+                                      {formatTimelineRangeVi(task.startDate, task.endDate, {
+                                        fallback: "Công việc chưa có mốc thời gian",
+                                      })}
+                                    </p>
+                                    <p className="mt-1 text-[11px] text-slate-400">
+                                      {getTimelineMissingReason(
+                                        task.startDate,
+                                        task.endDate,
+                                        "Công việc chưa có mốc thời gian",
+                                        "Mốc thời gian công việc không hợp lệ",
+                                      ) ?? `Thuộc khung thời gian của KR: ${formatTimelineRangeVi(keyResult.startDate, keyResult.endDate, {
+                                        fallback: "KR chưa có mốc thời gian",
+                                      })}`}
+                                    </p>
+                                    {alignmentWarning ? (
+                                      <p className="mt-1 text-[11px] text-amber-600">{alignmentWarning}</p>
+                                    ) : null}
+                                    <div className="mt-2 space-y-1">
+                                      <div className="flex items-center justify-between text-[11px] text-slate-500">
+                                        <span>Tiến độ</span>
+                                        <span className="font-semibold">{task.tienDo}%</span>
+                                      </div>
+                                      <ProgressBar value={task.tienDo} />
+                                    </div>
                                   </div>
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           ) : (
                             <p className="text-xs text-slate-500">KR này chưa có task.</p>

@@ -5,11 +5,12 @@ import {
   formatDateShortVi,
   type DashboardActivityItem,
 } from "@/lib/dashboard";
+import { formatTimelineRangeVi, getTimelineMissingReason } from "@/lib/timeline";
 import {
   type DepartmentGoalExecutionItem,
   type DepartmentMemberPerformanceItem,
   type DepartmentRiskItem,
-  type DepartmentUpcomingDeadlineItem,
+  type DepartmentUpcomingTaskItem,
 } from "@/app/department-performance/use-department-performance";
 
 const healthLabelMap: Record<DepartmentGoalExecutionItem["health"], string> = {
@@ -287,6 +288,20 @@ export function DepartmentGoalExecutionTable({
                                     <p className="mt-1 text-xs text-slate-500">
                                       {keyResult.responsibleDepartmentName} · {keyResult.assigneeDistribution}
                                     </p>
+                                    <p className="mt-1 text-xs text-slate-500">
+                                      Khung thời gian của KR:{" "}
+                                      {formatTimelineRangeVi(keyResult.startDate, keyResult.endDate, {
+                                        fallback: "KR chưa có mốc thời gian",
+                                      })}
+                                    </p>
+                                    <p className="mt-1 text-[11px] text-slate-400">
+                                      {getTimelineMissingReason(
+                                        keyResult.startDate,
+                                        keyResult.endDate,
+                                        "KR chưa có mốc thời gian",
+                                        "Mốc thời gian KR không hợp lệ",
+                                      ) ?? "Đây là khung kế hoạch cha cho các task của KR."}
+                                    </p>
                                     {keyResult.ownedBySelectedDepartment ? (
                                       <span className="mt-2 inline-flex rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">
                                         KR của phòng ban đang xem
@@ -437,7 +452,7 @@ export function DepartmentUpcomingDeadlines({
   loading,
   error,
 }: {
-  items: DepartmentUpcomingDeadlineItem[];
+  items: DepartmentUpcomingTaskItem[];
   loading: boolean;
   error: string | null;
 }) {
@@ -465,7 +480,7 @@ export function DepartmentUpcomingDeadlines({
                 {item.assigneeName} · {item.keyResultName}
               </p>
               <p className="mt-1 text-xs text-slate-400">{item.goalName}</p>
-              <p className="mt-2 text-sm text-slate-600">{formatDateShortVi(item.deadlineAt)}</p>
+              <p className="mt-2 text-sm text-slate-600">{formatDateShortVi(item.endDateAt)}</p>
             </div>
           ))}
         </div>

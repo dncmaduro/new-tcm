@@ -7,21 +7,22 @@ import {
   dashboardStatusMeta,
   formatActivityMessage,
   formatHoursShort,
+  getDateDiffFromToday,
+  getDateUrgencyMeta,
   formatRelativeTimeVi,
-  getDeadlineMeta,
   getInitial,
   getWorkedMinutes,
   normalizeDashboardStatus,
   sortMyTasks,
   toDashboardTaskProgress,
   type DashboardActivityItem,
-  type DashboardDeadlineItem,
   type DashboardGoalItem,
   type DashboardPayload,
   type DashboardSummaryCard,
   type DashboardTaskStatus,
   type DashboardTeamPerformanceItem,
   type DashboardTimeTrackerData,
+  type DashboardUpcomingTaskItem,
 } from "@/lib/dashboard";
 import { supabase } from "@/lib/supabase";
 
@@ -84,7 +85,8 @@ type TaskQueryRow = {
   status: string | null;
   progress: number | null;
   weight: number | null;
-  deadline: string | null;
+  start_date: string | null;
+  end_date: string | null;
   created_at: string | null;
   updated_at: string | null;
   key_result_id: string | null;
@@ -119,7 +121,8 @@ type NormalizedTask = {
   assigneeName: string;
   status: DashboardTaskStatus;
   progress: number;
-  deadlineAt: string | null;
+  executionStartAt: string | null;
+  executionEndAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
   type: string | null;
@@ -174,6 +177,8 @@ const normalizeKeyResult = (value: unknown) => {
     id: String(record.id),
     goal_id: record.goal_id ? String(record.goal_id) : null,
     name: String(record.name),
+    start_date: record.start_date ? String(record.start_date) : null,
+    end_date: record.end_date ? String(record.end_date) : null,
     goal,
   };
 };
@@ -199,7 +204,8 @@ const normalizeTaskRows = (
         status: row.status,
         progress: row.progress,
       }),
-      deadlineAt: row.deadline ? String(row.deadline) : null,
+      executionStartAt: row.start_date ? String(row.start_date) : null,
+      executionEndAt: row.end_date ? String(row.end_date) : null,
       createdAt: row.created_at ? String(row.created_at) : null,
       updatedAt: row.updated_at ? String(row.updated_at) : null,
       type: row.type ? String(row.type) : null,
@@ -376,7 +382,8 @@ export function useDashboardData() {
               status,
               progress,
               weight,
-              deadline,
+              start_date,
+              end_date,
               created_at,
               updated_at,
               key_result_id,
@@ -384,6 +391,8 @@ export function useDashboardData() {
                 id,
                 goal_id,
                 name,
+                start_date,
+                end_date,
                 goal:goals!key_results_goal_id_fkey(
                   id,
                   name,
@@ -393,7 +402,7 @@ export function useDashboardData() {
               )
             `)
             .eq("assignee_id", profileId)
-            .order("deadline", { ascending: true, nullsFirst: false }),
+            .order("end_date", { ascending: true, nullsFirst: false }),
           teamProfileIds.length > 0
             ? supabase
                 .from("tasks")
@@ -516,7 +525,7 @@ export function useDashboardData() {
 
         const normalizedMyTasks = normalizeTaskRows((myTasksRows ?? []) as unknown as TaskQueryRow[], profilesById);
         const myActiveTasks = normalizedMyTasks.filter((task) => !["done", "cancelled"].includes(task.status)).length;
-        const dueTodayCount = normalizedMyTasks.filter((task) => task.deadlineAt?.slice(0, 10) === todayIso).length;
+        const dueTodayCount = normalizedMyTasks.filter((task) => getDateDiffFromToday(task.executionEndAt, today) === 0).length;
 
         const tasksForWeek = normalizedMyTasks.filter(
           (task) =>
@@ -529,7 +538,7 @@ export function useDashboardData() {
 
         const myTasksWidget = sortMyTasks(
           normalizedMyTasks.map((task) => {
-            const urgency = task.deadlineAt ? getDeadlineMeta(task.deadlineAt, today) : { rank: 5 };
+            const urgency = getDateUrgencyMeta(task.executionEndAt, today);
             return {
               ...task,
               statusLabel: dashboardStatusMeta[task.status].label,
@@ -540,24 +549,24 @@ export function useDashboardData() {
         ).slice(0, 5);
 
         const upcomingDeadlines = normalizedMyTasks
-          .filter((task) => task.deadlineAt)
+          .filter((task) => task.executionEndAt)
           .map((task) => {
-            const urgency = getDeadlineMeta(task.deadlineAt as string, today);
+            const urgency = getDateUrgencyMeta(task.executionEndAt, today);
             return {
               id: task.id,
               title: task.name,
               goalName: task.goalName,
               keyResultName: task.keyResultName,
-              deadlineAt: task.deadlineAt as string,
+              endDateAt: task.executionEndAt as string,
               tag: urgency.label,
               tagClassName: urgency.className,
-            } satisfies DashboardDeadlineItem;
+            } satisfies DashboardUpcomingTaskItem;
           })
           .filter((item) => {
-            const diff = Math.round((new Date(item.deadlineAt).getTime() - new Date(todayIso).getTime()) / 86400000);
-            return diff <= 7;
+            const diff = getDateDiffFromToday(item.endDateAt, today);
+            return diff !== null && diff <= 7;
           })
-          .sort((a, b) => new Date(a.deadlineAt).getTime() - new Date(b.deadlineAt).getTime())
+          .sort((a, b) => new Date(a.endDateAt).getTime() - new Date(b.endDateAt).getTime())
           .slice(0, 5);
 
         const activeGoalsThisQuarter = relevantGoals.filter(

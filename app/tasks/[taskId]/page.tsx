@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { ClearableNumberInput } from "@/components/ui/clearable-number-input";
 import {
   formatKeyResultMetric,
   formatKeyResultUnit,
@@ -21,6 +22,12 @@ import {
 import { buildKeyResultProgressMap, getComputedTaskProgress } from "@/lib/okr";
 import { supabase } from "@/lib/supabase";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  formatTimelineRangeVi,
+  getTimelineMissingReason,
+  getTimelineOutsideParentWarning,
+  isDateRangeOrdered,
+} from "@/lib/timeline";
 
 type TaskRow = {
   id: string;
@@ -34,6 +41,8 @@ type TaskRow = {
   weight: number | null;
   status: string | null;
   note: string | null;
+  start_date: string | null;
+  end_date: string | null;
   created_at: string | null;
   updated_at: string | null;
   key_result?: KeyResultLiteRow | null;
@@ -55,6 +64,8 @@ type KeyResultLiteRow = {
   target: number | null;
   unit: string | null;
   weight: number | null;
+  start_date: string | null;
+  end_date: string | null;
   goal?: GoalLiteRow | null;
 };
 
@@ -72,6 +83,11 @@ type TaskFormState = {
   status: TaskStatusValue;
   progress: number;
   weight: number;
+};
+
+type TaskTimelineFormState = {
+  startDate: string;
+  endDate: string;
 };
 
 const statusLabelMap = TASK_STATUSES.reduce<Record<string, string>>((acc, status) => {
@@ -139,9 +155,15 @@ export default function TaskDetailPage() {
 
   const [isEditingTaskInfo, setIsEditingTaskInfo] = useState(false);
   const [isEditingExecution, setIsEditingExecution] = useState(false);
+  const [isEditingTaskTimeline, setIsEditingTaskTimeline] = useState(false);
   const [progressInput, setProgressInput] = useState("0");
   const [isSavingTaskInfo, setIsSavingTaskInfo] = useState(false);
   const [isSavingExecution, setIsSavingExecution] = useState(false);
+  const [isSavingTaskTimeline, setIsSavingTaskTimeline] = useState(false);
+  const [taskTimelineForm, setTaskTimelineForm] = useState<TaskTimelineFormState>({
+    startDate: "",
+    endDate: "",
+  });
 
   useEffect(() => {
     if (!taskId) {
@@ -162,6 +184,7 @@ export default function TaskDetailPage() {
       setNotice(null);
       setIsEditingTaskInfo(false);
       setIsEditingExecution(false);
+      setIsEditingTaskTimeline(false);
 
       try {
         const { data: taskData, error: taskError } = await supabase
@@ -178,6 +201,8 @@ export default function TaskDetailPage() {
             weight,
             status,
             note,
+            start_date,
+            end_date,
             created_at,
             updated_at,
             key_result:key_results!tasks_key_result_id_fkey(
@@ -189,6 +214,8 @@ export default function TaskDetailPage() {
               target,
               unit,
               weight,
+              start_date,
+              end_date,
               goal:goals!key_results_goal_id_fkey(
                 id,
                 name,
@@ -248,6 +275,8 @@ export default function TaskDetailPage() {
                 typeof rawKeyResult.weight === "number"
                   ? rawKeyResult.weight
                   : Number(rawKeyResult.weight ?? 1),
+              start_date: rawKeyResult.start_date ? String(rawKeyResult.start_date) : null,
+              end_date: rawKeyResult.end_date ? String(rawKeyResult.end_date) : null,
               goal: Array.isArray(rawKeyResult.goal)
                 ? normalizeGoalLite(rawKeyResult.goal[0] ?? null)
                 : normalizeGoalLite(rawKeyResult.goal),
@@ -294,6 +323,10 @@ export default function TaskDetailPage() {
         const nestedKeyResult = normalizedKeyResult;
         setGoalName(nestedKeyResult?.goal?.name ? String(nestedKeyResult.goal.name) : "Chưa có mục tiêu");
         setKeyResult(nestedKeyResult);
+        setTaskTimelineForm({
+          startDate: normalizedTask.start_date ?? nestedKeyResult?.start_date ?? "",
+          endDate: normalizedTask.end_date ?? nestedKeyResult?.end_date ?? "",
+        });
         const computedKeyResultProgress = nestedKeyResult
           ? buildKeyResultProgressMap(
               [{ id: String(nestedKeyResult.id), goal_id: nestedKeyResult.goal_id ? String(nestedKeyResult.goal_id) : null }],
@@ -351,6 +384,7 @@ export default function TaskDetailPage() {
 
   const canEditTaskInfo = true;
   const canEditExecution = true;
+  const canEditTaskTimeline = true;
 
   const hasTaskInfoChanges = useMemo(() => {
     if (!task) {
@@ -532,6 +566,98 @@ export default function TaskDetailPage() {
     }
   };
 
+  const taskTimelineInputError = useMemo(() => {
+    if ((taskTimelineForm.startDate && !taskTimelineForm.endDate) || (!taskTimelineForm.startDate && taskTimelineForm.endDate)) {
+      return "Vui lòng nhập đủ ngày bắt đầu và ngày kết thúc hoặc để trống cả hai.";
+    }
+    if (!isDateRangeOrdered(taskTimelineForm.startDate || null, taskTimelineForm.endDate || null)) {
+      return "Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.";
+    }
+    return null;
+  }, [taskTimelineForm.endDate, taskTimelineForm.startDate]);
+
+  const taskTimelineAlignmentWarning = useMemo(
+    () =>
+      getTimelineOutsideParentWarning(
+        isEditingTaskTimeline ? taskTimelineForm.startDate || null : task?.start_date ?? null,
+        isEditingTaskTimeline ? taskTimelineForm.endDate || null : task?.end_date ?? null,
+        keyResult?.start_date ?? null,
+        keyResult?.end_date ?? null,
+        {
+          subjectLabel: "Thời gian công việc",
+          parentLabel: "KR",
+        },
+      ),
+    [
+      isEditingTaskTimeline,
+      keyResult?.end_date,
+      keyResult?.start_date,
+      task?.end_date,
+      task?.start_date,
+      taskTimelineForm.endDate,
+      taskTimelineForm.startDate,
+    ],
+  );
+
+  const handleSaveTaskTimeline = async () => {
+    if (!task) {
+      return;
+    }
+
+    if (taskTimelineInputError) {
+      setActionError(taskTimelineInputError);
+      setNotice(null);
+      return;
+    }
+
+    setIsSavingTaskTimeline(true);
+    setActionError(null);
+    setNotice(null);
+
+    try {
+      const { data: updatedTask, error } = await supabase
+        .from("tasks")
+        .update({
+          start_date: taskTimelineForm.startDate.trim() || null,
+          end_date: taskTimelineForm.endDate.trim() || null,
+        })
+        .eq("id", task.id)
+        .select("*")
+        .maybeSingle();
+
+      if (error) {
+        if (error.code === "42501") {
+          throw new Error("Bạn không có quyền cập nhật thời gian thực thi công việc.");
+        }
+        throw new Error(error.message || "Không thể cập nhật thời gian thực thi công việc.");
+      }
+
+      if (!updatedTask) {
+        throw new Error("Không nhận được dữ liệu công việc sau khi lưu.");
+      }
+
+      const typedUpdated = updatedTask as TaskRow;
+      const nextTask: TaskRow = {
+        ...task,
+        ...typedUpdated,
+        creator_profile_id: task.creator_profile_id ?? null,
+        key_result: keyResult,
+      };
+
+      setTask(nextTask);
+      setTaskTimelineForm({
+        startDate: nextTask.start_date ?? "",
+        endDate: nextTask.end_date ?? "",
+      });
+      setIsEditingTaskTimeline(false);
+      setNotice("Đã cập nhật thời gian thực thi công việc.");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Không thể cập nhật thời gian thực thi công việc.");
+    } finally {
+      setIsSavingTaskTimeline(false);
+    }
+  };
+
   const statusLabel = statusLabelMap[form.status] ?? form.status;
 
   return (
@@ -539,7 +665,7 @@ export default function TaskDetailPage() {
       <div className="flex min-h-screen w-full">
         <WorkspaceSidebar active="tasks" />
 
-        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[280px]">
+        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <header className="sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-7">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -710,14 +836,13 @@ export default function TaskDetailPage() {
 
                         <div className="space-y-1.5">
                           <label className="text-sm font-semibold text-slate-700">Trọng số task</label>
-                          <input
-                            type="number"
+                          <ClearableNumberInput
                             min={1}
                             value={form.weight}
-                            onChange={(event) =>
+                            onValueChange={(value) =>
                               setForm((prev) => ({
                                 ...prev,
-                                weight: Number(event.target.value) || 1,
+                                weight: value,
                               }))
                             }
                             className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
@@ -773,15 +898,138 @@ export default function TaskDetailPage() {
                             {keyResult.name}
                           </p>
                           <p className="mt-1 text-xs text-slate-500">
+                            Khung thời gian của KR:{" "}
+                            {formatTimelineRangeVi(keyResult.start_date, keyResult.end_date, {
+                              fallback: "KR chưa có mốc thời gian",
+                            })}
+                          </p>
+                          <p className="mt-1 text-[11px] text-slate-400">
+                            KR vẫn là khung thời gian cha để đối chiếu kế hoạch của công việc.
+                          </p>
+                          <p className="mt-2 text-xs text-slate-600">
+                            Thời gian thực thi của công việc:{" "}
+                            {formatTimelineRangeVi(task.start_date, task.end_date, {
+                              fallback: "Công việc chưa có mốc thời gian",
+                            })}
+                          </p>
+                          <p className="mt-1 text-[11px] text-slate-500">
+                            {getTimelineMissingReason(
+                              task.start_date,
+                              task.end_date,
+                              "Công việc chưa có mốc thời gian",
+                              "Mốc thời gian công việc không hợp lệ",
+                            ) ?? "Nguồn timeline chính của task đến từ ngày bắt đầu và ngày kết thúc của chính công việc."}
+                          </p>
+                          {taskTimelineAlignmentWarning ? (
+                            <p className="mt-1 text-[11px] text-amber-600">{taskTimelineAlignmentWarning}</p>
+                          ) : null}
+                          <p className="mt-2 text-xs text-slate-500">
                             {keyResult.goal?.start_date || keyResult.goal?.end_date
-                              ? `Khung mục tiêu: ${keyResult.goal?.start_date ?? "?"} đến ${keyResult.goal?.end_date ?? "?"}`
+                              ? `Khung mục tiêu: ${formatTimelineRangeVi(keyResult.goal?.start_date ?? null, keyResult.goal?.end_date ?? null, {
+                                  fallback: "Chưa đặt khung thời gian mục tiêu",
+                                })}`
                               : "Mục tiêu chưa có ngày bắt đầu/kết thúc."}
                           </p>
                         </div>
-                        <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-blue-700">
-                          {keyResultProgress}%
-                        </span>
+                        <div className="flex items-center gap-2">
+                          {canEditTaskTimeline ? (
+                            isEditingTaskTimeline ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTaskTimelineForm({
+                                      startDate: task.start_date ?? keyResult.start_date ?? "",
+                                      endDate: task.end_date ?? keyResult.end_date ?? "",
+                                    });
+                                    setIsEditingTaskTimeline(false);
+                                    setActionError(null);
+                                    setNotice(null);
+                                  }}
+                                  disabled={isSavingTaskTimeline}
+                                  className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                                >
+                                  Hủy
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleSaveTaskTimeline()}
+                                  disabled={isSavingTaskTimeline}
+                                  className="inline-flex h-9 items-center rounded-xl bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:bg-blue-300"
+                                >
+                                  {isSavingTaskTimeline ? "Đang lưu..." : "Lưu thời gian task"}
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTaskTimelineForm({
+                                    startDate: task.start_date ?? keyResult.start_date ?? "",
+                                    endDate: task.end_date ?? keyResult.end_date ?? "",
+                                  });
+                                  setIsEditingTaskTimeline(true);
+                                  setActionError(null);
+                                  setNotice(null);
+                                }}
+                                className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                              >
+                                Sửa thời gian task
+                              </button>
+                            )
+                          ) : null}
+                          <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-blue-700">
+                            {keyResultProgress}%
+                          </span>
+                        </div>
                       </div>
+
+                      {isEditingTaskTimeline ? (
+                        <div className="mt-4 grid gap-3 md:grid-cols-2">
+                          <label className="space-y-1.5">
+                            <span className="text-xs font-semibold tracking-[0.08em] text-slate-500 uppercase">
+                              Ngày bắt đầu
+                            </span>
+                            <input
+                              type="date"
+                              value={taskTimelineForm.startDate}
+                              onChange={(event) =>
+                                setTaskTimelineForm((prev) => ({
+                                  ...prev,
+                                  startDate: event.target.value,
+                                }))
+                              }
+                              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                            />
+                          </label>
+                          <label className="space-y-1.5">
+                            <span className="text-xs font-semibold tracking-[0.08em] text-slate-500 uppercase">
+                              Ngày kết thúc
+                            </span>
+                            <input
+                              type="date"
+                              min={taskTimelineForm.startDate || undefined}
+                              value={taskTimelineForm.endDate}
+                              onChange={(event) =>
+                                setTaskTimelineForm((prev) => ({
+                                  ...prev,
+                                  endDate: event.target.value,
+                                }))
+                              }
+                              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                            />
+                          </label>
+                          <p className="md:col-span-2 text-[11px] text-slate-500">
+                            Giá trị ban đầu ưu tiên lấy từ task hiện tại. Nếu task chưa có ngày, form sẽ autofill từ khung thời gian của KR.
+                          </p>
+                          {taskTimelineInputError ? (
+                            <p className="md:col-span-2 text-[11px] text-rose-600">{taskTimelineInputError}</p>
+                          ) : null}
+                          {!taskTimelineInputError && taskTimelineAlignmentWarning ? (
+                            <p className="md:col-span-2 text-[11px] text-amber-600">{taskTimelineAlignmentWarning}</p>
+                          ) : null}
+                        </div>
+                      ) : null}
 
                       <div className="mt-4 grid gap-3 md:grid-cols-4">
                         <div className="rounded-xl bg-white px-4 py-3">
@@ -818,6 +1066,24 @@ export default function TaskDetailPage() {
                         </div>
                         <div className="rounded-xl bg-white px-4 py-3">
                           <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                            Khung thời gian KR
+                          </p>
+                          <p className="mt-2 text-sm font-semibold text-slate-900">
+                            {formatTimelineRangeVi(keyResult.start_date, keyResult.end_date, {
+                              fallback: "KR chưa có mốc thời gian",
+                            })}
+                          </p>
+                          <p className="mt-1 text-[11px] text-slate-400">
+                            {getTimelineMissingReason(
+                              keyResult.start_date,
+                              keyResult.end_date,
+                              "KR chưa có mốc thời gian",
+                              "Mốc thời gian KR không hợp lệ",
+                            ) ?? "Dùng để đối chiếu với lịch thực thi riêng của task."}
+                          </p>
+                        </div>
+                        <div className="rounded-xl bg-white px-4 py-3">
+                          <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
                             Trọng số KR (%)
                           </p>
                           <p className="mt-2 text-lg font-semibold text-slate-900">
@@ -849,6 +1115,44 @@ export default function TaskDetailPage() {
                         {isEditingTaskInfo ? null : (
                           <p className="font-semibold text-slate-700">{Math.round(form.weight)}</p>
                         )}
+                      </div>
+
+                      <div className="space-y-1">
+                        <p className="text-slate-500">Thời gian thực thi của công việc</p>
+                        <p className="font-semibold text-slate-700">
+                          {formatTimelineRangeVi(task.start_date, task.end_date, {
+                            fallback: "Công việc chưa có mốc thời gian",
+                          })}
+                        </p>
+                        <p className="text-[11px] text-slate-400">
+                          {getTimelineMissingReason(
+                            task.start_date,
+                            task.end_date,
+                            "Công việc chưa có mốc thời gian",
+                            "Mốc thời gian công việc không hợp lệ",
+                          ) ?? "Timeline/Gantt dùng ngày bắt đầu và ngày kết thúc của chính công việc."}
+                        </p>
+                        {taskTimelineAlignmentWarning ? (
+                          <p className="text-[11px] text-amber-600">{taskTimelineAlignmentWarning}</p>
+                        ) : null}
+                      </div>
+
+                      <div className="space-y-1">
+                        <p className="text-slate-500">Khung thời gian của KR</p>
+                        <p className="font-semibold text-slate-700">
+                          {formatTimelineRangeVi(keyResult?.start_date ?? null, keyResult?.end_date ?? null, {
+                            fallback: "KR chưa có mốc thời gian",
+                          })}
+                        </p>
+                      </div>
+
+                      <div className="space-y-1">
+                        <p className="text-slate-500">Khung mục tiêu</p>
+                        <p className="font-semibold text-slate-700">
+                          {formatTimelineRangeVi(keyResult?.goal?.start_date ?? null, keyResult?.goal?.end_date ?? null, {
+                            fallback: "Mục tiêu chưa có khung thời gian",
+                          })}
+                        </p>
                       </div>
 
                       <div className="space-y-1">

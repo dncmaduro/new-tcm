@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { ClearableNumberInput } from "@/components/ui/clearable-number-input";
 import { GOAL_STATUSES, GOAL_TYPES, GoalStatusValue, GoalTypeValue } from "@/lib/constants/goals";
 import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
@@ -825,7 +826,7 @@ export default function NewGoalPage() {
       <div className="flex min-h-screen w-full">
         <WorkspaceSidebar active="goals" />
 
-        <div className="flex h-screen w-full flex-1 flex-col overflow-hidden lg:pl-[280px]">
+        <div className="flex h-screen w-full flex-1 flex-col overflow-hidden lg:pl-[var(--workspace-sidebar-width)]">
           <header className="border-b border-slate-200 bg-[#f3f5fa] px-4 py-4 lg:px-7">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm text-slate-500">
@@ -1062,19 +1063,18 @@ export default function NewGoalPage() {
 
                                     <label className="space-y-1 text-xs font-medium text-slate-600">
                                       <span>Trọng số mục tiêu (%)</span>
-                                      <input
-                                        type="number"
+                                      <ClearableNumberInput
                                         min={0}
                                         max={100}
                                         step="0.1"
                                         value={item.goalWeight}
-                                        onChange={(event) =>
+                                        onValueChange={(value) =>
                                           setDepartmentParticipations((prev) =>
                                             prev.map((row) =>
                                               row.departmentId === item.departmentId
                                                 ? {
                                                     ...row,
-                                                    goalWeight: Number(event.target.value),
+                                                    goalWeight: value,
                                                   }
                                                 : row,
                                             ),
@@ -1086,19 +1086,18 @@ export default function NewGoalPage() {
 
                                     <label className="space-y-1 text-xs font-medium text-slate-600">
                                       <span>Trọng số KR (%)</span>
-                                      <input
-                                        type="number"
+                                      <ClearableNumberInput
                                         min={0}
                                         max={100}
                                         step="0.1"
                                         value={item.krWeight}
-                                        onChange={(event) =>
+                                        onValueChange={(value) =>
                                           setDepartmentParticipations((prev) =>
                                             prev.map((row) =>
                                               row.departmentId === item.departmentId
                                                 ? {
                                                     ...row,
-                                                    krWeight: Number(event.target.value),
+                                                    krWeight: value,
                                                   }
                                                 : row,
                                             ),
@@ -1241,17 +1240,16 @@ export default function NewGoalPage() {
                       <label htmlFor="goal-year" className="text-sm font-semibold text-slate-700">
                         Năm *
                       </label>
-                      <input
+                      <ClearableNumberInput
                         id="goal-year"
-                        type="number"
                         min={2000}
                         max={2100}
                         disabled={hasParentGoal}
                         value={form.year}
-                        onChange={(event) =>
+                        onValueChange={(value) =>
                           setForm((prev) => ({
                             ...prev,
-                            year: Number(event.target.value) || now.getFullYear(),
+                            year: value,
                           }))
                         }
                         className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500"
