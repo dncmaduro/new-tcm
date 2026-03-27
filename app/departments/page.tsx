@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { supabase } from "@/lib/supabase";
@@ -296,7 +296,7 @@ function DepartmentPanel({ item }: { item: DepartmentItem | null }) {
   );
 }
 
-export default function DepartmentsPage() {
+function DepartmentsPageContent() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -1030,5 +1030,28 @@ export default function DepartmentsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function DepartmentsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
+          <div className="flex min-h-screen w-full">
+            <WorkspaceSidebar active="departments" />
+            <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[280px]">
+              <main className="px-4 py-6 lg:px-7">
+                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
+                  Đang tải sơ đồ phòng ban...
+                </div>
+              </main>
+            </div>
+          </div>
+        </div>
+      }
+    >
+      <DepartmentsPageContent />
+    </Suspense>
   );
 }

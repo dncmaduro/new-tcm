@@ -3,6 +3,7 @@
 import Link from "next/link";
 import {
   PointerEvent,
+  Suspense,
   WheelEvent,
   useCallback,
   useEffect,
@@ -577,7 +578,7 @@ function ProgressBar({ value }: { value: number }) {
   );
 }
 
-export default function GoalsPage() {
+function GoalsPageContent() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -2476,5 +2477,13 @@ export default function GoalsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function GoalsPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#f3f5fa]" />}>
+      <GoalsPageContent />
+    </Suspense>
   );
 }

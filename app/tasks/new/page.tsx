@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { ClearableNumberInput } from "@/components/ui/clearable-number-input";
 import { supabase } from "@/lib/supabase";
@@ -110,7 +110,7 @@ const defaultForm: TaskFormState = {
   endDate: "",
 };
 
-export default function NewTaskPage() {
+function NewTaskPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const workspaceAccess = useWorkspaceAccess();
@@ -956,5 +956,13 @@ export default function NewTaskPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function NewTaskPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#f3f5fa]" />}>
+      <NewTaskPageContent />
+    </Suspense>
   );
 }

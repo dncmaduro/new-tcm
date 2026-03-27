@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { GOAL_STATUSES, GOAL_TYPES } from "@/lib/constants/goals";
 import {
@@ -214,7 +214,7 @@ function ProgressBar({ value }: { value: number }) {
   );
 }
 
-export default function GoalDetailPage() {
+function GoalDetailPageContent() {
   const params = useParams<{ goalId: string }>();
   const searchParams = useSearchParams();
   const workspaceAccess = useWorkspaceAccess();
@@ -1775,5 +1775,13 @@ export default function GoalDetailPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function GoalDetailPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#f3f5fa]" />}>
+      <GoalDetailPageContent />
+    </Suspense>
   );
 }

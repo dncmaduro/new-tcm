@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Fragment,
+  Suspense,
   type ReactNode,
   type WheelEvent as ReactWheelEvent,
   useCallback,
@@ -623,7 +624,7 @@ function TaskTimelineBar({
   );
 }
 
-export default function TasksPage() {
+function TasksPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const workspaceAccess = useWorkspaceAccess();
@@ -2344,5 +2345,13 @@ export default function TasksPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function TasksPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#f3f5fa]" />}>
+      <TasksPageContent />
+    </Suspense>
   );
 }

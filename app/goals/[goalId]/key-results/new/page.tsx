@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { ClearableNumberInput } from "@/components/ui/clearable-number-input";
 import {
@@ -99,7 +99,7 @@ const getReadableKeyResultSubmitError = (message: string | null | undefined) => 
   return message || "Không thể tạo key result.";
 };
 
-export default function NewGoalKeyResultPage() {
+function NewGoalKeyResultPageContent() {
   const params = useParams<{ goalId: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -620,5 +620,13 @@ export default function NewGoalKeyResultPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function NewGoalKeyResultPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#f3f5fa]" />}>
+      <NewGoalKeyResultPageContent />
+    </Suspense>
   );
 }
