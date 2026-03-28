@@ -467,7 +467,11 @@ function NewTaskPageContent() {
         return;
       }
 
-      router.push("/tasks");
+      router.push(
+        queryGoalId && queryKeyResultId
+          ? `/goals/${queryGoalId}/key-results/${queryKeyResultId}?taskCreated=1`
+          : "/tasks",
+      );
       router.refresh();
     } catch {
       setSubmitError("Có lỗi xảy ra khi tạo công việc.");

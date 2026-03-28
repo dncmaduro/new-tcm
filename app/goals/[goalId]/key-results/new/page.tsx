@@ -321,7 +321,11 @@ function NewGoalKeyResultPageContent() {
         end_date: form.endDate || null,
       };
 
-      const { error } = await supabase.from("key_results").insert(payload);
+      const { data: createdKeyResult, error } = await supabase
+        .from("key_results")
+        .insert(payload)
+        .select("id")
+        .maybeSingle();
 
       if (error) {
         if (error.code === "42501") {
@@ -334,7 +338,12 @@ function NewGoalKeyResultPageContent() {
         return;
       }
 
-      router.push(`/goals/${goal.id}?krCreated=1`);
+      const createdKeyResultId = createdKeyResult?.id ? String(createdKeyResult.id) : null;
+      router.push(
+        createdKeyResultId
+          ? `/goals/${goal.id}/key-results/${createdKeyResultId}?created=1`
+          : `/goals/${goal.id}?krCreated=1`,
+      );
       router.refresh();
     } catch {
       setSubmitError("Có lỗi xảy ra khi tạo key result.");

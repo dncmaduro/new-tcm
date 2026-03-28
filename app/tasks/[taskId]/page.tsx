@@ -385,6 +385,9 @@ export default function TaskDetailPage() {
   const canEditTaskInfo = true;
   const canEditExecution = true;
   const canEditTaskTimeline = true;
+  const goalHref = keyResult?.goal_id ? `/goals/${keyResult.goal_id}` : null;
+  const keyResultHref =
+    keyResult?.id && keyResult.goal_id ? `/goals/${keyResult.goal_id}/key-results/${keyResult.id}` : null;
 
   const hasTaskInfoChanges = useMemo(() => {
     if (!task) {
@@ -670,15 +673,27 @@ export default function TaskDetailPage() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-sm text-slate-500">
-                  <Link href="/dashboard" className="hover:text-slate-700">
-                    Bảng điều khiển
-                  </Link>
-                  <span className="px-2">›</span>
                   <Link href="/tasks" className="hover:text-slate-700">
                     Công việc
                   </Link>
+                  {goalHref ? (
+                    <>
+                      <span className="px-2">›</span>
+                      <Link href={goalHref} className="hover:text-slate-700">
+                        Mục tiêu: {goalName}
+                      </Link>
+                    </>
+                  ) : null}
+                  {keyResultHref && keyResult ? (
+                    <>
+                      <span className="px-2">›</span>
+                      <Link href={keyResultHref} className="hover:text-slate-700">
+                        KR: {keyResult.name}
+                      </Link>
+                    </>
+                  ) : null}
                   <span className="px-2">›</span>
-                  <span className="font-semibold text-slate-700">Chi tiết</span>
+                  <span className="font-semibold text-slate-700">Task: {task?.name ?? "Chi tiết công việc"}</span>
                 </p>
                 <h1 className="mt-1 text-3xl font-semibold tracking-[-0.02em] text-slate-900">Chi tiết công việc</h1>
               </div>
@@ -894,9 +909,18 @@ export default function TaskDetailPage() {
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <p className="text-sm text-blue-700">Key result liên kết</p>
-                          <p className="mt-1 text-xl font-semibold tracking-[-0.02em] text-slate-900">
-                            {keyResult.name}
-                          </p>
+                          {keyResultHref ? (
+                            <Link
+                              href={keyResultHref}
+                              className="mt-1 inline-flex text-xl font-semibold tracking-[-0.02em] text-slate-900 hover:text-blue-700"
+                            >
+                              {keyResult.name}
+                            </Link>
+                          ) : (
+                            <p className="mt-1 text-xl font-semibold tracking-[-0.02em] text-slate-900">
+                              {keyResult.name}
+                            </p>
+                          )}
                           <p className="mt-1 text-xs text-slate-500">
                             Khung thời gian của KR:{" "}
                             {formatTimelineRangeVi(keyResult.start_date, keyResult.end_date, {
@@ -1298,9 +1322,15 @@ export default function TaskDetailPage() {
 
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-slate-500">Key result</span>
-                        <span className="text-right font-medium text-slate-700">
-                          {keyResult?.name ?? "Chưa gắn"}
-                        </span>
+                        {keyResult?.name && keyResultHref ? (
+                          <Link href={keyResultHref} className="text-right font-medium text-blue-700 hover:text-blue-800">
+                            {keyResult.name}
+                          </Link>
+                        ) : (
+                          <span className="text-right font-medium text-slate-700">
+                            {keyResult?.name ?? "Chưa gắn"}
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex items-center justify-between gap-3">

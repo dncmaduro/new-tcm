@@ -279,7 +279,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
                   key={item.key}
                   href={item.href}
                   title={item.label}
-                  className={`flex w-full items-center rounded-xl text-left font-medium tracking-[-0.01em] transition ${
+                  className={`group relative flex w-full items-center rounded-xl text-left font-medium tracking-[-0.01em] transition ${
                     isCollapsed ? "justify-center px-0 py-3" : "gap-3 px-4 py-3 text-lg"
                   } ${
                     item.key === active
@@ -289,6 +289,11 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
                 >
                   <Icon className="h-[18px] w-[18px] shrink-0" />
                   {!isCollapsed ? item.label : null}
+                  {isCollapsed ? (
+                    <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 -translate-y-1/2 whitespace-nowrap rounded-lg border border-slate-700 bg-[#0d234f] px-3 py-1.5 text-sm font-semibold text-white opacity-0 shadow-2xl transition duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
+                      {item.label}
+                    </span>
+                  ) : null}
                 </Link>
               );
             })}
@@ -303,13 +308,16 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
                       setIsManagementMenuOpen((prev) => !prev);
                       setIsUserMenuOpen(false);
                     }}
-                    className={`flex w-full items-center justify-center rounded-xl px-0 py-3 text-left font-medium tracking-[-0.01em] transition ${
+                    className={`group relative flex w-full items-center justify-center rounded-xl px-0 py-3 text-left font-medium tracking-[-0.01em] transition ${
                       active === "attendanceManagement" || active === "timeRequestManagement"
                         ? "bg-[#0b1e43] text-white"
                         : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
                     }`}
                   >
                     <ClockIcon className="h-[18px] w-[18px] shrink-0" />
+                    <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 -translate-y-1/2 whitespace-nowrap rounded-lg border border-slate-700 bg-[#0d234f] px-3 py-1.5 text-sm font-semibold text-white opacity-0 shadow-2xl transition duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
+                      Quản lý
+                    </span>
                   </button>
 
                   {isManagementMenuOpen ? (

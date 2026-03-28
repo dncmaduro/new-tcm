@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
+<<<<<<< Updated upstream
 import { Suspense, useEffect, useMemo, useState } from "react";
+=======
+import { Fragment, useEffect, useMemo, useState } from "react";
+>>>>>>> Stashed changes
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { GOAL_STATUSES, GOAL_TYPES } from "@/lib/constants/goals";
 import {
@@ -11,12 +15,10 @@ import {
   formatKeyResultUnit,
   type KeyResultUnitValue,
 } from "@/lib/constants/key-results";
-import { getTaskProgressHint, TASK_STATUSES, TASK_TYPES } from "@/lib/constants/tasks";
 import {
   buildGoalProgressMap,
   buildGoalDepartmentPerformanceMap,
   buildKeyResultProgressMap,
-  computeWeightedProgress,
   getComputedTaskProgress,
   normalizeComputedProgress,
   normalizeParticipationWeights,
@@ -26,7 +28,6 @@ import { supabase } from "@/lib/supabase";
 import {
   formatTimelineRangeVi,
   getTimelineMissingReason,
-  getTimelineOutsideParentWarning,
   isDateRangeOrdered,
 } from "@/lib/timeline";
 
@@ -48,17 +49,11 @@ type GoalDetailRow = {
 };
 
 type TaskRow = {
-  id: string;
-  name: string;
   type: string | null;
   status: string | null;
   progress: number | null;
   weight: number | null;
-  profile_id: string | null;
-  start_date: string | null;
-  end_date: string | null;
   key_result_id: string | null;
-  key_result?: { id: string; goal_id: string | null; goal?: { id: string; name: string } | null } | null;
 };
 
 type ChildGoalRow = {
@@ -110,25 +105,23 @@ type GoalDepartmentItem = {
   krWeight: number;
 };
 
-type ProfileRow = {
+type GoalBreadcrumbItem = {
   id: string;
-  name: string | null;
-  email: string | null;
+  name: string;
+};
+
+type GoalAncestorRow = {
+  id: string;
+  name: string;
+  parent_goal_id: string | null;
 };
 
 type GoalTaskItem = {
-  id: string;
-  name: string;
   type: string | null;
   rawStatus: string | null;
-  status: string;
   progress: number;
   weight: number;
-  profileId: string | null;
-  assigneeName: string;
   keyResultId: string | null;
-  startDate: string | null;
-  endDate: string | null;
 };
 
 type KeyResultScaleFormState = {
@@ -146,11 +139,6 @@ const typeLabelMap = GOAL_TYPES.reduce<Record<string, string>>((acc, item) => {
 }, {});
 
 const statusLabelMap = GOAL_STATUSES.reduce<Record<string, string>>((acc, item) => {
-  acc[item.value] = item.label;
-  return acc;
-}, {});
-
-const taskStatusLabelMap = TASK_STATUSES.reduce<Record<string, string>>((acc, item) => {
   acc[item.value] = item.label;
   return acc;
 }, {});
@@ -206,6 +194,41 @@ const getReadableKeyResultSaveError = (message: string | null | undefined) => {
   return message || "Không thể cập nhật key result.";
 };
 
+const loadGoalAncestors = async (parentGoalId: string | null) => {
+  if (!parentGoalId) {
+    return [] as GoalBreadcrumbItem[];
+  }
+
+  const ancestors: GoalBreadcrumbItem[] = [];
+  const visitedGoalIds = new Set<string>();
+  let currentGoalId: string | null = parentGoalId;
+
+  while (currentGoalId && !visitedGoalIds.has(currentGoalId)) {
+    visitedGoalIds.add(currentGoalId);
+
+    const ancestorResponse = await supabase
+      .from("goals")
+      .select("id,name,parent_goal_id")
+      .eq("id", currentGoalId)
+      .maybeSingle();
+
+    const ancestorData = ancestorResponse.data as GoalAncestorRow | null;
+
+    if (ancestorResponse.error || !ancestorData?.id || !ancestorData?.name) {
+      break;
+    }
+
+    ancestors.unshift({
+      id: String(ancestorData.id),
+      name: String(ancestorData.name),
+    });
+
+    currentGoalId = ancestorData.parent_goal_id ? String(ancestorData.parent_goal_id) : null;
+  }
+
+  return ancestors;
+};
+
 function ProgressBar({ value }: { value: number }) {
   return (
     <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
@@ -224,11 +247,10 @@ function GoalDetailPageContent() {
   const [goal, setGoal] = useState<GoalDetailRow | null>(null);
   const [departmentName, setDepartmentName] = useState<string | null>(null);
   const [goalDepartments, setGoalDepartments] = useState<GoalDepartmentItem[]>([]);
-  const [parentGoal, setParentGoal] = useState<{ id: string; name: string } | null>(null);
+  const [goalAncestors, setGoalAncestors] = useState<GoalBreadcrumbItem[]>([]);
   const [goalTasks, setGoalTasks] = useState<GoalTaskItem[]>([]);
   const [keyResults, setKeyResults] = useState<KeyResultRow[]>([]);
   const [childGoals, setChildGoals] = useState<ChildGoalRow[]>([]);
-  const [taskLoadError, setTaskLoadError] = useState<string | null>(null);
   const [childGoalLoadError, setChildGoalLoadError] = useState<string | null>(null);
   const [keyResultLoadError, setKeyResultLoadError] = useState<string | null>(null);
   const [relatedDepartmentLoadError, setRelatedDepartmentLoadError] = useState<string | null>(null);
@@ -242,6 +264,7 @@ function GoalDetailPageContent() {
 
   const isCheckingCreatePermission = workspaceAccess.isLoading;
   const canCreateKeyResult = workspaceAccess.canManage && !workspaceAccess.error;
+  const parentGoal = goalAncestors.length > 0 ? goalAncestors[goalAncestors.length - 1] : null;
 
   useEffect(() => {
     if (!hasValidGoalId) {
@@ -253,10 +276,10 @@ function GoalDetailPageContent() {
     const loadGoalDetail = async () => {
       setIsLoading(true);
       setError(null);
-      setTaskLoadError(null);
       setChildGoalLoadError(null);
       setKeyResultLoadError(null);
       setRelatedDepartmentLoadError(null);
+      setGoalAncestors([]);
       setEditingKeyResultId(null);
       setKeyResultScaleForm(null);
       setKeyResultScaleError(null);
@@ -279,7 +302,7 @@ function GoalDetailPageContent() {
         setGoal(null);
         setDepartmentName(null);
         setGoalDepartments([]);
-        setParentGoal(null);
+        setGoalAncestors([]);
         setGoalTasks([]);
         setKeyResults([]);
         setChildGoals([]);
@@ -292,7 +315,7 @@ function GoalDetailPageContent() {
         setGoal(null);
         setDepartmentName(null);
         setGoalDepartments([]);
-        setParentGoal(null);
+        setGoalAncestors([]);
         setGoalTasks([]);
         setKeyResults([]);
         setChildGoals([]);
@@ -305,7 +328,7 @@ function GoalDetailPageContent() {
 
       const [
         { data: departmentData },
-        { data: parentData },
+        goalAncestorData,
         { data: childGoalsData, error: childGoalsError },
         { data: keyResultsData, error: keyResultsError },
         { data: goalDepartmentLinks, error: goalDepartmentsError },
@@ -314,8 +337,8 @@ function GoalDetailPageContent() {
           ? supabase.from("departments").select("id,name").eq("id", typedGoal.department_id).maybeSingle()
           : Promise.resolve({ data: null, error: null }),
         typedGoal.parent_goal_id
-          ? supabase.from("goals").select("id,name").eq("id", typedGoal.parent_goal_id).maybeSingle()
-          : Promise.resolve({ data: null, error: null }),
+          ? loadGoalAncestors(String(typedGoal.parent_goal_id))
+          : Promise.resolve([] as GoalBreadcrumbItem[]),
         supabase
           .from("goals")
           .select("id,name,status,quarter,year,start_date,end_date")
@@ -339,11 +362,7 @@ function GoalDetailPageContent() {
       }
 
       setDepartmentName(departmentData?.name ? String(departmentData.name) : null);
-      setParentGoal(
-        parentData?.id && parentData?.name
-          ? { id: String(parentData.id), name: String(parentData.name) }
-          : null,
-      );
+      setGoalAncestors(goalAncestorData);
 
       const mappedKeyResults = ((keyResultsData ?? []) as unknown as KeyResultRow[]).map((keyResult) => ({
         ...keyResult,
@@ -371,26 +390,7 @@ function GoalDetailPageContent() {
       const { data: tasksData, error: tasksError } = keyResultIds.length > 0
         ? await supabase
             .from("tasks")
-            .select(`
-              id,
-              name,
-              type,
-              status,
-              progress,
-              weight,
-              profile_id,
-              start_date,
-              end_date,
-              key_result_id,
-              key_result:key_results!tasks_key_result_id_fkey(
-                id,
-                goal_id,
-                goal:goals!key_results_goal_id_fkey(
-                  id,
-                  name
-                )
-              )
-            `)
+            .select("type,status,progress,weight,key_result_id")
             .in("key_result_id", keyResultIds)
             .order("created_at", { ascending: false })
         : { data: [], error: null };
@@ -400,42 +400,13 @@ function GoalDetailPageContent() {
       }
 
       const typedTasks = (tasksData ?? []) as unknown as TaskRow[];
-      const profileIds = [...new Set(typedTasks.map((task) => task.profile_id).filter(Boolean))] as string[];
-      let profileNameById: Record<string, string> = {};
-
-      if (profileIds.length > 0) {
-        const { data: profilesData } = await supabase
-          .from("profiles")
-          .select("id,name,email")
-          .in("id", profileIds);
-
-        if (!isActive) {
-          return;
-        }
-
-        profileNameById = ((profilesData ?? []) as ProfileRow[]).reduce<Record<string, string>>(
-          (acc, profile) => {
-            acc[String(profile.id)] = profile.name?.trim() || profile.email?.trim() || "Chưa gán";
-            return acc;
-          },
-          {},
-        );
-      }
-
       setGoalTasks(
         typedTasks.map((task) => ({
-          id: String(task.id),
-          name: String(task.name),
           type: task.type ? String(task.type) : null,
           rawStatus: task.status ? String(task.status) : null,
-          status: task.status ? taskStatusLabelMap[task.status] ?? task.status : "Chưa đặt",
           progress: getComputedTaskProgress(task),
           weight: typeof task.weight === "number" ? task.weight : Number(task.weight ?? 1),
-          profileId: task.profile_id ? String(task.profile_id) : null,
-          assigneeName: task.profile_id ? profileNameById[task.profile_id] ?? "Chưa gán" : "Chưa gán",
           keyResultId: task.key_result_id ? String(task.key_result_id) : null,
-          startDate: task.start_date ? String(task.start_date) : null,
-          endDate: task.end_date ? String(task.end_date) : null,
         })),
       );
 
@@ -573,9 +544,6 @@ function GoalDetailPageContent() {
         setGoalDepartments([]);
       }
 
-      if (tasksError) {
-        setTaskLoadError("Không tải được danh sách công việc của mục tiêu.");
-      }
       if (childGoalsError) {
         setChildGoalLoadError("Không tải được danh sách mục tiêu con.");
       }
@@ -584,6 +552,8 @@ function GoalDetailPageContent() {
       }
       if (keyResultsError) {
         setKeyResultLoadError("Không tải được danh sách key result.");
+      } else if (tasksError) {
+        setKeyResultLoadError("Không tải đủ dữ liệu để tính tiến độ key result.");
       }
       if (goalDepartmentsError) {
         setRelatedDepartmentLoadError("Không tải được cấu trúc team tham gia.");
@@ -622,48 +592,6 @@ function GoalDetailPageContent() {
   const goalStatusLabel = goal?.status ? statusLabelMap[goal.status] ?? goal.status : "Chưa đặt";
   const quarterLabel = goal?.quarter ? `Q${goal.quarter}` : "Chưa đặt";
   const yearLabel = goal?.year ? String(goal.year) : "Chưa đặt";
-
-  const tasksByStatus = useMemo(() => {
-    return TASK_STATUSES.map((status) => {
-      const count = goalTasks.filter((task) => task.status === status.label).length;
-      return {
-        value: status.value,
-        label: status.label,
-        count,
-      };
-    });
-  }, [goalTasks]);
-
-  const averageTaskProgress = useMemo(() => {
-    return computeWeightedProgress(goalTasks);
-  }, [goalTasks]);
-
-  const taskCompletionRate = useMemo(() => {
-    if (!goalTasks.length) {
-      return 0;
-    }
-    const doneCount = goalTasks.filter((task) => task.rawStatus === "done").length;
-    return Math.round((doneCount / goalTasks.length) * 100);
-  }, [goalTasks]);
-
-  const tasksByKeyResultId = useMemo(() => {
-    return goalTasks.reduce<Record<string, GoalTaskItem[]>>((acc, task) => {
-      if (!task.keyResultId) {
-        return acc;
-      }
-      if (!acc[task.keyResultId]) {
-        acc[task.keyResultId] = [];
-      }
-      acc[task.keyResultId].push(task);
-      return acc;
-    }, {});
-  }, [goalTasks]);
-
-  const unassignedGoalTasks = useMemo(
-    () => goalTasks.filter((task) => !task.keyResultId),
-    [goalTasks],
-  );
-  const assignedGoalTaskCount = goalTasks.length - unassignedGoalTasks.length;
   const goalDepartmentsById = useMemo(
     () =>
       goalDepartments.reduce<Record<string, GoalDepartmentItem>>((acc, item) => {
@@ -680,9 +608,7 @@ function GoalDetailPageContent() {
     const total = keyResults.reduce((acc, keyResult) => acc + (keyResultProgressMap[keyResult.id] ?? 0), 0);
     return Math.round(total / keyResults.length);
   }, [keyResultProgressMap, keyResults]);
-  const goalProgressHelp =
-    "Tiến độ goal = trung bình tiến độ các key result. Tiến độ key result = trung bình có trọng số của task nằm dưới KR.";
-  const taskCompletionHelp = "Tỷ lệ hoàn thành task = số task done / tổng số task trong mục tiêu.";
+  const goalProgressHelp = "Tiến độ mục tiêu được tổng hợp từ tiến độ của các key result.";
   const departmentPerformanceMap = useMemo(() => {
     if (!goal?.id || goalDepartments.length === 0) {
       return {};
@@ -697,40 +623,21 @@ function GoalDetailPageContent() {
       const ownedKeyResults = keyResults.filter(
         (keyResult) => keyResult.responsible_department_id === department.departmentId,
       );
-      const ownedTaskCount = ownedKeyResults.reduce(
-        (total, keyResult) => total + (tasksByKeyResultId[keyResult.id]?.length ?? 0),
-        0,
-      );
       const performance = departmentPerformanceMap[`${department.goalId}:${department.departmentId}`];
 
       return {
         ...department,
         ownedKrCount: ownedKeyResults.length,
-        ownedTaskCount,
         goalProgress: performance?.goalProgress ?? goalProgress,
         departmentKrProgress: performance?.departmentKrProgress ?? 0,
         performance: performance?.performance ?? 0,
       };
     });
-  }, [departmentPerformanceMap, goalDepartments, goalProgress, keyResults, tasksByKeyResultId]);
+  }, [departmentPerformanceMap, goalDepartments, goalProgress, keyResults]);
 
-  const addTaskParams = new URLSearchParams();
-  if (hasValidGoalId && goalId) {
-    addTaskParams.set("goalId", goalId);
-  }
-  if (goal?.department_id) {
-    addTaskParams.set("departmentId", goal.department_id);
-  }
-  if (keyResults.length === 1) {
-    addTaskParams.set("keyResultId", keyResults[0].id);
-  }
-  const addTaskQuery = addTaskParams.toString();
-  const addTaskHref = addTaskQuery ? `/tasks/new?${addTaskQuery}` : "/tasks/new";
   const createKeyResultHref = hasValidGoalId ? `/goals/${goalId}/key-results/new` : "/goals";
   const keyResultNotice =
-    searchParams.get("krCreated") === "1"
-      ? "Đã tạo key result. Bạn có thể gắn task vào KR này ngay."
-      : null;
+    searchParams.get("krCreated") === "1" ? "Đã tạo key result." : null;
 
   const startEditingKeyResultScale = (keyResult: KeyResultRow) => {
     setEditingKeyResultId(keyResult.id);
@@ -843,9 +750,17 @@ function GoalDetailPageContent() {
                 <Link href="/goals" className="hover:text-slate-700">
                   Mục tiêu
                 </Link>
+                {goalAncestors.map((ancestor) => (
+                  <Fragment key={ancestor.id}>
+                    <span className="px-2">›</span>
+                    <Link href={`/goals/${ancestor.id}`} className="hover:text-slate-700">
+                      Mục tiêu: {ancestor.name}
+                    </Link>
+                  </Fragment>
+                ))}
                 <span className="px-2">›</span>
                 <span className="font-semibold text-slate-700">
-                  {goal?.name ?? "Chi tiết mục tiêu"}
+                  Mục tiêu: {goal?.name ?? "Chi tiết mục tiêu"}
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -923,9 +838,9 @@ function GoalDetailPageContent() {
                         </div>
                         <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                           <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                            Công việc
+                            Mục tiêu con
                           </p>
-                          <p className="mt-2 text-2xl font-semibold text-slate-900">{goalTasks.length}</p>
+                          <p className="mt-2 text-2xl font-semibold text-slate-900">{childGoals.length}</p>
                         </div>
                         <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                           <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
@@ -1001,7 +916,7 @@ function GoalDetailPageContent() {
                               <div>
                                 <p className="text-sm font-semibold text-slate-900">{department.name}</p>
                                 <p className="mt-1 text-xs text-slate-500">
-                                  Vai trò {department.role} · {department.ownedKrCount} KR sở hữu · {department.ownedTaskCount} công việc
+                                  Vai trò {department.role} · {department.ownedKrCount} KR sở hữu
                                 </p>
                               </div>
                               <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700">
@@ -1038,7 +953,7 @@ function GoalDetailPageContent() {
                       <div>
                         <h2 className="text-base font-semibold text-slate-900">Key result</h2>
                         <p className="mt-1 text-sm text-slate-500">
-                          Hiển thị nhanh tiến độ, hiện tại so với mục tiêu và số task của từng KR.
+                          Hiển thị nhanh tiến độ, chỉ số hiện tại, mục tiêu và khung thời gian của từng KR.
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
@@ -1073,21 +988,12 @@ function GoalDetailPageContent() {
                       </div>
                       <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-4">
                         <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                          Task đã gắn KR
+                          Tiến độ mục tiêu
                         </p>
                         <p className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-slate-950">
-                          {assignedGoalTaskCount}
+                          {goalProgress}%
                         </p>
-                        {keyResults.length > 0 ? (
-                          <Link
-                            href={addTaskHref}
-                            className="mt-3 inline-flex text-xs font-semibold text-blue-700 hover:text-blue-800"
-                          >
-                            + Thêm công việc
-                          </Link>
-                        ) : (
-                          <p className="mt-3 text-xs text-slate-500">Tạo KR trước khi thêm công việc.</p>
-                        )}
+                        <p className="mt-3 text-xs text-slate-500">{goalProgressHelp}</p>
                       </div>
                     </div>
 
@@ -1126,9 +1032,8 @@ function GoalDetailPageContent() {
                     {!keyResultLoadError && keyResults.length > 0 ? (
                       <div className="mt-4 space-y-3">
                         {keyResults.map((keyResult) => {
-                          const taskItems = tasksByKeyResultId[keyResult.id] ?? [];
+                          const keyResultDetailHref = `/goals/${goal.id}/key-results/${keyResult.id}`;
                           const keyResultProgress = keyResultProgressMap[keyResult.id] ?? 0;
-                          const keyResultTaskHref = `/tasks/new?goalId=${goal.id}&keyResultId=${keyResult.id}`;
                           const responsibleDepartmentName =
                             goalDepartmentsById[keyResult.responsible_department_id ?? ""]?.name ?? "Chưa gán phòng ban";
                           const isEditingKeyResult = editingKeyResultId === keyResult.id && keyResultScaleForm !== null;
@@ -1141,7 +1046,12 @@ function GoalDetailPageContent() {
                             >
                               <div className="flex flex-wrap items-start justify-between gap-3">
                                 <div className="min-w-0">
-                                  <p className="text-base font-semibold text-slate-900">{keyResult.name}</p>
+                                  <Link
+                                    href={keyResultDetailHref}
+                                    className="text-base font-semibold text-slate-900 hover:text-blue-700"
+                                  >
+                                    {keyResult.name}
+                                  </Link>
                                   <p className="mt-1 text-sm text-slate-500">
                                     {responsibleDepartmentName}
                                   </p>
@@ -1150,6 +1060,12 @@ function GoalDetailPageContent() {
                                   <span className="rounded-full bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white">
                                     {keyResultProgress}%
                                   </span>
+                                  <Link
+                                    href={keyResultDetailHref}
+                                    className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                                  >
+                                    Chi tiết KR
+                                  </Link>
                                   {canCreateKeyResult ? (
                                     isEditingKeyResult ? (
                                       <>
@@ -1180,12 +1096,6 @@ function GoalDetailPageContent() {
                                     </button>
                                   )
                                 ) : null}
-                                  <Link
-                                    href={keyResultTaskHref}
-                                    className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100"
-                                  >
-                                    + Thêm công việc
-                                  </Link>
                                 </div>
                               </div>
 
@@ -1353,7 +1263,7 @@ function GoalDetailPageContent() {
                                 </div>
                               ) : null}
 
-                              <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1.6fr)_160px_200px_240px]">
+                              <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1.8fr)_200px_240px]">
                                 <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
                                   <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
                                     Hiện tại / mục tiêu
@@ -1366,12 +1276,6 @@ function GoalDetailPageContent() {
                                   <p className="mt-1 text-xs text-slate-500">
                                     {formatKeyResultUnit(keyResult.unit)}
                                   </p>
-                                </div>
-                                <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-                                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                                    Số task
-                                  </p>
-                                  <p className="mt-2 text-lg font-semibold text-slate-900">{taskItems.length}</p>
                                 </div>
                                 <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
                                   <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
@@ -1396,7 +1300,7 @@ function GoalDetailPageContent() {
                                       keyResult.end_date,
                                       "KR chưa có mốc thời gian",
                                       "Mốc thời gian KR không hợp lệ",
-                                    ) ?? "Đây là khung kế hoạch cha cho các task liên kết."}
+                                    ) ?? "Khung thời gian kế hoạch của key result."}
                                   </p>
                                 </div>
                               </div>
@@ -1408,129 +1312,9 @@ function GoalDetailPageContent() {
                                 </div>
                                 <ProgressBar value={keyResultProgress} />
                               </div>
-
-                              {taskItems.length > 0 ? (
-                                <div className="mt-4 space-y-3">
-                                  <p className="text-xs text-slate-500">
-                                    Khung thời gian của KR:{" "}
-                                    {formatTimelineRangeVi(keyResult.start_date, keyResult.end_date, {
-                                      fallback: "KR chưa có mốc thời gian",
-                                    })}
-                                  </p>
-                                  <div className="grid gap-3 md:grid-cols-2">
-                                    {taskItems.map((task) => {
-                                      const alignmentWarning = getTimelineOutsideParentWarning(
-                                        task.startDate,
-                                        task.endDate,
-                                        keyResult.start_date,
-                                        keyResult.end_date,
-                                        {
-                                          subjectLabel: "Thời gian công việc",
-                                          parentLabel: "KR",
-                                        },
-                                      );
-
-                                      return (
-                                        <Link
-                                          key={task.id}
-                                          href={`/tasks/${task.id}`}
-                                          className="rounded-xl border border-slate-200 bg-white px-4 py-3 hover:border-blue-300 hover:bg-blue-50/30"
-                                        >
-                                          <div className="flex items-start justify-between gap-2">
-                                            <div>
-                                              <p className="text-sm font-semibold text-slate-900">{task.name}</p>
-                                              <p className="mt-1 text-xs text-slate-500">
-                                                {task.assigneeName} · {task.status}
-                                              </p>
-                                            </div>
-                                            <span className="text-xs font-semibold text-slate-600">{task.progress}%</span>
-                                          </div>
-                                          <p className="mt-2 text-xs font-medium text-slate-700">
-                                            Thời gian thực thi:{" "}
-                                            {formatTimelineRangeVi(task.startDate, task.endDate, {
-                                              fallback: "Công việc chưa có mốc thời gian",
-                                            })}
-                                          </p>
-                                          <p className="mt-1 text-[11px] text-slate-400">
-                                            {getTimelineMissingReason(
-                                              task.startDate,
-                                              task.endDate,
-                                              "Công việc chưa có mốc thời gian",
-                                              "Mốc thời gian công việc không hợp lệ",
-                                            ) ?? "Khung thời gian của KR được hiển thị phía trên để đối chiếu."}
-                                          </p>
-                                          {alignmentWarning ? (
-                                            <p className="mt-1 text-[11px] text-amber-600">{alignmentWarning}</p>
-                                          ) : null}
-                                        </Link>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              ) : null}
                             </article>
                           );
                         })}
-                      </div>
-                    ) : null}
-                  </article>
-
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <div className="mb-4 flex items-center justify-between">
-                      <h2 className="text-base font-semibold text-slate-900">Task chưa gắn key result</h2>
-                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                        {unassignedGoalTasks.length} việc
-                      </span>
-                    </div>
-
-                    {taskLoadError ? (
-                      <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                        {taskLoadError}
-                      </p>
-                    ) : null}
-
-                    {!taskLoadError && unassignedGoalTasks.length === 0 ? (
-                      <p className="text-sm text-slate-500">
-                        Không có task nào đang treo trực tiếp dưới goal.
-                      </p>
-                    ) : null}
-
-                    {!taskLoadError && unassignedGoalTasks.length > 0 ? (
-                      <div className="space-y-3">
-                        {unassignedGoalTasks.map((task) => (
-                          <Link
-                            key={task.id}
-                            href={`/tasks/${task.id}`}
-                            className="block rounded-xl border border-slate-200 bg-slate-50 p-3 hover:border-blue-300 hover:bg-blue-50/40"
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <p className="text-sm font-semibold text-slate-800">{task.name}</p>
-                              <span className="text-xs font-semibold text-slate-600">{task.progress}%</span>
-                            </div>
-                            <div className="mt-1 text-xs font-medium text-slate-600">
-                              {(TASK_TYPES.find((item) => item.value === task.type)?.label ?? "KPI")}
-                              {" · "}
-                              {task.status}
-                              {" · "}
-                              {task.assigneeName}
-                            </div>
-                            <div className="mt-1 text-[11px] text-slate-400">
-                              {getTaskProgressHint(task.type)}
-                            </div>
-                            <div className="mt-2 text-xs text-slate-600">
-                              Thời gian thực thi:{" "}
-                              {formatTimelineRangeVi(task.startDate, task.endDate, {
-                                fallback: "Công việc chưa có mốc thời gian",
-                              })}
-                            </div>
-                            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
-                              <div
-                                className="h-full rounded-full bg-blue-600"
-                                style={{ width: `${task.progress}%` }}
-                              />
-                            </div>
-                          </Link>
-                        ))}
                       </div>
                     ) : null}
                   </article>
@@ -1669,9 +1453,9 @@ function GoalDetailPageContent() {
 
                   <article className="rounded-2xl border border-slate-200 bg-white p-5">
                     <div className="mb-4 flex items-center justify-between">
-                      <h2 className="text-base font-semibold text-slate-900">Hiệu suất thực thi</h2>
+                      <h2 className="text-base font-semibold text-slate-900">Tổng quan tiến độ</h2>
                       <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                        {goalTasks.length} task
+                        {keyResults.length} KR
                       </span>
                     </div>
 
@@ -1681,6 +1465,13 @@ function GoalDetailPageContent() {
                           className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase"
                           title={goalProgressHelp}
                         >
+                          Tiến độ mục tiêu
+                        </p>
+                        <p className="mt-2 text-2xl font-semibold text-slate-900">{goalProgress}%</p>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                        <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
                           TB tiến độ key result
                         </p>
                         <p className="mt-2 text-2xl font-semibold text-slate-900">
@@ -1690,48 +1481,15 @@ function GoalDetailPageContent() {
 
                       <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                         <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                          TB tiến độ task
+                          Mục tiêu con
                         </p>
-                        <p className="mt-2 text-2xl font-semibold text-slate-900">
-                          {averageTaskProgress}%
-                        </p>
-                      </div>
-
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                        <p
-                          className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase"
-                          title={taskCompletionHelp}
-                        >
-                          Tỷ lệ task hoàn thành
-                        </p>
-                        <p className="mt-2 text-2xl font-semibold text-slate-900">{taskCompletionRate}%</p>
+                        <p className="mt-2 text-2xl font-semibold text-slate-900">{childGoals.length}</p>
                       </div>
 
                       <div className="rounded-xl border border-slate-100 bg-blue-50/60 px-4 py-3 text-sm text-blue-800">
                         <p className="font-semibold">Cách tính tiến độ</p>
                         <p className="mt-1">{goalProgressHelp}</p>
-                        <p className="mt-2">{taskCompletionHelp}</p>
                       </div>
-
-                      {tasksByStatus.map((item) => {
-                        const percent = goalTasks.length ? Math.round((item.count / goalTasks.length) * 100) : 0;
-                        return (
-                          <div key={item.value} className="space-y-1">
-                            <div className="flex items-center justify-between text-xs">
-                              <span className="font-medium text-slate-700">{item.label}</span>
-                              <span className="text-slate-500">
-                                {item.count} ({percent}%)
-                              </span>
-                            </div>
-                            <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                              <div
-                                className="h-full rounded-full bg-blue-600"
-                                style={{ width: `${percent}%` }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
                     </div>
                   </article>
 

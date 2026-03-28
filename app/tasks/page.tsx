@@ -31,14 +31,11 @@ import {
   buildTimelinePeriods,
   clampTimelineZoom,
   formatTimelineDurationVi,
-  getFitZoomLevel,
   getPeriodWidthForZoom,
   getTimelineBarLayout,
   getTimelineDurationDays,
   getTodayIndicatorOffsetPx,
   startOfScale,
-  TIMELINE_MAX_ZOOM,
-  TIMELINE_MIN_ZOOM,
   TIMELINE_ZOOM_STEP,
   type TimelineScale,
 } from "@/lib/task-gantt";
@@ -53,7 +50,8 @@ import {
 } from "@/lib/timeline";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const LEFT_PANEL_WIDTH = 420;
+const DEFAULT_LEFT_PANEL_WIDTH = 420;
+const TASK_LEFT_PANEL_WIDTH = 360;
 
 type TimelineStatus = "todo" | "in_progress" | "done" | "blocked" | "cancelled";
 type TaskViewMode = "gantt" | "list";
@@ -64,6 +62,7 @@ type TaskRow = {
   name: string;
   key_result_id: string | null;
   assignee_id: string | null;
+  profile_id: string | null;
   type: string | null;
   status: string | null;
   progress: number | null;
@@ -73,6 +72,7 @@ type TaskRow = {
   created_at: string | null;
   key_result?: unknown;
   assignee?: unknown;
+  profile?: unknown;
 };
 
 type GoalLiteRow = {
@@ -118,6 +118,7 @@ type TaskItem = {
   status: TimelineStatus;
   rawStatus: string | null;
   progress: number;
+  weight: number;
   createdAt: string | null;
   startDate: string | null;
   endDate: string | null;
@@ -163,6 +164,7 @@ type KeyResultTimelineItem = {
 
 type QuickEditState = {
   progress: string;
+  weight: string;
   startDate: string;
   endDate: string;
 };
@@ -493,6 +495,7 @@ function TaskTimelineBar({
 }) {
   const [open, setOpen] = useState(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressHoverUntilRef = useRef(0);
   const showLabel = width >= 130;
   const showProgress = width >= 84;
   const durationLabel = formatTimelineDurationVi(task.startDate, task.endDate);
@@ -507,14 +510,28 @@ function TaskTimelineBar({
 
   const openPopover = () => {
     clearCloseTimer();
+    if (Date.now() < suppressHoverUntilRef.current) {
+      return;
+    }
     setOpen(true);
   };
 
   const closePopover = () => {
     clearCloseTimer();
     closeTimerRef.current = setTimeout(() => {
+      suppressHoverUntilRef.current = Date.now() + 160;
       setOpen(false);
-    }, 120);
+    }, 90);
+  };
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    clearCloseTimer();
+
+    if (!nextOpen) {
+      suppressHoverUntilRef.current = Date.now() + 160;
+    }
+
+    setOpen(nextOpen);
   };
 
   useEffect(() => {
@@ -524,15 +541,18 @@ function TaskTimelineBar({
   }, []);
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <button
           type="button"
-          onMouseEnter={openPopover}
-          onMouseLeave={closePopover}
-          onFocus={openPopover}
-          onBlur={closePopover}
-          onClick={() => setOpen((prev) => !prev)}
+          onPointerEnter={openPopover}
+          onPointerLeave={closePopover}
+          onPointerDown={(event) => {
+            if (event.pointerType !== "mouse") {
+              clearCloseTimer();
+              setOpen((prev) => !prev);
+            }
+          }}
           className={`absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl px-3 text-left shadow-sm transition hover:brightness-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 ${statusMetaMap[task.status].barClassName} ${
             isClamped ? "ring-2 ring-white/70" : ""
           }`}
@@ -556,10 +576,11 @@ function TaskTimelineBar({
       <PopoverContent
         side="top"
         align="center"
+        sideOffset={10}
         collisionPadding={16}
         className="w-[320px] max-w-[calc(100vw-24px)] rounded-2xl p-4"
-        onMouseEnter={openPopover}
-        onMouseLeave={closePopover}
+        onPointerEnter={openPopover}
+        onPointerLeave={closePopover}
       >
         <div className="space-y-4">
           <div className="flex items-start justify-between gap-3">
@@ -576,6 +597,10 @@ function TaskTimelineBar({
               <p className="mt-1 text-lg font-semibold text-slate-900">{task.progress}%</p>
             </div>
             <div className="rounded-xl bg-slate-50 p-3">
+              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Trọng số</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">{Math.round(task.weight)}</p>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-3 sm:col-span-2">
               <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Thời lượng</p>
               <p className="mt-1 text-lg font-semibold text-slate-900">{durationLabel}</p>
               {durationDays ? <p className="mt-1 text-xs text-slate-500">{durationDays} ngày theo lịch</p> : null}
@@ -610,10 +635,12 @@ function TaskTimelineBar({
           </div>
 
           <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
-            <p className="text-xs text-slate-500">Hover để xem nhanh hoặc chạm vào bar trên thiết bị cảm ứng.</p>
+            <p className="min-w-0 flex-1 text-xs text-slate-500">
+              Hover để xem nhanh hoặc chạm vào bar trên thiết bị cảm ứng.
+            </p>
             <Link
               href={`/tasks/${task.id}`}
-              className="inline-flex h-9 items-center rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700"
+              className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700"
             >
               Mở chi tiết
             </Link>
@@ -649,10 +676,13 @@ function TasksPageContent() {
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [quickEditState, setQuickEditState] = useState<QuickEditState>({
     progress: "0",
+    weight: "1",
     startDate: "",
     endDate: "",
   });
+  const [assigneeDraftByTaskId, setAssigneeDraftByTaskId] = useState<Record<string, string>>({});
   const [savingTaskId, setSavingTaskId] = useState<string | null>(null);
+  const [savingAssigneeTaskId, setSavingAssigneeTaskId] = useState<string | null>(null);
   const timelineScrollRef = useRef<HTMLDivElement | null>(null);
   const pendingViewportRatioRef = useRef<number | null>(null);
   const hasAutoScrolledToTodayRef = useRef(false);
@@ -689,52 +719,64 @@ function TasksPageContent() {
       setTaskLoadError(null);
 
       try {
-        const { data, error } = await supabase
-          .from("tasks")
-          .select(`
-            id,
-            name,
-            key_result_id,
-            assignee_id,
-            type,
-            status,
-            progress,
-            weight,
-            start_date,
-            end_date,
-            created_at,
-            key_result:key_results!tasks_key_result_id_fkey(
+        const [
+          { data, error },
+          { data: profilesData, error: profilesError },
+        ] = await Promise.all([
+          supabase
+            .from("tasks")
+            .select(`
               id,
-              goal_id,
               name,
-              current,
-              target,
-              unit,
-              start_value,
+              key_result_id,
+              assignee_id,
+              profile_id,
+              type,
+              status,
+              progress,
               weight,
               start_date,
               end_date,
-              goal:goals!key_results_goal_id_fkey(
+              created_at,
+              key_result:key_results!tasks_key_result_id_fkey(
+                id,
+                goal_id,
+                name,
+                current,
+                target,
+                unit,
+                start_value,
+                weight,
+                start_date,
+                end_date,
+                goal:goals!key_results_goal_id_fkey(
+                  id,
+                  name,
+                  start_date,
+                  end_date
+                )
+              ),
+              assignee:profiles!tasks_assignee_id_fkey(
                 id,
                 name,
-                start_date,
-                end_date
+                email
+              ),
+              profile:profiles!tasks_profile_id_fkey(
+                id,
+                name,
+                email
               )
-            ),
-            assignee:profiles!tasks_assignee_id_fkey(
-              id,
-              name,
-              email
-            )
-          `)
-          .order("created_at", { ascending: false });
+            `)
+            .order("created_at", { ascending: false }),
+          supabase.from("profiles").select("id,name,email").order("name", { ascending: true }),
+        ]);
 
         if (!isActive) {
           return;
         }
 
-        if (error) {
-          setTaskLoadError(error.message || "Không tải được danh sách công việc.");
+        if (error || profilesError) {
+          setTaskLoadError(error?.message || profilesError?.message || "Không tải được danh sách công việc.");
           setTasks([]);
           setGoalFilters([]);
           setKeyResultFilters([]);
@@ -748,6 +790,10 @@ function TasksPageContent() {
             Array.isArray(rawRow.key_result) ? rawRow.key_result[0] ?? null : rawRow.key_result,
           );
           const assignee = normalizeProfileLite(Array.isArray(rawRow.assignee) ? rawRow.assignee[0] ?? null : rawRow.assignee);
+          const fallbackAssignee = normalizeProfileLite(
+            Array.isArray(rawRow.profile) ? rawRow.profile[0] ?? null : rawRow.profile,
+          );
+          const effectiveAssignee = assignee ?? fallbackAssignee;
           const goalName = keyResult?.goal?.name ?? "Chưa có mục tiêu";
           const keyResultName = keyResult?.name ?? (row.key_result_id ? "KR không khả dụng" : "Chưa gắn key result");
           const keyResultMetric = keyResult
@@ -756,7 +802,12 @@ function TasksPageContent() {
                 keyResult.unit,
               )} → ${formatKeyResultMetric(keyResult.target, keyResult.unit)} ${formatKeyResultUnit(keyResult.unit)}`
             : "Chưa có số liệu KR";
-          const assigneeName = assignee?.name?.trim() || assignee?.email?.trim() || "Chưa gán";
+          const assigneeName = effectiveAssignee?.name?.trim() || effectiveAssignee?.email?.trim() || "Chưa gán";
+          const effectiveAssigneeId = row.assignee_id
+            ? String(row.assignee_id)
+            : row.profile_id
+              ? String(row.profile_id)
+              : null;
 
           return {
             id: String(row.id),
@@ -768,7 +819,7 @@ function TasksPageContent() {
             keyResultMetric,
             keyResult,
             type: row.type ? String(row.type) : null,
-            assigneeId: row.assignee_id ? String(row.assignee_id) : null,
+            assigneeId: effectiveAssigneeId,
             assigneeName,
             assigneeShort: toShortName(assigneeName),
             status: normalizeTimelineStatus(row.status),
@@ -778,6 +829,7 @@ function TasksPageContent() {
               status: row.status,
               progress: row.progress,
             }),
+            weight: typeof row.weight === "number" ? row.weight : Number(row.weight ?? 1),
             createdAt: row.created_at ? String(row.created_at) : null,
             startDate: row.start_date ? String(row.start_date) : null,
             endDate: row.end_date ? String(row.end_date) : null,
@@ -806,18 +858,15 @@ function TasksPageContent() {
                     name: task.keyResultName,
                     goalId: task.goalId as string,
                   },
-                ]),
+              ]),
             ).values(),
           ),
         );
         setAssigneeFilters(
-          Array.from(
-            new Map(
-              mappedTasks
-                .filter((task) => task.assigneeId)
-                .map((task) => [task.assigneeId as string, { id: task.assigneeId as string, name: task.assigneeName }]),
-            ).values(),
-          ),
+          ((profilesData ?? []) as ProfileLiteRow[]).map((profile) => ({
+            id: String(profile.id),
+            name: profile.name?.trim() || profile.email?.trim() || "Không rõ",
+          })),
         );
       } catch {
         if (!isActive) {
@@ -1048,9 +1097,7 @@ function TasksPageContent() {
       : structureMode === "key_result"
         ? noTimelineKeyResultItems.length
         : noTimelineTasks.length;
-  const zoomPercentLabel = `${Math.round(zoomLevel * 100)}%`;
-  const canZoomOut = zoomLevel > TIMELINE_MIN_ZOOM;
-  const canZoomIn = zoomLevel < TIMELINE_MAX_ZOOM;
+  const leftPanelWidth = structureMode === "task" ? TASK_LEFT_PANEL_WIDTH : DEFAULT_LEFT_PANEL_WIDTH;
 
   const getItemBarLayout = useCallback(
     (startDate: string | null, endDate: string | null, minBarWidth?: number) =>
@@ -1072,9 +1119,9 @@ function TasksPageContent() {
       return null;
     }
 
-    const centeredOffset = Math.max(0, container.scrollLeft + container.clientWidth / 2 - LEFT_PANEL_WIDTH);
+    const centeredOffset = Math.max(0, container.scrollLeft + container.clientWidth / 2 - leftPanelWidth);
     return centeredOffset / Math.max(1, timelineWidth);
-  }, [timelineWidth]);
+  }, [leftPanelWidth, timelineWidth]);
 
   const restoreViewportRatio = useCallback(
     (ratio: number) => {
@@ -1083,10 +1130,10 @@ function TasksPageContent() {
         return;
       }
 
-      const nextCenter = LEFT_PANEL_WIDTH + timelineWidth * Math.min(1, Math.max(0, ratio));
+      const nextCenter = leftPanelWidth + timelineWidth * Math.min(1, Math.max(0, ratio));
       container.scrollLeft = Math.max(0, nextCenter - container.clientWidth / 2);
     },
-    [timelineWidth],
+    [leftPanelWidth, timelineWidth],
   );
 
   const preserveTimelineViewport = useCallback(() => {
@@ -1100,24 +1147,43 @@ function TasksPageContent() {
         return;
       }
 
-      const targetScrollLeft = Math.max(0, LEFT_PANEL_WIDTH + todayIndicatorOffset - container.clientWidth * 0.42);
+      const targetScrollLeft = Math.max(0, leftPanelWidth + todayIndicatorOffset - container.clientWidth * 0.42);
       container.scrollTo({
         left: targetScrollLeft,
         behavior,
       });
     },
-    [todayIndicatorOffset],
+    [leftPanelWidth, todayIndicatorOffset],
   );
 
   const handleTimelineWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
     const container = timelineScrollRef.current;
-    if (!container || !event.shiftKey || Math.abs(event.deltaY) < Math.abs(event.deltaX)) {
+    if (!container) {
+      return;
+    }
+
+    if (event.ctrlKey || event.metaKey) {
+      const nextZoom = clampTimelineZoom(
+        zoomLevel + (event.deltaY < 0 ? TIMELINE_ZOOM_STEP : -TIMELINE_ZOOM_STEP),
+      );
+
+      if (nextZoom === zoomLevel) {
+        return;
+      }
+
+      event.preventDefault();
+      preserveTimelineViewport();
+      setZoomLevel(nextZoom);
+      return;
+    }
+
+    if (!event.shiftKey || Math.abs(event.deltaY) < Math.abs(event.deltaX)) {
       return;
     }
 
     event.preventDefault();
     container.scrollLeft += event.deltaY;
-  }, []);
+  }, [preserveTimelineViewport, zoomLevel]);
 
   const updateStructureMode = useCallback(
     (nextMode: StructureMode) => {
@@ -1141,35 +1207,6 @@ function TasksPageContent() {
     [preserveTimelineViewport, timeScale],
   );
 
-  const handleZoomChange = useCallback(
-    (delta: number) => {
-      const nextZoom = clampTimelineZoom(zoomLevel + delta);
-      if (nextZoom === zoomLevel) {
-        return;
-      }
-      preserveTimelineViewport();
-      setZoomLevel(nextZoom);
-    },
-    [preserveTimelineViewport, zoomLevel],
-  );
-
-  const handleFitTimeline = useCallback(() => {
-    const container = timelineScrollRef.current;
-    if (!container || periods.length === 0) {
-      return;
-    }
-
-    const availableWidth = Math.max(240, container.clientWidth - LEFT_PANEL_WIDTH - 24);
-    pendingViewportRatioRef.current = 0;
-    setZoomLevel(
-      getFitZoomLevel({
-        availableWidth,
-        periodCount: periods.length,
-        scale: timeScale,
-      }),
-    );
-  }, [periods.length, timeScale]);
-
   const handleJumpToToday = useCallback(() => {
     hasAutoScrolledToTodayRef.current = true;
     scrollTimelineToToday("smooth");
@@ -1177,8 +1214,10 @@ function TasksPageContent() {
 
   const openQuickEdit = (task: TaskItem) => {
     setEditingTaskId(task.id);
+    setTaskLoadError(null);
     setQuickEditState({
       progress: String(task.progress),
+      weight: String(Math.round(task.weight)),
       startDate: task.startDate ?? task.keyResult?.start_date ?? "",
       endDate: task.endDate ?? task.keyResult?.end_date ?? "",
     });
@@ -1190,11 +1229,16 @@ function TasksPageContent() {
     }
 
     const safeProgress = clampProgress(Number(quickEditState.progress));
+    const safeWeight = Number(quickEditState.weight);
     if (
       (quickEditState.startDate && !quickEditState.endDate) ||
       (!quickEditState.startDate && quickEditState.endDate)
     ) {
       setTaskLoadError("Vui lòng nhập đủ ngày bắt đầu và ngày kết thúc hoặc để trống cả hai.");
+      return;
+    }
+    if (!Number.isFinite(safeWeight) || safeWeight <= 0) {
+      setTaskLoadError("Trọng số công việc phải lớn hơn 0.");
       return;
     }
     if (!isDateRangeOrdered(quickEditState.startDate || null, quickEditState.endDate || null)) {
@@ -1207,6 +1251,7 @@ function TasksPageContent() {
       .from("tasks")
       .update({
         progress: safeProgress,
+        weight: Math.round(safeWeight),
         start_date: quickEditState.startDate.trim() || null,
         end_date: quickEditState.endDate.trim() || null,
       })
@@ -1224,6 +1269,7 @@ function TasksPageContent() {
           ? {
               ...item,
               progress: safeProgress,
+              weight: Math.round(safeWeight),
               startDate: quickEditState.startDate.trim() || null,
               endDate: quickEditState.endDate.trim() || null,
             }
@@ -1232,6 +1278,52 @@ function TasksPageContent() {
     );
     setEditingTaskId(null);
     setSavingTaskId(null);
+  };
+
+  const handleAssignTaskAssignee = async (task: TaskItem) => {
+    const nextAssigneeId = assigneeDraftByTaskId[task.id] ?? task.assigneeId ?? "unassigned";
+
+    if (savingAssigneeTaskId || nextAssigneeId === "unassigned" || nextAssigneeId === task.assigneeId) {
+      return;
+    }
+
+    setTaskLoadError(null);
+    setSavingAssigneeTaskId(task.id);
+
+    const updateResult = await supabase
+      .from("tasks")
+      .update({
+        assignee_id: nextAssigneeId,
+        profile_id: nextAssigneeId,
+      })
+      .eq("id", task.id);
+
+    if (updateResult.error) {
+      setTaskLoadError(updateResult.error.message || "Không thể gán người phụ trách cho công việc.");
+      setSavingAssigneeTaskId(null);
+      return;
+    }
+
+    const assigneeName = assigneeFilters.find((item) => item.id === nextAssigneeId)?.name ?? "Chưa gán";
+
+    setTasks((prev) =>
+      prev.map((item) =>
+        item.id === task.id
+          ? {
+              ...item,
+              assigneeId: nextAssigneeId,
+              assigneeName,
+              assigneeShort: toShortName(assigneeName),
+            }
+          : item,
+      ),
+    );
+    setAssigneeDraftByTaskId((prev) => {
+      const next = { ...prev };
+      delete next[task.id];
+      return next;
+    });
+    setSavingAssigneeTaskId(null);
   };
 
   const addTaskHref = useMemo(() => {
@@ -1449,27 +1541,15 @@ function TasksPageContent() {
                           Tháng
                         </ScaleButton>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <ToolbarButton onClick={() => handleZoomChange(-TIMELINE_ZOOM_STEP)} disabled={!canZoomOut}>
-                          Thu nhỏ
-                        </ToolbarButton>
-                        <div className="inline-flex h-9 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700">
-                          {zoomPercentLabel}
-                        </div>
-                        <ToolbarButton onClick={() => handleZoomChange(TIMELINE_ZOOM_STEP)} disabled={!canZoomIn}>
-                          Phóng to
-                        </ToolbarButton>
-                        <ToolbarButton onClick={handleFitTimeline}>Vừa khung</ToolbarButton>
-                        <ToolbarButton
-                          onClick={handleJumpToToday}
-                          active={todayIndicatorOffset !== null}
-                          disabled={todayIndicatorOffset === null}
-                        >
-                          Hôm nay
-                        </ToolbarButton>
-                      </div>
+                      <ToolbarButton
+                        onClick={handleJumpToToday}
+                        active={todayIndicatorOffset !== null}
+                        disabled={todayIndicatorOffset === null}
+                      >
+                        Hôm nay
+                      </ToolbarButton>
                       <p className="text-sm text-slate-500">
-                        Cuộn ngang hoặc giữ Shift + lăn chuột để xem thêm mốc thời gian. Dùng scale và zoom để đổi mật độ hiển thị.
+                        Giữ Ctrl/Cmd + lăn chuột để zoom. Giữ Shift + lăn chuột để cuộn ngang trên timeline.
                       </p>
                     </>
                   ) : null}
@@ -1535,10 +1615,10 @@ function TasksPageContent() {
                   onWheel={handleTimelineWheel}
                   className="overflow-x-auto overflow-y-hidden rounded-2xl overscroll-x-contain scroll-smooth [scrollbar-gutter:stable]"
                 >
-                  <div className="min-w-full" style={{ width: LEFT_PANEL_WIDTH + timelineWidth }}>
+                  <div className="min-w-full" style={{ width: leftPanelWidth + timelineWidth }}>
                     <div
                       className="grid border-b border-slate-200 bg-slate-50"
-                      style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
+                      style={{ gridTemplateColumns: `${leftPanelWidth}px ${timelineWidth}px` }}
                     >
                       <div className={`sticky left-0 z-30 border-r border-slate-200 bg-slate-50 px-5 py-4 ${STICKY_PANEL_SHADOW}`}>
                         <p className="text-sm font-semibold text-slate-900">Danh sách mục tiêu</p>
@@ -1575,7 +1655,7 @@ function TasksPageContent() {
                         <div
                           key={goal.id}
                           className="grid border-b border-slate-100"
-                          style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
+                          style={{ gridTemplateColumns: `${leftPanelWidth}px ${timelineWidth}px` }}
                         >
                           <div className={`sticky left-0 z-20 border-r border-slate-200 bg-white px-5 py-4 ${STICKY_PANEL_SHADOW}`}>
                             <div className="flex items-center justify-between gap-3">
@@ -1643,10 +1723,10 @@ function TasksPageContent() {
                   onWheel={handleTimelineWheel}
                   className="overflow-x-auto overflow-y-hidden rounded-2xl overscroll-x-contain scroll-smooth [scrollbar-gutter:stable]"
                 >
-                  <div className="min-w-full" style={{ width: LEFT_PANEL_WIDTH + timelineWidth }}>
+                  <div className="min-w-full" style={{ width: leftPanelWidth + timelineWidth }}>
                     <div
                       className="grid border-b border-slate-200 bg-slate-50"
-                      style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
+                      style={{ gridTemplateColumns: `${leftPanelWidth}px ${timelineWidth}px` }}
                     >
                       <div className={`sticky left-0 z-30 border-r border-slate-200 bg-slate-50 px-5 py-4 ${STICKY_PANEL_SHADOW}`}>
                         <p className="text-sm font-semibold text-slate-900">Danh sách key result</p>
@@ -1683,7 +1763,7 @@ function TasksPageContent() {
                         <div
                           key={keyResult.id}
                           className="grid border-b border-slate-100"
-                          style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
+                          style={{ gridTemplateColumns: `${leftPanelWidth}px ${timelineWidth}px` }}
                         >
                           <div className={`sticky left-0 z-20 border-r border-slate-200 bg-white px-5 py-4 ${STICKY_PANEL_SHADOW}`}>
                             <div className="flex items-start justify-between gap-3">
@@ -1757,11 +1837,11 @@ function TasksPageContent() {
                 >
                   <div
                     className="min-w-full"
-                    style={{ width: LEFT_PANEL_WIDTH + timelineWidth }}
+                    style={{ width: leftPanelWidth + timelineWidth }}
                   >
                     <div
                       className="grid border-b border-slate-200 bg-slate-50"
-                      style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
+                      style={{ gridTemplateColumns: `${leftPanelWidth}px ${timelineWidth}px` }}
                     >
                       <div className={`sticky left-0 z-30 border-r border-slate-200 bg-slate-50 px-5 py-4 ${STICKY_PANEL_SHADOW}`}>
                         <p className="text-sm font-semibold text-slate-900">Danh sách công việc</p>
@@ -1813,7 +1893,7 @@ function TasksPageContent() {
                         <div
                           key={task.id}
                           className="grid border-b border-slate-100 last:border-b-0"
-                          style={{ gridTemplateColumns: `${LEFT_PANEL_WIDTH}px ${timelineWidth}px` }}
+                          style={{ gridTemplateColumns: `${leftPanelWidth}px ${timelineWidth}px` }}
                         >
                           <div className={`sticky left-0 z-10 border-r border-slate-200 bg-white px-5 py-3 ${STICKY_PANEL_SHADOW}`}>
                             <div className="flex items-start justify-between gap-3">
@@ -1831,12 +1911,11 @@ function TasksPageContent() {
                                   {task.assigneeName}
                                 </p>
                                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                                  <StatusBadge status={task.status} />
-                                  <span className="text-xs font-medium text-slate-500">{task.progress}%</span>
-                                  <span className="text-xs text-slate-500">
-                                    {formatTimelineRangeVi(task.startDate, task.endDate, {
-                                      fallback: "Công việc chưa có mốc thời gian",
-                                    })}
+                                  <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">
+                                    Tiến độ {task.progress}%
+                                  </span>
+                                  <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">
+                                    Trọng số {Math.round(task.weight)}%
                                   </span>
                                 </div>
                                 {alignmentWarning ? (
@@ -1854,8 +1933,8 @@ function TasksPageContent() {
 
                             {quickEditing ? (
                               <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                                <div className="grid gap-3 md:grid-cols-[140px_160px_160px]">
-                                  <label className="space-y-1 text-xs font-medium text-slate-600">
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                  <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
                                     <span>Tiến độ</span>
                                     <input
                                       type="number"
@@ -1871,7 +1950,28 @@ function TasksPageContent() {
                                       className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                                     />
                                   </label>
-                                  <label className="space-y-1 text-xs font-medium text-slate-600">
+                                  <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
+                                    <span>Trọng số (%)</span>
+                                    <div className="relative">
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        step="1"
+                                        value={quickEditState.weight}
+                                        onChange={(event) =>
+                                          setQuickEditState((prev) => ({
+                                            ...prev,
+                                            weight: event.target.value,
+                                          }))
+                                        }
+                                        className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 pr-8 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                      />
+                                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">
+                                        %
+                                      </span>
+                                    </div>
+                                  </label>
+                                  <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
                                     <span>Ngày bắt đầu</span>
                                     <input
                                       type="date"
@@ -1885,7 +1985,7 @@ function TasksPageContent() {
                                       className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                                     />
                                   </label>
-                                  <label className="space-y-1 text-xs font-medium text-slate-600">
+                                  <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
                                     <span>Ngày kết thúc</span>
                                     <input
                                       type="date"
@@ -2067,6 +2167,7 @@ function TasksPageContent() {
                           <th className="px-4 py-3 font-semibold">Người phụ trách</th>
                           <th className="px-4 py-3 font-semibold">Trạng thái</th>
                           <th className="px-4 py-3 font-semibold">Tiến độ</th>
+                          <th className="px-4 py-3 font-semibold">Trọng số</th>
                           <th className="px-4 py-3 font-semibold">Thời gian thực thi</th>
                           <th className="px-4 py-3 font-semibold">Thao tác</th>
                         </tr>
@@ -2121,6 +2222,9 @@ function TasksPageContent() {
                                     <p className="mt-2 text-xs text-slate-500">{task.progress}%</p>
                                   </div>
                                 </td>
+                                <td className="px-4 py-4 text-sm font-semibold text-slate-700">
+                                  {Math.round(task.weight)}
+                                </td>
                                 <td className="px-4 py-4 text-sm text-slate-600">
                                   <p>
                                     {formatTimelineRangeVi(task.startDate, task.endDate, {
@@ -2157,9 +2261,9 @@ function TasksPageContent() {
                               </tr>
                               {quickEditing ? (
                                 <tr className="border-b border-slate-100 bg-slate-50">
-                                  <td colSpan={8} className="px-5 py-4">
-                                    <div className="grid gap-3 md:grid-cols-[140px_180px_180px_auto]">
-                                      <label className="space-y-1 text-xs font-medium text-slate-600">
+                                  <td colSpan={9} className="px-5 py-4">
+                                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[120px_120px_180px_180px_minmax(0,1fr)]">
+                                      <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
                                         <span>Tiến độ</span>
                                         <input
                                           type="number"
@@ -2175,7 +2279,28 @@ function TasksPageContent() {
                                           className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                                         />
                                       </label>
-                                      <label className="space-y-1 text-xs font-medium text-slate-600">
+                                      <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
+                                        <span>Trọng số (%)</span>
+                                        <div className="relative">
+                                          <input
+                                            type="number"
+                                            min={1}
+                                            step="1"
+                                            value={quickEditState.weight}
+                                            onChange={(event) =>
+                                              setQuickEditState((prev) => ({
+                                                ...prev,
+                                                weight: event.target.value,
+                                              }))
+                                            }
+                                            className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 pr-8 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                          />
+                                          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">
+                                            %
+                                          </span>
+                                        </div>
+                                      </label>
+                                      <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
                                         <span>Ngày bắt đầu</span>
                                         <input
                                           type="date"
@@ -2189,7 +2314,7 @@ function TasksPageContent() {
                                           className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                                         />
                                       </label>
-                                      <label className="space-y-1 text-xs font-medium text-slate-600">
+                                      <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
                                         <span>Ngày kết thúc</span>
                                         <input
                                           type="date"
@@ -2204,7 +2329,7 @@ function TasksPageContent() {
                                           className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                                         />
                                       </label>
-                                      <div className="flex items-end justify-end gap-2">
+                                      <div className="flex items-end justify-end gap-2 md:col-span-2 xl:col-span-1">
                                         <button
                                           type="button"
                                           onClick={() => setEditingTaskId(null)}
@@ -2333,6 +2458,46 @@ function TasksPageContent() {
                                   <span>{task.assigneeName}</span>
                                 </div>
                                 <p className="mt-2 text-xs text-slate-500">{getTaskTimelineIssue(task)}</p>
+                                {!task.assigneeId && canCreateTask ? (
+                                  <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                                    <p className="text-xs font-semibold text-slate-700">Gán người phụ trách</p>
+                                    <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                                      <Select
+                                        value={assigneeDraftByTaskId[task.id] ?? "unassigned"}
+                                        onValueChange={(value) =>
+                                          setAssigneeDraftByTaskId((prev) => ({
+                                            ...prev,
+                                            [task.id]: value,
+                                          }))
+                                        }
+                                      >
+                                        <SelectTrigger className="h-9 flex-1 bg-white">
+                                          <SelectValue placeholder="Chọn người phụ trách" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="unassigned">Chọn người phụ trách</SelectItem>
+                                          {assigneeFilters.map((assignee) => (
+                                            <SelectItem key={assignee.id} value={assignee.id}>
+                                              {assignee.name}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleAssignTaskAssignee(task)}
+                                        disabled={
+                                          savingAssigneeTaskId === task.id ||
+                                          !assigneeDraftByTaskId[task.id] ||
+                                          assigneeDraftByTaskId[task.id] === "unassigned"
+                                        }
+                                        className="inline-flex h-9 items-center justify-center rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                                      >
+                                        {savingAssigneeTaskId === task.id ? "Đang gán..." : "Gán"}
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : null}
                               </div>
                             </div>
                           ))}
