@@ -1,117 +1,63 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { WorkspaceSidebar } from "@/components/workspace-sidebar";
-import { ClearableNumberInput } from "@/components/ui/clearable-number-input";
+import { LinkedKRCard } from "@/components/tasks/task-detail/linked-kr-card";
+import { TaskDetailHeader } from "@/components/tasks/task-detail/task-detail-header";
+import { TaskExecutionSection } from "@/components/tasks/task-detail/task-execution-section";
+import { TaskMetaSidebar } from "@/components/tasks/task-detail/task-meta-sidebar";
+import { TaskNotesCard } from "@/components/tasks/task-detail/task-notes-card";
+import { TaskOverviewCard } from "@/components/tasks/task-detail/task-overview-card";
+import type {
+  GoalLiteRow,
+  KeyResultLiteRow,
+  ProfileLiteRow,
+  TaskFormState,
+  TaskRow,
+  TaskTimelineFormState,
+  TaskDetailBreadcrumb,
+} from "@/components/tasks/task-detail/types";
 import {
-  formatKeyResultMetric,
-  formatKeyResultUnit,
-  getKeyResultProgressHint,
-} from "@/lib/constants/key-results";
+  buildTaskFormState,
+  buildTaskTimelineForm,
+  clampProgress,
+  formatDateTime,
+  getTaskTypeLabel,
+} from "@/components/tasks/task-detail/utils";
+import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import {
   getTaskProgressByType,
-  getTaskProgressHint,
   normalizeTaskStatus,
-  TASK_STATUSES,
-  TASK_TYPES,
-  type TaskStatusValue,
-  type TaskTypeValue,
 } from "@/lib/constants/tasks";
-import { buildKeyResultProgressMap, getComputedTaskProgress } from "@/lib/okr";
+import { buildKeyResultProgressMap } from "@/lib/okr";
 import { supabase } from "@/lib/supabase";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import {
-  formatTimelineRangeVi,
-  getTimelineMissingReason,
-  getTimelineOutsideParentWarning,
-  isDateRangeOrdered,
-} from "@/lib/timeline";
+import { formatTimelineRangeVi, getTimelineOutsideParentWarning, isDateRangeOrdered } from "@/lib/timeline";
 
-type TaskRow = {
-  id: string;
-  key_result_id: string | null;
-  profile_id: string | null;
-  creator_profile_id: string | null;
-  type: string | null;
-  name: string;
-  description: string | null;
-  progress: number | null;
-  weight: number | null;
-  status: string | null;
-  note: string | null;
-  start_date: string | null;
-  end_date: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-  key_result?: KeyResultLiteRow | null;
+const DEFAULT_FORM: TaskFormState = {
+  name: "",
+  description: "",
+  note: "",
+  isRecurring: false,
+  hypothesis: "",
+  result: "",
+  type: "kpi",
+  status: "todo",
+  progress: 0,
+  weight: 1,
 };
 
-type GoalLiteRow = {
-  id: string;
-  name: string;
-  start_date?: string | null;
-  end_date?: string | null;
+const DEFAULT_TIMELINE_FORM: TaskTimelineFormState = {
+  startDate: "",
+  endDate: "",
 };
 
-type KeyResultLiteRow = {
-  id: string;
-  goal_id: string | null;
-  name: string;
-  current: number | null;
-  start_value: number | null;
-  target: number | null;
-  unit: string | null;
-  weight: number | null;
-  start_date: string | null;
-  end_date: string | null;
-  goal?: GoalLiteRow | null;
-};
-
-type ProfileLiteRow = {
-  id: string;
-  name: string | null;
-  email: string | null;
-};
-
-type TaskFormState = {
-  name: string;
-  description: string;
-  note: string;
-  type: TaskTypeValue;
-  status: TaskStatusValue;
-  progress: number;
-  weight: number;
-};
-
-type TaskTimelineFormState = {
-  startDate: string;
-  endDate: string;
-};
-
-const statusLabelMap = TASK_STATUSES.reduce<Record<string, string>>((acc, status) => {
-  acc[status.value] = status.label;
-  return acc;
-}, {});
-
-const clampProgress = (value: number | null) => {
-  const safe = Number.isFinite(value) ? Number(value) : 0;
-  return Math.min(100, Math.max(0, Math.round(safe)));
-};
-
-const formatDateTime = (value: string | null) => {
-  if (!value) {
-    return "Chưa có";
+const toNumber = (value: unknown, fallback: number) => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
   }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Không hợp lệ";
-  }
-  return new Intl.DateTimeFormat("vi-VN", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(date);
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 };
 
 const normalizeGoalLite = (value: unknown): GoalLiteRow | null => {
@@ -120,11 +66,67 @@ const normalizeGoalLite = (value: unknown): GoalLiteRow | null => {
   }
 
   const record = value as Record<string, unknown>;
+  if (!record.id || !record.name) {
+    return null;
+  }
+
   return {
     id: String(record.id),
     name: String(record.name),
+    type: record.type ? String(record.type) : null,
     start_date: record.start_date ? String(record.start_date) : null,
     end_date: record.end_date ? String(record.end_date) : null,
+  };
+};
+
+const normalizeKeyResultLite = (value: unknown): KeyResultLiteRow | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (!record.id || !record.name) {
+    return null;
+  }
+
+  const rawGoal = Array.isArray(record.goal) ? record.goal[0] ?? null : record.goal ?? null;
+
+  return {
+    id: String(record.id),
+    goal_id: record.goal_id ? String(record.goal_id) : null,
+    name: String(record.name),
+    type: record.type ? String(record.type) : null,
+    contribution_type: record.contribution_type ? String(record.contribution_type) : null,
+    current: toNumber(record.current, 0),
+    start_value: toNumber(record.start_value, 0),
+    target: toNumber(record.target, 0),
+    unit: record.unit ? String(record.unit) : null,
+    weight: toNumber(record.weight, 1),
+    start_date: record.start_date ? String(record.start_date) : null,
+    end_date: record.end_date ? String(record.end_date) : null,
+    goal: normalizeGoalLite(rawGoal),
+  };
+};
+
+const normalizeTaskRecord = (
+  value: TaskRow,
+  options?: {
+    creatorProfileId?: string | null;
+    keyResult?: KeyResultLiteRow | null;
+  },
+): TaskRow => {
+  const rawKeyResult = Array.isArray((value as TaskRow & { key_result?: unknown }).key_result)
+    ? ((value as TaskRow & { key_result?: Array<Record<string, unknown>> }).key_result?.[0] ?? null)
+    : (((value as TaskRow & { key_result?: Record<string, unknown> | null }).key_result) ?? null);
+
+  return {
+    ...value,
+    assignee_id: value.assignee_id ? String(value.assignee_id) : null,
+    profile_id: value.profile_id ? String(value.profile_id) : null,
+    creator_profile_id: value.creator_profile_id
+      ? String(value.creator_profile_id)
+      : options?.creatorProfileId ?? null,
+    key_result: normalizeKeyResultLite(rawKeyResult) ?? options?.keyResult ?? null,
   };
 };
 
@@ -133,20 +135,12 @@ export default function TaskDetailPage() {
   const taskId = typeof params.taskId === "string" ? params.taskId : "";
 
   const [task, setTask] = useState<TaskRow | null>(null);
-  const [goalName, setGoalName] = useState<string>("Chưa có mục tiêu");
   const [keyResult, setKeyResult] = useState<KeyResultLiteRow | null>(null);
-  const [keyResultProgress, setKeyResultProgress] = useState(0);
-  const [creatorName, setCreatorName] = useState<string>("Chưa rõ");
-  const [assigneeName, setAssigneeName] = useState<string>("Chưa gán");
-  const [form, setForm] = useState<TaskFormState>({
-    name: "",
-    description: "",
-    note: "",
-    type: "kpi",
-    status: "todo",
-    progress: 0,
-    weight: 1,
-  });
+  const [creatorName, setCreatorName] = useState("Chưa rõ");
+  const [assigneeName, setAssigneeName] = useState("Chưa gán");
+  const [form, setForm] = useState<TaskFormState>(DEFAULT_FORM);
+  const [taskTimelineForm, setTaskTimelineForm] = useState<TaskTimelineFormState>(DEFAULT_TIMELINE_FORM);
+  const [progressInput, setProgressInput] = useState("0");
 
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -156,20 +150,19 @@ export default function TaskDetailPage() {
   const [isEditingTaskInfo, setIsEditingTaskInfo] = useState(false);
   const [isEditingExecution, setIsEditingExecution] = useState(false);
   const [isEditingTaskTimeline, setIsEditingTaskTimeline] = useState(false);
-  const [progressInput, setProgressInput] = useState("0");
   const [isSavingTaskInfo, setIsSavingTaskInfo] = useState(false);
   const [isSavingExecution, setIsSavingExecution] = useState(false);
   const [isSavingTaskTimeline, setIsSavingTaskTimeline] = useState(false);
-  const [taskTimelineForm, setTaskTimelineForm] = useState<TaskTimelineFormState>({
-    startDate: "",
-    endDate: "",
-  });
 
   useEffect(() => {
     if (!taskId) {
       setTask(null);
       setKeyResult(null);
-      setKeyResultProgress(0);
+      setForm(DEFAULT_FORM);
+      setTaskTimelineForm(DEFAULT_TIMELINE_FORM);
+      setProgressInput("0");
+      setCreatorName("Chưa rõ");
+      setAssigneeName("Chưa gán");
       setLoadError("Liên kết công việc không hợp lệ.");
       setIsLoading(false);
       return;
@@ -192,6 +185,7 @@ export default function TaskDetailPage() {
           .select(`
             id,
             key_result_id,
+            assignee_id,
             profile_id,
             creator_profile_id,
             type,
@@ -201,6 +195,9 @@ export default function TaskDetailPage() {
             weight,
             status,
             note,
+            is_recurring,
+            hypothesis,
+            result,
             start_date,
             end_date,
             created_at,
@@ -209,6 +206,8 @@ export default function TaskDetailPage() {
               id,
               goal_id,
               name,
+              type,
+              contribution_type,
               current,
               start_value,
               target,
@@ -219,6 +218,7 @@ export default function TaskDetailPage() {
               goal:goals!key_results_goal_id_fkey(
                 id,
                 name,
+                type,
                 start_date,
                 end_date
               )
@@ -235,136 +235,58 @@ export default function TaskDetailPage() {
           if (taskError.code === "42501") {
             throw new Error("Bạn không có quyền xem công việc này.");
           }
+
           throw new Error(taskError.message || "Không tải được chi tiết công việc.");
         }
 
-        const typedTask = (taskData ?? null) as TaskRow | null;
-        if (!typedTask) {
+        if (!taskData) {
           throw new Error("Không tìm thấy công việc.");
         }
 
-        const hasCreatorField = Object.prototype.hasOwnProperty.call(taskData ?? {}, "creator_profile_id");
-        const explicitCreatorProfileId = hasCreatorField ? (typedTask.creator_profile_id ?? null) : null;
-
-        const normalizedTask: TaskRow = {
-          ...typedTask,
-          creator_profile_id: explicitCreatorProfileId,
-        };
-        const rawKeyResult = Array.isArray((normalizedTask as unknown as { key_result?: unknown }).key_result)
-          ? ((normalizedTask as unknown as { key_result?: Array<Record<string, unknown>> }).key_result?.[0] ?? null)
-          : (((normalizedTask as unknown as { key_result?: Record<string, unknown> | null }).key_result) ?? null);
-        const normalizedKeyResult = rawKeyResult
-          ? {
-              id: String(rawKeyResult.id),
-              goal_id: rawKeyResult.goal_id ? String(rawKeyResult.goal_id) : null,
-              name: String(rawKeyResult.name),
-              current:
-                typeof rawKeyResult.current === "number"
-                  ? rawKeyResult.current
-                  : Number(rawKeyResult.current ?? 0),
-              start_value:
-                typeof rawKeyResult.start_value === "number"
-                  ? rawKeyResult.start_value
-                  : Number(rawKeyResult.start_value ?? 0),
-              target:
-                typeof rawKeyResult.target === "number"
-                  ? rawKeyResult.target
-                  : Number(rawKeyResult.target ?? 0),
-              unit: rawKeyResult.unit ? String(rawKeyResult.unit) : null,
-              weight:
-                typeof rawKeyResult.weight === "number"
-                  ? rawKeyResult.weight
-                  : Number(rawKeyResult.weight ?? 1),
-              start_date: rawKeyResult.start_date ? String(rawKeyResult.start_date) : null,
-              end_date: rawKeyResult.end_date ? String(rawKeyResult.end_date) : null,
-              goal: Array.isArray(rawKeyResult.goal)
-                ? normalizeGoalLite(rawKeyResult.goal[0] ?? null)
-                : normalizeGoalLite(rawKeyResult.goal),
-            }
-          : null;
-        normalizedTask.key_result = normalizedKeyResult;
+        const normalizedTask = normalizeTaskRecord(taskData as unknown as TaskRow);
+        const nextKeyResult = normalizedTask.key_result ?? null;
+        const nextForm = buildTaskFormState(normalizedTask);
 
         setTask(normalizedTask);
-        setForm({
-          name: normalizedTask.name,
-          description: normalizedTask.description ?? "",
-          note: normalizedTask.note ?? "",
-          type: normalizedTask.type === "okr" ? "okr" : "kpi",
-          status: normalizeTaskStatus(normalizedTask.status),
-          progress: getComputedTaskProgress(normalizedTask),
-          weight: typeof normalizedTask.weight === "number" ? normalizedTask.weight : Number(normalizedTask.weight ?? 1),
-        });
-        setProgressInput(String(getComputedTaskProgress(normalizedTask)));
+        setKeyResult(nextKeyResult);
+        setForm(nextForm);
+        setProgressInput(String(nextForm.progress));
+        setTaskTimelineForm(buildTaskTimelineForm(normalizedTask, nextKeyResult));
 
-        const creatorProfileId = explicitCreatorProfileId ?? normalizedTask.profile_id;
-        const profileIds = [normalizedTask.profile_id, creatorProfileId].filter(Boolean) as string[];
-        const uniqueProfileIds = [...new Set(profileIds)];
+        const creatorProfileId = normalizedTask.creator_profile_id ?? null;
+        const effectiveAssigneeId = normalizedTask.assignee_id ?? normalizedTask.profile_id;
+        const uniqueProfileIds = [...new Set([effectiveAssigneeId, creatorProfileId].filter(Boolean))] as string[];
 
-        const [profilesResult, relatedTasksResult] = await Promise.all([
+        const profilesResult =
           uniqueProfileIds.length > 0
-            ? supabase.from("profiles").select("id,name,email").in("id", uniqueProfileIds)
-            : Promise.resolve({ data: [], error: null }),
-          normalizedTask.key_result_id
-            ? supabase
-                .from("tasks")
-                .select("id,key_result_id,type,status,progress,weight")
-                .eq("key_result_id", normalizedTask.key_result_id)
-            : Promise.resolve({ data: [], error: null }),
-        ]);
+            ? await supabase.from("profiles").select("id,name,email").in("id", uniqueProfileIds)
+            : { data: [], error: null };
 
         if (!isActive) {
           return;
         }
 
-        if (relatedTasksResult.error) {
-          throw new Error(relatedTasksResult.error.message || "Không tải được tiến độ key result của công việc.");
-        }
-
-        const nestedKeyResult = normalizedKeyResult;
-        setGoalName(nestedKeyResult?.goal?.name ? String(nestedKeyResult.goal.name) : "Chưa có mục tiêu");
-        setKeyResult(nestedKeyResult);
-        setTaskTimelineForm({
-          startDate: normalizedTask.start_date ?? nestedKeyResult?.start_date ?? "",
-          endDate: normalizedTask.end_date ?? nestedKeyResult?.end_date ?? "",
-        });
-        const computedKeyResultProgress = nestedKeyResult
-          ? buildKeyResultProgressMap(
-              [{ id: String(nestedKeyResult.id), goal_id: nestedKeyResult.goal_id ? String(nestedKeyResult.goal_id) : null }],
-              ((relatedTasksResult.data ?? []) as Array<{
-                key_result_id: string | null;
-                type: string | null;
-                status: string | null;
-                progress: number | null;
-                weight: number | null;
-              }>).map((item) => ({
-                key_result_id: item.key_result_id ? String(item.key_result_id) : null,
-                type: item.type ? String(item.type) : null,
-                status: item.status ? String(item.status) : null,
-                progress: item.progress,
-                weight: item.weight,
-              })),
-            )[String(nestedKeyResult.id)] ?? 0
-          : 0;
-        setKeyResultProgress(computedKeyResultProgress);
-
-        const profilesData = (profilesResult.data ?? []) as ProfileLiteRow[];
-        const profileNameById = profilesData.reduce<Record<string, string>>((acc, profile) => {
-          const label = profile.name?.trim() || profile.email?.trim() || "Chưa rõ";
-          acc[String(profile.id)] = label;
-          return acc;
-        }, {});
+        const profileNameById = ((profilesResult.data ?? []) as ProfileLiteRow[]).reduce<Record<string, string>>(
+          (acc, profile) => {
+            const label = profile.name?.trim() || profile.email?.trim() || "Chưa rõ";
+            acc[String(profile.id)] = label;
+            return acc;
+          },
+          {},
+        );
 
         setCreatorName(creatorProfileId ? profileNameById[creatorProfileId] ?? "Chưa rõ" : "Chưa rõ");
-        setAssigneeName(normalizedTask.profile_id ? profileNameById[normalizedTask.profile_id] ?? "Chưa gán" : "Chưa gán");
-
+        setAssigneeName(effectiveAssigneeId ? profileNameById[effectiveAssigneeId] ?? "Chưa gán" : "Chưa gán");
       } catch (error) {
         if (!isActive) {
           return;
         }
+
         setTask(null);
-        setGoalName("Chưa có mục tiêu");
         setKeyResult(null);
-        setKeyResultProgress(0);
+        setForm(DEFAULT_FORM);
+        setTaskTimelineForm(DEFAULT_TIMELINE_FORM);
+        setProgressInput("0");
         setCreatorName("Chưa rõ");
         setAssigneeName("Chưa gán");
         setLoadError(error instanceof Error ? error.message : "Không tải được chi tiết công việc.");
@@ -382,200 +304,63 @@ export default function TaskDetailPage() {
     };
   }, [taskId]);
 
-  const canEditTaskInfo = true;
-  const canEditExecution = true;
-  const canEditTaskTimeline = true;
+  const goalName = keyResult?.goal?.name ?? "Chưa có mục tiêu";
   const goalHref = keyResult?.goal_id ? `/goals/${keyResult.goal_id}` : null;
   const keyResultHref =
     keyResult?.id && keyResult.goal_id ? `/goals/${keyResult.goal_id}/key-results/${keyResult.id}` : null;
+
+  const keyResultProgress = useMemo(() => {
+    if (!keyResult) {
+      return 0;
+    }
+
+    return (
+      buildKeyResultProgressMap([
+        {
+          id: keyResult.id,
+          goal_id: keyResult.goal_id,
+          start_value: keyResult.start_value,
+          current: keyResult.current,
+          target: keyResult.target,
+        },
+      ])[keyResult.id] ?? 0
+    );
+  }, [keyResult]);
 
   const hasTaskInfoChanges = useMemo(() => {
     if (!task) {
       return false;
     }
+
     return (
       form.name.trim() !== task.name ||
       form.description.trim() !== (task.description ?? "") ||
       form.note.trim() !== (task.note ?? "") ||
+      form.isRecurring !== Boolean(task.is_recurring) ||
+      form.hypothesis.trim() !== (task.hypothesis ?? "") ||
+      form.result.trim() !== (task.result ?? "") ||
       form.type !== (task.type === "okr" ? "okr" : "kpi") ||
       Math.round(form.weight) !== Math.round(Number(task.weight ?? 1))
     );
-  }, [form.description, form.name, form.note, form.type, form.weight, task]);
+  }, [form, task]);
 
   const hasExecutionChanges = useMemo(() => {
     if (!task) {
       return false;
     }
-    return (
-      form.status !== normalizeTaskStatus(task.status) ||
-      form.progress !== getComputedTaskProgress(task)
-    );
+
+    return form.status !== normalizeTaskStatus(task.status) || form.progress !== buildTaskFormState(task).progress;
   }, [form.progress, form.status, task]);
-
-  const refreshLinkedKeyResultProgress = async (targetKeyResultId: string | null | undefined) => {
-    if (!targetKeyResultId || !keyResult) {
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("tasks")
-      .select("id,key_result_id,type,status,progress,weight")
-      .eq("key_result_id", targetKeyResultId);
-
-    if (error) {
-      return;
-    }
-
-    const nextProgress = buildKeyResultProgressMap(
-      [{ id: String(keyResult.id), goal_id: keyResult.goal_id ? String(keyResult.goal_id) : null }],
-      ((data ?? []) as Array<{
-        key_result_id: string | null;
-        type: string | null;
-        status: string | null;
-        progress: number | null;
-        weight: number | null;
-      }>).map((item) => ({
-        key_result_id: item.key_result_id ? String(item.key_result_id) : null,
-        type: item.type ? String(item.type) : null,
-        status: item.status ? String(item.status) : null,
-        progress: item.progress,
-        weight: item.weight,
-      })),
-    )[String(keyResult.id)] ?? 0;
-
-    setKeyResultProgress(nextProgress);
-  };
-
-  const handleSaveTaskInfo = async () => {
-    if (!task || !canEditTaskInfo || !hasTaskInfoChanges) {
-      return;
-    }
-
-    setIsSavingTaskInfo(true);
-    setActionError(null);
-    setNotice(null);
-
-    try {
-      const payload = {
-        name: form.name.trim(),
-        description: form.description.trim() || null,
-        note: form.note.trim() || null,
-        type: form.type,
-        weight: Math.round(form.weight),
-      };
-
-      const { data: updatedTask, error } = await supabase
-        .from("tasks")
-        .update(payload)
-        .eq("id", task.id)
-        .select("*")
-        .maybeSingle();
-
-      if (error || !updatedTask) {
-        if (error?.code === "42501") {
-          throw new Error("Bạn không có quyền chỉnh sửa công việc này.");
-        }
-        throw new Error(error?.message || "Không thể lưu thay đổi công việc.");
-      }
-
-      const typedUpdated = (updatedTask as TaskRow) ?? null;
-      if (!typedUpdated) {
-        throw new Error("Không nhận được dữ liệu sau khi lưu.");
-      }
-
-      const normalizedTask: TaskRow = {
-        ...typedUpdated,
-        creator_profile_id: task.creator_profile_id ?? null,
-      };
-
-      setTask(normalizedTask);
-      setForm((prev) => ({
-        ...prev,
-        name: normalizedTask.name,
-        description: normalizedTask.description ?? "",
-        note: normalizedTask.note ?? "",
-        type: normalizedTask.type === "okr" ? "okr" : "kpi",
-        progress: getComputedTaskProgress(normalizedTask),
-        weight: typeof normalizedTask.weight === "number" ? normalizedTask.weight : Number(normalizedTask.weight ?? 1),
-      }));
-      setProgressInput(String(getComputedTaskProgress(normalizedTask)));
-      await refreshLinkedKeyResultProgress(normalizedTask.key_result_id);
-      setIsEditingTaskInfo(false);
-      setNotice("Đã lưu thông tin công việc.");
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Không thể lưu thông tin công việc.");
-    } finally {
-      setIsSavingTaskInfo(false);
-    }
-  };
-
-  const handleSaveExecution = async () => {
-    if (!task || !canEditExecution || !isEditingExecution || !hasExecutionChanges) {
-      return;
-    }
-
-    setIsSavingExecution(true);
-    setActionError(null);
-    setNotice(null);
-
-    try {
-      const payload = {
-        status: form.status,
-        progress: getTaskProgressByType(task.type, form.status, form.progress),
-      };
-
-      const { data: updatedTask, error } = await supabase
-        .from("tasks")
-        .update(payload)
-        .eq("id", task.id)
-        .select("*")
-        .maybeSingle();
-
-      if (error) {
-        if (error.code === "42501") {
-          throw new Error("Bạn không có quyền cập nhật trạng thái hoặc tiến độ (RLS).");
-        }
-        throw new Error(error.message || "Không thể cập nhật trạng thái hoặc tiến độ.");
-      }
-
-      if (!updatedTask) {
-        throw new Error("Bạn không có quyền cập nhật trạng thái hoặc tiến độ (RLS).");
-      }
-
-      const typedUpdated = (updatedTask as TaskRow) ?? null;
-      if (!typedUpdated) {
-        throw new Error("Không nhận được dữ liệu sau khi lưu.");
-      }
-
-      const normalizedTask: TaskRow = {
-        ...typedUpdated,
-        creator_profile_id: task.creator_profile_id ?? null,
-      };
-
-      setTask(normalizedTask);
-      setForm((prev) => ({
-        ...prev,
-        status: normalizeTaskStatus(normalizedTask.status),
-        progress: getComputedTaskProgress(normalizedTask),
-      }));
-      setProgressInput(String(getComputedTaskProgress(normalizedTask)));
-      await refreshLinkedKeyResultProgress(normalizedTask.key_result_id);
-      setIsEditingExecution(false);
-      setNotice("Đã cập nhật trạng thái và tiến độ.");
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Không thể cập nhật trạng thái hoặc tiến độ.");
-    } finally {
-      setIsSavingExecution(false);
-    }
-  };
 
   const taskTimelineInputError = useMemo(() => {
     if ((taskTimelineForm.startDate && !taskTimelineForm.endDate) || (!taskTimelineForm.startDate && taskTimelineForm.endDate)) {
       return "Vui lòng nhập đủ ngày bắt đầu và ngày kết thúc hoặc để trống cả hai.";
     }
+
     if (!isDateRangeOrdered(taskTimelineForm.startDate || null, taskTimelineForm.endDate || null)) {
       return "Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.";
     }
+
     return null;
   }, [taskTimelineForm.endDate, taskTimelineForm.startDate]);
 
@@ -601,6 +386,226 @@ export default function TaskDetailPage() {
       taskTimelineForm.startDate,
     ],
   );
+
+  const taskTimelineLabel = task
+    ? formatTimelineRangeVi(task.start_date, task.end_date, {
+        fallback: "Chưa đặt thời gian thực thi",
+      })
+    : "Chưa đặt thời gian thực thi";
+
+  const headerTimelineLabel = taskTimelineAlignmentWarning
+    ? `${taskTimelineLabel} · ${taskTimelineAlignmentWarning}`
+    : taskTimelineLabel;
+
+  const taskTypeLabel = getTaskTypeLabel(form.type);
+  const modeLabel = isEditingTaskInfo
+    ? "Đang chỉnh sửa"
+    : isEditingExecution
+      ? "Đang cập nhật tiến độ"
+      : isEditingTaskTimeline
+        ? "Đang chỉnh timeline"
+        : null;
+
+  const breadcrumbs: TaskDetailBreadcrumb[] = [
+    { label: "Công việc", href: "/tasks" },
+    ...(goalHref ? [{ label: goalName, href: goalHref }] : []),
+    ...(keyResultHref && keyResult ? [{ label: keyResult.name, href: keyResultHref }] : []),
+    { label: task?.name ?? "Chi tiết công việc" },
+  ];
+
+  const resetTaskInfoDraft = () => {
+    if (!task) {
+      return;
+    }
+
+    const nextForm = buildTaskFormState(task);
+    setForm(nextForm);
+    setProgressInput(String(nextForm.progress));
+  };
+
+  const resetExecutionDraft = () => {
+    if (!task) {
+      return;
+    }
+
+    const nextProgress = buildTaskFormState(task).progress;
+    setForm((current) => ({
+      ...current,
+      status: normalizeTaskStatus(task.status),
+      progress: nextProgress,
+    }));
+    setProgressInput(String(nextProgress));
+  };
+
+  const resetTimelineDraft = () => {
+    setTaskTimelineForm(buildTaskTimelineForm(task, keyResult));
+  };
+
+  const startTaskInfoEdit = () => {
+    if (!task) {
+      return;
+    }
+
+    resetTaskInfoDraft();
+    setIsEditingExecution(false);
+    setIsEditingTaskInfo(true);
+    setActionError(null);
+    setNotice(null);
+  };
+
+  const cancelTaskInfoEdit = () => {
+    resetTaskInfoDraft();
+    setIsEditingTaskInfo(false);
+    setActionError(null);
+    setNotice(null);
+  };
+
+  const startExecutionEdit = () => {
+    if (!task) {
+      return;
+    }
+
+    resetExecutionDraft();
+    setIsEditingTaskInfo(false);
+    setIsEditingExecution(true);
+    setActionError(null);
+    setNotice(null);
+  };
+
+  const cancelExecutionEdit = () => {
+    resetExecutionDraft();
+    setIsEditingExecution(false);
+    setActionError(null);
+    setNotice(null);
+  };
+
+  const startTimelineEdit = () => {
+    resetTimelineDraft();
+    setIsEditingTaskTimeline(true);
+    setActionError(null);
+    setNotice(null);
+  };
+
+  const cancelTimelineEdit = () => {
+    resetTimelineDraft();
+    setIsEditingTaskTimeline(false);
+    setActionError(null);
+    setNotice(null);
+  };
+
+  const handleSaveTaskInfo = async () => {
+    if (!task || !hasTaskInfoChanges) {
+      return;
+    }
+
+    if (!form.name.trim()) {
+      setActionError("Tên công việc không được để trống.");
+      setNotice(null);
+      return;
+    }
+
+    if (Math.round(form.weight) < 1) {
+      setActionError("Trọng số task phải lớn hơn hoặc bằng 1.");
+      setNotice(null);
+      return;
+    }
+
+    setIsSavingTaskInfo(true);
+    setActionError(null);
+    setNotice(null);
+
+    try {
+      const { data: updatedTask, error } = await supabase
+        .from("tasks")
+        .update({
+          name: form.name.trim(),
+          description: form.description.trim() || null,
+          note: form.note.trim() || null,
+          is_recurring: form.isRecurring,
+          hypothesis: form.hypothesis.trim() || null,
+          result: form.result.trim() || null,
+          type: form.type,
+          weight: Math.round(form.weight),
+        })
+        .eq("id", task.id)
+        .select("*")
+        .maybeSingle();
+
+      if (error || !updatedTask) {
+        if (error?.code === "42501") {
+          throw new Error("Bạn không có quyền chỉnh sửa công việc này.");
+        }
+
+        throw new Error(error?.message || "Không thể lưu thay đổi công việc.");
+      }
+
+      const nextTask = normalizeTaskRecord(updatedTask as TaskRow, {
+        creatorProfileId: task.creator_profile_id ?? null,
+        keyResult,
+      });
+      const nextForm = buildTaskFormState(nextTask);
+
+      setTask(nextTask);
+      setForm(nextForm);
+      setProgressInput(String(nextForm.progress));
+      setIsEditingTaskInfo(false);
+      setNotice("Đã lưu thông tin công việc.");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Không thể lưu thông tin công việc.");
+    } finally {
+      setIsSavingTaskInfo(false);
+    }
+  };
+
+  const handleSaveExecution = async () => {
+    if (!task || !isEditingExecution || !hasExecutionChanges) {
+      return;
+    }
+
+    setIsSavingExecution(true);
+    setActionError(null);
+    setNotice(null);
+
+    try {
+      const { data: updatedTask, error } = await supabase
+        .from("tasks")
+        .update({
+          status: form.status,
+          progress: getTaskProgressByType(form.type, form.status, form.progress),
+        })
+        .eq("id", task.id)
+        .select("*")
+        .maybeSingle();
+
+      if (error || !updatedTask) {
+        if (error?.code === "42501") {
+          throw new Error("Bạn không có quyền cập nhật trạng thái hoặc tiến độ.");
+        }
+
+        throw new Error(error?.message || "Không thể cập nhật trạng thái hoặc tiến độ.");
+      }
+
+      const nextTask = normalizeTaskRecord(updatedTask as TaskRow, {
+        creatorProfileId: task.creator_profile_id ?? null,
+        keyResult,
+      });
+      const nextForm = buildTaskFormState(nextTask);
+
+      setTask(nextTask);
+      setForm((current) => ({
+        ...current,
+        status: nextForm.status,
+        progress: nextForm.progress,
+      }));
+      setProgressInput(String(nextForm.progress));
+      setIsEditingExecution(false);
+      setNotice("Đã cập nhật trạng thái và tiến độ.");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Không thể cập nhật trạng thái hoặc tiến độ.");
+    } finally {
+      setIsSavingExecution(false);
+    }
+  };
 
   const handleSaveTaskTimeline = async () => {
     if (!task) {
@@ -628,30 +633,21 @@ export default function TaskDetailPage() {
         .select("*")
         .maybeSingle();
 
-      if (error) {
-        if (error.code === "42501") {
+      if (error || !updatedTask) {
+        if (error?.code === "42501") {
           throw new Error("Bạn không có quyền cập nhật thời gian thực thi công việc.");
         }
-        throw new Error(error.message || "Không thể cập nhật thời gian thực thi công việc.");
+
+        throw new Error(error?.message || "Không thể cập nhật thời gian thực thi công việc.");
       }
 
-      if (!updatedTask) {
-        throw new Error("Không nhận được dữ liệu công việc sau khi lưu.");
-      }
-
-      const typedUpdated = updatedTask as TaskRow;
-      const nextTask: TaskRow = {
-        ...task,
-        ...typedUpdated,
-        creator_profile_id: task.creator_profile_id ?? null,
-        key_result: keyResult,
-      };
+      const nextTask = normalizeTaskRecord(updatedTask as TaskRow, {
+        creatorProfileId: task.creator_profile_id ?? null,
+        keyResult,
+      });
 
       setTask(nextTask);
-      setTaskTimelineForm({
-        startDate: nextTask.start_date ?? "",
-        endDate: nextTask.end_date ?? "",
-      });
+      setTaskTimelineForm(buildTaskTimelineForm(nextTask, keyResult));
       setIsEditingTaskTimeline(false);
       setNotice("Đã cập nhật thời gian thực thi công việc.");
     } catch (error) {
@@ -661,7 +657,46 @@ export default function TaskDetailPage() {
     }
   };
 
-  const statusLabel = statusLabelMap[form.status] ?? form.status;
+  const primaryAction = task
+    ? isEditingTaskInfo
+      ? {
+          label: isSavingTaskInfo ? "Đang lưu..." : "Lưu thay đổi",
+          onClick: () => void handleSaveTaskInfo(),
+          disabled: !hasTaskInfoChanges || isSavingTaskInfo,
+        }
+      : isEditingExecution
+        ? {
+            label: isSavingExecution ? "Đang lưu..." : "Lưu tiến độ",
+            onClick: () => void handleSaveExecution(),
+            disabled: !hasExecutionChanges || isSavingExecution,
+          }
+        : {
+            label: "Cập nhật tiến độ",
+            onClick: startExecutionEdit,
+          }
+    : undefined;
+
+  const secondaryAction = task
+    ? isEditingTaskInfo
+      ? {
+          label: "Hủy",
+          onClick: cancelTaskInfoEdit,
+          disabled: isSavingTaskInfo,
+          variant: "outline" as const,
+        }
+      : isEditingExecution
+        ? {
+            label: "Hủy",
+            onClick: cancelExecutionEdit,
+            disabled: isSavingExecution,
+            variant: "outline" as const,
+          }
+        : {
+            label: "Chỉnh sửa",
+            onClick: startTaskInfoEdit,
+            variant: "outline" as const,
+          }
+    : undefined;
 
   return (
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
@@ -669,99 +704,22 @@ export default function TaskDetailPage() {
         <WorkspaceSidebar active="tasks" />
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <header className="sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-7">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm text-slate-500">
-                  <Link href="/tasks" className="hover:text-slate-700">
-                    Công việc
-                  </Link>
-                  {goalHref ? (
-                    <>
-                      <span className="px-2">›</span>
-                      <Link href={goalHref} className="hover:text-slate-700">
-                        Mục tiêu: {goalName}
-                      </Link>
-                    </>
-                  ) : null}
-                  {keyResultHref && keyResult ? (
-                    <>
-                      <span className="px-2">›</span>
-                      <Link href={keyResultHref} className="hover:text-slate-700">
-                        KR: {keyResult.name}
-                      </Link>
-                    </>
-                  ) : null}
-                  <span className="px-2">›</span>
-                  <span className="font-semibold text-slate-700">Task: {task?.name ?? "Chi tiết công việc"}</span>
-                </p>
-                <h1 className="mt-1 text-3xl font-semibold tracking-[-0.02em] text-slate-900">Chi tiết công việc</h1>
-              </div>
+          <TaskDetailHeader
+            breadcrumbs={breadcrumbs}
+            title={task?.name ?? "Chi tiết công việc"}
+            status={form.status}
+            progress={form.progress}
+            assigneeName={assigneeName}
+            taskTypeLabel={taskTypeLabel}
+            timelineLabel={headerTimelineLabel}
+            modeLabel={modeLabel}
+            primaryAction={primaryAction}
+            secondaryAction={secondaryAction}
+          />
 
-              <div className="flex items-center gap-2">
-                {canEditTaskInfo ? (
-                  isEditingTaskInfo ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!task) {
-                            return;
-                          }
-                          setForm((prev) => ({
-                            ...prev,
-                            name: task.name,
-                            description: task.description ?? "",
-                            note: task.note ?? "",
-                            type: task.type === "okr" ? "okr" : "kpi",
-                            weight: typeof task.weight === "number" ? task.weight : Number(task.weight ?? 1),
-                          }));
-                          setIsEditingTaskInfo(false);
-                          setActionError(null);
-                          setNotice(null);
-                        }}
-                        disabled={isSavingTaskInfo}
-                        className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
-                      >
-                        Hủy
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleSaveTaskInfo()}
-                        disabled={!hasTaskInfoChanges || isSavingTaskInfo}
-                        className="inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                      >
-                        {isSavingTaskInfo ? "Đang lưu..." : "Lưu chỉnh sửa"}
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsEditingTaskInfo(true);
-                        setActionError(null);
-                        setNotice(null);
-                      }}
-                      className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      Chỉnh sửa
-                    </button>
-                  )
-                ) : null}
-
-                <Link
-                  href="/tasks"
-                  className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Quay lại
-                </Link>
-              </div>
-            </div>
-          </header>
-
-          <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-7">
+          <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 pt-5 lg:px-7">
             {isLoading ? (
-              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm text-slate-600">
                 Đang tải chi tiết công việc...
               </div>
             ) : null}
@@ -785,576 +743,135 @@ export default function TaskDetailPage() {
             ) : null}
 
             {!isLoading && !loadError && task ? (
-              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-                <section className="space-y-5">
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                    {isEditingTaskInfo ? (
-                      <div className="space-y-3">
-                        <div className="space-y-1.5">
-                          <label className="text-sm font-semibold text-slate-700">Tên công việc</label>
-                          <input
-                            value={form.name}
-                            onChange={(event) =>
-                              setForm((prev) => ({
-                                ...prev,
-                                name: event.target.value,
-                              }))
-                            }
-                            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                          />
-                        </div>
+              <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+                <div className="space-y-6">
+                  <TaskOverviewCard
+                    form={form}
+                    assigneeName={assigneeName}
+                    creatorName={creatorName}
+                    timelineLabel={taskTimelineLabel}
+                    isEditing={isEditingTaskInfo}
+                    onNameChange={(value) => setForm((current) => ({ ...current, name: value }))}
+                    onTypeChange={(value) => {
+                      const nextProgress = getTaskProgressByType(value, form.status, form.progress);
+                      setForm((current) => ({
+                        ...current,
+                        type: value,
+                        progress: nextProgress,
+                      }));
+                      setProgressInput(String(nextProgress));
+                    }}
+                    onWeightChange={(value) => setForm((current) => ({ ...current, weight: value }))}
+                    onRecurringChange={(value) => setForm((current) => ({ ...current, isRecurring: value }))}
+                  />
 
-                        <div className="space-y-1.5">
-                          <label className="text-sm font-semibold text-slate-700">Mô tả</label>
-                          <textarea
-                            rows={4}
-                            value={form.description}
-                            onChange={(event) =>
-                              setForm((prev) => ({
-                                ...prev,
-                                description: event.target.value,
-                              }))
-                            }
-                            className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                            placeholder="Chưa có mô tả"
-                          />
-                        </div>
+                  <TaskExecutionSection
+                    task={task}
+                    keyResult={keyResult}
+                    form={form}
+                    progressInput={progressInput}
+                    taskTimelineForm={taskTimelineForm}
+                    isEditingTaskInfo={isEditingTaskInfo}
+                    isEditingExecution={isEditingExecution}
+                    isEditingTaskTimeline={isEditingTaskTimeline}
+                    isSavingTaskTimeline={isSavingTaskTimeline}
+                    taskTimelineInputError={taskTimelineInputError}
+                    taskTimelineAlignmentWarning={taskTimelineAlignmentWarning}
+                    onDescriptionChange={(value) => setForm((current) => ({ ...current, description: value }))}
+                    onHypothesisChange={(value) => setForm((current) => ({ ...current, hypothesis: value }))}
+                    onResultChange={(value) => setForm((current) => ({ ...current, result: value }))}
+                    onStatusChange={(value) => {
+                      const nextProgress = getTaskProgressByType(form.type, value, form.progress);
+                      setForm((current) => ({
+                        ...current,
+                        status: value,
+                        progress: nextProgress,
+                      }));
+                      setProgressInput(String(nextProgress));
+                    }}
+                    onProgressInputChange={(value) => {
+                      setProgressInput(value);
 
-                        <div className="space-y-1.5">
-                          <label className="text-sm font-semibold text-slate-700">Loại task</label>
-                          <Select
-                            value={form.type}
-                            onValueChange={(value) =>
-                              setForm((prev) => ({
-                                ...prev,
-                                type: value as TaskTypeValue,
-                                progress: getTaskProgressByType(
-                                  value,
-                                  prev.status,
-                                  prev.progress,
-                                ),
-                              }))
-                            }
-                          >
-                            <SelectTrigger className="h-10">
-                              <SelectValue placeholder="Chọn loại task" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {TASK_TYPES.map((type) => (
-                                <SelectItem key={type.value} value={type.value}>
-                                  {type.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
+                      if (value === "") {
+                        return;
+                      }
 
-                        <div className="space-y-1.5">
-                          <label className="text-sm font-semibold text-slate-700">Trọng số task</label>
-                          <ClearableNumberInput
-                            min={1}
-                            value={form.weight}
-                            onValueChange={(value) =>
-                              setForm((prev) => ({
-                                ...prev,
-                                weight: value,
-                              }))
-                            }
-                            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                          />
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <h2 className="text-2xl font-semibold tracking-[-0.02em] text-slate-900">{task.name}</h2>
-                        <p className="mt-3 text-sm text-slate-500">Loại task</p>
-                        <p className="mt-1 inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-sm font-semibold text-slate-700">
-                          {TASK_TYPES.find((item) => item.value === form.type)?.label ?? "KPI"}
-                        </p>
-                        <p className="mt-2 text-xs text-slate-500">{getTaskProgressHint(form.type)}</p>
-                        <p className="mt-3 text-sm text-slate-500">Trọng số task</p>
-                        <p className="mt-1 text-base font-semibold text-slate-800">{Math.round(form.weight)}</p>
-                        <p className="mt-3 text-sm text-slate-500">Mô tả</p>
-                        <p className="mt-1 whitespace-pre-wrap text-base text-slate-700">
-                          {task.description?.trim() || "Chưa có mô tả."}
-                        </p>
-                      </>
-                    )}
-                  </article>
+                      const parsed = Number(value);
+                      if (!Number.isFinite(parsed)) {
+                        return;
+                      }
 
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <h3 className="text-lg font-semibold text-slate-900">Ghi chú</h3>
-                    {isEditingTaskInfo ? (
-                      <textarea
-                        rows={4}
-                        value={form.note}
-                        onChange={(event) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            note: event.target.value,
-                          }))
-                        }
-                        className="mt-3 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                        placeholder="Chưa có ghi chú"
-                      />
-                    ) : (
-                      <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
-                        {task.note?.trim() || "Chưa có ghi chú."}
-                      </p>
-                    )}
-                  </article>
+                      setForm((current) => ({
+                        ...current,
+                        progress: clampProgress(parsed),
+                      }));
+                    }}
+                    onProgressInputBlur={() => {
+                      if (progressInput.trim() === "") {
+                        setProgressInput(String(form.progress));
+                        return;
+                      }
 
-                  {keyResult ? (
-                    <article className="rounded-2xl border border-blue-100 bg-blue-50/70 p-5">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm text-blue-700">Key result liên kết</p>
-                          {keyResultHref ? (
-                            <Link
-                              href={keyResultHref}
-                              className="mt-1 inline-flex text-xl font-semibold tracking-[-0.02em] text-slate-900 hover:text-blue-700"
-                            >
-                              {keyResult.name}
-                            </Link>
-                          ) : (
-                            <p className="mt-1 text-xl font-semibold tracking-[-0.02em] text-slate-900">
-                              {keyResult.name}
-                            </p>
-                          )}
-                          <p className="mt-1 text-xs text-slate-500">
-                            Khung thời gian của KR:{" "}
-                            {formatTimelineRangeVi(keyResult.start_date, keyResult.end_date, {
-                              fallback: "KR chưa có mốc thời gian",
-                            })}
-                          </p>
-                          <p className="mt-1 text-[11px] text-slate-400">
-                            KR vẫn là khung thời gian cha để đối chiếu kế hoạch của công việc.
-                          </p>
-                          <p className="mt-2 text-xs text-slate-600">
-                            Thời gian thực thi của công việc:{" "}
-                            {formatTimelineRangeVi(task.start_date, task.end_date, {
-                              fallback: "Công việc chưa có mốc thời gian",
-                            })}
-                          </p>
-                          <p className="mt-1 text-[11px] text-slate-500">
-                            {getTimelineMissingReason(
-                              task.start_date,
-                              task.end_date,
-                              "Công việc chưa có mốc thời gian",
-                              "Mốc thời gian công việc không hợp lệ",
-                            ) ?? "Nguồn timeline chính của task đến từ ngày bắt đầu và ngày kết thúc của chính công việc."}
-                          </p>
-                          {taskTimelineAlignmentWarning ? (
-                            <p className="mt-1 text-[11px] text-amber-600">{taskTimelineAlignmentWarning}</p>
-                          ) : null}
-                          <p className="mt-2 text-xs text-slate-500">
-                            {keyResult.goal?.start_date || keyResult.goal?.end_date
-                              ? `Khung mục tiêu: ${formatTimelineRangeVi(keyResult.goal?.start_date ?? null, keyResult.goal?.end_date ?? null, {
-                                  fallback: "Chưa đặt khung thời gian mục tiêu",
-                                })}`
-                              : "Mục tiêu chưa có ngày bắt đầu/kết thúc."}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {canEditTaskTimeline ? (
-                            isEditingTaskTimeline ? (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setTaskTimelineForm({
-                                      startDate: task.start_date ?? keyResult.start_date ?? "",
-                                      endDate: task.end_date ?? keyResult.end_date ?? "",
-                                    });
-                                    setIsEditingTaskTimeline(false);
-                                    setActionError(null);
-                                    setNotice(null);
-                                  }}
-                                  disabled={isSavingTaskTimeline}
-                                  className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                                >
-                                  Hủy
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => void handleSaveTaskTimeline()}
-                                  disabled={isSavingTaskTimeline}
-                                  className="inline-flex h-9 items-center rounded-xl bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:bg-blue-300"
-                                >
-                                  {isSavingTaskTimeline ? "Đang lưu..." : "Lưu thời gian task"}
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setTaskTimelineForm({
-                                    startDate: task.start_date ?? keyResult.start_date ?? "",
-                                    endDate: task.end_date ?? keyResult.end_date ?? "",
-                                  });
-                                  setIsEditingTaskTimeline(true);
-                                  setActionError(null);
-                                  setNotice(null);
-                                }}
-                                className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                              >
-                                Sửa thời gian task
-                              </button>
-                            )
-                          ) : null}
-                          <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-blue-700">
-                            {keyResultProgress}%
-                          </span>
-                        </div>
-                      </div>
+                      const parsed = Number(progressInput);
+                      if (!Number.isFinite(parsed)) {
+                        setProgressInput(String(form.progress));
+                        return;
+                      }
 
-                      {isEditingTaskTimeline ? (
-                        <div className="mt-4 grid gap-3 md:grid-cols-2">
-                          <label className="space-y-1.5">
-                            <span className="text-xs font-semibold tracking-[0.08em] text-slate-500 uppercase">
-                              Ngày bắt đầu
-                            </span>
-                            <input
-                              type="date"
-                              value={taskTimelineForm.startDate}
-                              onChange={(event) =>
-                                setTaskTimelineForm((prev) => ({
-                                  ...prev,
-                                  startDate: event.target.value,
-                                }))
-                              }
-                              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                            />
-                          </label>
-                          <label className="space-y-1.5">
-                            <span className="text-xs font-semibold tracking-[0.08em] text-slate-500 uppercase">
-                              Ngày kết thúc
-                            </span>
-                            <input
-                              type="date"
-                              min={taskTimelineForm.startDate || undefined}
-                              value={taskTimelineForm.endDate}
-                              onChange={(event) =>
-                                setTaskTimelineForm((prev) => ({
-                                  ...prev,
-                                  endDate: event.target.value,
-                                }))
-                              }
-                              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                            />
-                          </label>
-                          <p className="md:col-span-2 text-[11px] text-slate-500">
-                            Giá trị ban đầu ưu tiên lấy từ task hiện tại. Nếu task chưa có ngày, form sẽ autofill từ khung thời gian của KR.
-                          </p>
-                          {taskTimelineInputError ? (
-                            <p className="md:col-span-2 text-[11px] text-rose-600">{taskTimelineInputError}</p>
-                          ) : null}
-                          {!taskTimelineInputError && taskTimelineAlignmentWarning ? (
-                            <p className="md:col-span-2 text-[11px] text-amber-600">{taskTimelineAlignmentWarning}</p>
-                          ) : null}
-                        </div>
-                      ) : null}
+                      const normalized = clampProgress(parsed);
+                      setForm((current) => ({
+                        ...current,
+                        progress: normalized,
+                      }));
+                      setProgressInput(String(normalized));
+                    }}
+                    onStartTimelineEdit={startTimelineEdit}
+                    onCancelTimelineEdit={cancelTimelineEdit}
+                    onSaveTimeline={() => void handleSaveTaskTimeline()}
+                    onTimelineStartChange={(value) =>
+                      setTaskTimelineForm((current) => ({
+                        ...current,
+                        startDate: value,
+                      }))
+                    }
+                    onTimelineEndChange={(value) =>
+                      setTaskTimelineForm((current) => ({
+                        ...current,
+                        endDate: value,
+                      }))
+                    }
+                  />
 
-                      <div className="mt-4 grid gap-3 md:grid-cols-4">
-                        <div className="rounded-xl bg-white px-4 py-3">
-                          <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                            Bắt đầu
-                          </p>
-                          <p className="mt-2 text-lg font-semibold text-slate-900">
-                            {formatKeyResultMetric(keyResult.start_value, keyResult.unit)}
-                          </p>
-                        </div>
-                        <div className="rounded-xl bg-white px-4 py-3">
-                          <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                            Hiện tại
-                          </p>
-                          <p className="mt-2 text-lg font-semibold text-slate-900">
-                            {formatKeyResultMetric(keyResult.current, keyResult.unit)}
-                          </p>
-                        </div>
-                        <div className="rounded-xl bg-white px-4 py-3">
-                          <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                            Mục tiêu
-                          </p>
-                          <p className="mt-2 text-lg font-semibold text-slate-900">
-                            {formatKeyResultMetric(keyResult.target, keyResult.unit)}
-                          </p>
-                        </div>
-                        <div className="rounded-xl bg-white px-4 py-3">
-                          <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                            Đơn vị
-                          </p>
-                          <p className="mt-2 text-lg font-semibold text-slate-900">
-                            {formatKeyResultUnit(keyResult.unit)}
-                          </p>
-                        </div>
-                        <div className="rounded-xl bg-white px-4 py-3">
-                          <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                            Khung thời gian KR
-                          </p>
-                          <p className="mt-2 text-sm font-semibold text-slate-900">
-                            {formatTimelineRangeVi(keyResult.start_date, keyResult.end_date, {
-                              fallback: "KR chưa có mốc thời gian",
-                            })}
-                          </p>
-                          <p className="mt-1 text-[11px] text-slate-400">
-                            {getTimelineMissingReason(
-                              keyResult.start_date,
-                              keyResult.end_date,
-                              "KR chưa có mốc thời gian",
-                              "Mốc thời gian KR không hợp lệ",
-                            ) ?? "Dùng để đối chiếu với lịch thực thi riêng của task."}
-                          </p>
-                        </div>
-                        <div className="rounded-xl bg-white px-4 py-3">
-                          <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                            Trọng số KR (%)
-                          </p>
-                          <p className="mt-2 text-lg font-semibold text-slate-900">
-                            {Math.round(Number(keyResult.weight ?? 1))}%
-                          </p>
-                        </div>
-                      </div>
-                      <p className="mt-3 text-xs text-slate-500">{getKeyResultProgressHint(keyResult.unit)}</p>
-                    </article>
+                  {!form.description.trim() ? (
+                    <TaskNotesCard
+                      note={form.note}
+                      isEditing={isEditingTaskInfo}
+                      onChange={(value) => setForm((current) => ({ ...current, note: value }))}
+                    />
                   ) : null}
-                </section>
 
-                <aside className="space-y-4">
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <h3 className="text-lg font-semibold text-slate-900">Thông tin công việc</h3>
+                  <LinkedKRCard
+                    keyResult={keyResult}
+                    keyResultHref={keyResultHref}
+                    goalHref={goalHref}
+                    goalName={goalName}
+                    keyResultProgress={keyResultProgress}
+                  />
+                </div>
 
-                    <div className="mt-4 space-y-3 text-sm">
-                      <div className="space-y-1">
-                        <p className="text-slate-500">Loại task</p>
-                        {isEditingTaskInfo ? null : (
-                          <p className="inline-block rounded-lg bg-slate-100 px-2 py-1 font-semibold text-slate-700">
-                            {TASK_TYPES.find((item) => item.value === form.type)?.label ?? "KPI"}
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="space-y-1">
-                        <p className="text-slate-500">Trọng số</p>
-                        {isEditingTaskInfo ? null : (
-                          <p className="font-semibold text-slate-700">{Math.round(form.weight)}</p>
-                        )}
-                      </div>
-
-                      <div className="space-y-1">
-                        <p className="text-slate-500">Thời gian thực thi của công việc</p>
-                        <p className="font-semibold text-slate-700">
-                          {formatTimelineRangeVi(task.start_date, task.end_date, {
-                            fallback: "Công việc chưa có mốc thời gian",
-                          })}
-                        </p>
-                        <p className="text-[11px] text-slate-400">
-                          {getTimelineMissingReason(
-                            task.start_date,
-                            task.end_date,
-                            "Công việc chưa có mốc thời gian",
-                            "Mốc thời gian công việc không hợp lệ",
-                          ) ?? "Timeline/Gantt dùng ngày bắt đầu và ngày kết thúc của chính công việc."}
-                        </p>
-                        {taskTimelineAlignmentWarning ? (
-                          <p className="text-[11px] text-amber-600">{taskTimelineAlignmentWarning}</p>
-                        ) : null}
-                      </div>
-
-                      <div className="space-y-1">
-                        <p className="text-slate-500">Khung thời gian của KR</p>
-                        <p className="font-semibold text-slate-700">
-                          {formatTimelineRangeVi(keyResult?.start_date ?? null, keyResult?.end_date ?? null, {
-                            fallback: "KR chưa có mốc thời gian",
-                          })}
-                        </p>
-                      </div>
-
-                      <div className="space-y-1">
-                        <p className="text-slate-500">Khung mục tiêu</p>
-                        <p className="font-semibold text-slate-700">
-                          {formatTimelineRangeVi(keyResult?.goal?.start_date ?? null, keyResult?.goal?.end_date ?? null, {
-                            fallback: "Mục tiêu chưa có khung thời gian",
-                          })}
-                        </p>
-                      </div>
-
-                      <div className="space-y-1">
-                        <p className="text-slate-500">Trạng thái</p>
-                        {canEditExecution && isEditingExecution ? (
-                          <Select
-                            value={form.status}
-                            onValueChange={(value) =>
-                              setForm((prev) => ({
-                                ...prev,
-                                status: value as TaskStatusValue,
-                                progress: getTaskProgressByType(
-                                  prev.type,
-                                  value as TaskStatusValue,
-                                  prev.progress,
-                                ),
-                              }))
-                            }
-                          >
-                            <SelectTrigger className="h-10">
-                              <SelectValue placeholder="Chọn trạng thái" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {TASK_STATUSES.map((status) => (
-                                <SelectItem key={status.value} value={status.value}>
-                                  {status.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <p className="inline-block rounded-lg bg-slate-100 px-2 py-1 font-semibold text-slate-700">{statusLabel}</p>
-                        )}
-                      </div>
-
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between">
-                          <p className="text-slate-500">Tiến độ</p>
-                          <p className="font-semibold text-slate-700">{form.progress}%</p>
-                        </div>
-                        <p className="text-[11px] text-slate-400">{getTaskProgressHint(form.type)}</p>
-
-                        {canEditExecution && isEditingExecution ? (
-                          <div className="space-y-2">
-                            <input
-                              type="number"
-                              min={0}
-                              max={100}
-                              value={progressInput}
-                              disabled={form.type === "okr"}
-                              onChange={(event) => {
-                                const raw = event.target.value;
-                                setProgressInput(raw);
-                                if (raw === "") {
-                                  return;
-                                }
-                                const parsed = Number(raw);
-                                if (!Number.isFinite(parsed)) {
-                                  return;
-                                }
-                                setForm((prev) => ({
-                                  ...prev,
-                                  progress: clampProgress(parsed),
-                                }));
-                              }}
-                              onBlur={() => {
-                                if (progressInput.trim() === "") {
-                                  setProgressInput(String(form.progress));
-                                  return;
-                                }
-                                const parsed = Number(progressInput);
-                                if (!Number.isFinite(parsed)) {
-                                  setProgressInput(String(form.progress));
-                                  return;
-                                }
-                                const normalized = clampProgress(parsed);
-                                setForm((prev) => ({ ...prev, progress: normalized }));
-                                setProgressInput(String(normalized));
-                              }}
-                              className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
-                            />
-                          </div>
-                        ) : (
-                          <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                            <div className="h-full rounded-full bg-blue-600" style={{ width: `${form.progress}%` }} />
-                          </div>
-                        )}
-                      </div>
-
-                      {canEditExecution ? (
-                        isEditingExecution ? (
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (!task) {
-                                  return;
-                                }
-                                setForm((prev) => ({
-                                  ...prev,
-                                  status: normalizeTaskStatus(task.status),
-                                  progress: getComputedTaskProgress(task),
-                                }));
-                                setProgressInput(String(getComputedTaskProgress(task)));
-                                setIsEditingExecution(false);
-                                setActionError(null);
-                                setNotice(null);
-                              }}
-                              disabled={isSavingExecution}
-                              className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
-                            >
-                              Hủy
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void handleSaveExecution()}
-                              disabled={!hasExecutionChanges || isSavingExecution}
-                              className="inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                            >
-                              {isSavingExecution ? "Đang lưu..." : "Lưu trạng thái & tiến độ"}
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setProgressInput(String(form.progress));
-                              setIsEditingExecution(true);
-                              setActionError(null);
-                              setNotice(null);
-                            }}
-                            className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                          >
-                            Chỉnh sửa tiến độ
-                          </button>
-                        )
-                      ) : null}
-
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-slate-500">Mục tiêu</span>
-                        <span className="text-right font-medium text-slate-700">{goalName}</span>
-                      </div>
-
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-slate-500">Key result</span>
-                        {keyResult?.name && keyResultHref ? (
-                          <Link href={keyResultHref} className="text-right font-medium text-blue-700 hover:text-blue-800">
-                            {keyResult.name}
-                          </Link>
-                        ) : (
-                          <span className="text-right font-medium text-slate-700">
-                            {keyResult?.name ?? "Chưa gắn"}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-slate-500">Người tạo</span>
-                        <span className="text-right font-medium text-slate-700">{creatorName}</span>
-                      </div>
-
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-slate-500">Người phụ trách</span>
-                        <span className="text-right font-medium text-slate-700">{assigneeName}</span>
-                      </div>
-
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-slate-500">Ngày tạo</span>
-                        <span className="text-right font-medium text-slate-700">{formatDateTime(task.created_at)}</span>
-                      </div>
-
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-slate-500">Cập nhật</span>
-                        <span className="text-right font-medium text-slate-700">{formatDateTime(task.updated_at)}</span>
-                      </div>
-                    </div>
-                  </article>
-                </aside>
+                <TaskMetaSidebar
+                  status={form.status}
+                  progress={form.progress}
+                  assigneeName={assigneeName}
+                  timelineLabel={taskTimelineLabel}
+                  goalName={goalName}
+                  goalHref={goalHref}
+                  keyResultName={keyResult?.name ?? null}
+                  keyResultHref={keyResultHref}
+                  creatorName={creatorName}
+                  createdAtLabel={formatDateTime(task.created_at)}
+                  updatedAtLabel={formatDateTime(task.updated_at)}
+                />
               </div>
             ) : null}
           </main>

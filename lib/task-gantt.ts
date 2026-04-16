@@ -21,15 +21,27 @@ export type TimelineBarLayout = {
 };
 
 export const TIMELINE_BASE_PERIOD_WIDTH: Record<TimelineScale, number> = {
-  day: 56,
+  day: 68,
   week: 92,
   month: 128,
+};
+
+export const TIMELINE_MIN_PERIOD_WIDTH: Record<TimelineScale, number> = {
+  day: 48,
+  week: 28,
+  month: 28,
 };
 
 export const TIMELINE_PERIOD_PADDING: Record<TimelineScale, number> = {
   day: 7,
   week: 3,
   month: 1,
+};
+
+export const TIMELINE_MIN_PERIOD_COUNT: Record<TimelineScale, number> = {
+  day: 1000,
+  week: 240,
+  month: 60,
 };
 
 export const TIMELINE_MIN_ZOOM = 0.6;
@@ -42,7 +54,10 @@ export const clampTimelineZoom = (value: number) =>
   Math.min(TIMELINE_MAX_ZOOM, Math.max(TIMELINE_MIN_ZOOM, Number(value.toFixed(2))));
 
 export const getPeriodWidthForZoom = (scale: TimelineScale, zoomLevel: number) =>
-  Math.max(28, Math.round(TIMELINE_BASE_PERIOD_WIDTH[scale] * clampTimelineZoom(zoomLevel)));
+  Math.max(
+    TIMELINE_MIN_PERIOD_WIDTH[scale],
+    Math.round(TIMELINE_BASE_PERIOD_WIDTH[scale] * clampTimelineZoom(zoomLevel)),
+  );
 
 export const startOfWeek = (value: Date) => {
   const next = startOfLocalDay(value);
@@ -86,6 +101,29 @@ export const endOfScale = (value: Date, scale: TimelineScale) => {
   const next = addScale(startOfScale(value, scale), scale, 1);
   next.setMilliseconds(next.getMilliseconds() - 1);
   return next;
+};
+
+const getTimelinePeriodCount = (start: Date, end: Date, scale: TimelineScale) => {
+  const normalizedStart = startOfScale(start, scale);
+  const normalizedEnd = startOfScale(end, scale);
+
+  if (scale === "day") {
+    return Math.max(1, Math.round((normalizedEnd.getTime() - normalizedStart.getTime()) / DAY_MS) + 1);
+  }
+
+  if (scale === "week") {
+    return Math.max(
+      1,
+      Math.round((normalizedEnd.getTime() - normalizedStart.getTime()) / (DAY_MS * 7)) + 1,
+    );
+  }
+
+  return Math.max(
+    1,
+    (normalizedEnd.getFullYear() - normalizedStart.getFullYear()) * 12 +
+      (normalizedEnd.getMonth() - normalizedStart.getMonth()) +
+      1,
+  );
 };
 
 export const formatTimelinePeriodLabel = (date: Date, scale: TimelineScale) => {
@@ -132,11 +170,15 @@ export const buildTimelinePeriods = (
 
   const paddedStart = addScale(startOfScale(minDate, scale), scale, -TIMELINE_PERIOD_PADDING[scale]);
   const paddedEnd = addScale(startOfScale(maxDate, scale), scale, TIMELINE_PERIOD_PADDING[scale]);
+  const paddedPeriodCount = getTimelinePeriodCount(paddedStart, paddedEnd, scale);
+  const extraPeriods = Math.max(0, TIMELINE_MIN_PERIOD_COUNT[scale] - paddedPeriodCount);
+  const effectiveStart = addScale(paddedStart, scale, -Math.ceil(extraPeriods / 2));
+  const effectiveEnd = addScale(paddedEnd, scale, Math.floor(extraPeriods / 2));
   const periods: TimelinePeriod[] = [];
 
   for (
-    let cursor = startOfScale(paddedStart, scale);
-    cursor.getTime() <= paddedEnd.getTime();
+    let cursor = startOfScale(effectiveStart, scale);
+    cursor.getTime() <= effectiveEnd.getTime();
     cursor = addScale(cursor, scale, 1)
   ) {
     const formatted = formatTimelinePeriodLabel(cursor, scale);

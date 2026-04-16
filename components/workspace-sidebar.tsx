@@ -96,8 +96,13 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const isCollapsed = useWorkspaceSidebarStore((state) => state.isCollapsed);
+  const hydrateSidebarFromStorage = useWorkspaceSidebarStore((state) => state.hydrateFromStorage);
   const toggleSidebarCollapsed = useWorkspaceSidebarStore((state) => state.toggleCollapsed);
   const [isManagementMenuOpen, setIsManagementMenuOpen] = useState(false);
+
+  useEffect(() => {
+    hydrateSidebarFromStorage();
+  }, [hydrateSidebarFromStorage]);
 
   useEffect(() => {
     const sidebarWidth = `${isCollapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_EXPANDED_WIDTH}px`;
@@ -238,7 +243,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
           paddingRight: isCollapsed ? 12 : 20,
         }}
       >
-        <div className="flex h-full flex-col overflow-x-visible overflow-y-auto pb-5 pt-6">
+        <div className="flex h-full flex-col overflow-visible pb-15 pt-6">
           <div className={`mb-8 flex items-center ${isCollapsed ? "justify-center" : "gap-3"}`}>
             <SidebarBadge />
             {!isCollapsed ? (
@@ -271,123 +276,125 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
             )}
           </button>
 
-          <nav className="space-y-2">
-            {visibleSidebarItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.key}
-                  href={item.href}
-                  title={item.label}
-                  className={`group relative flex w-full items-center rounded-xl text-left font-medium tracking-[-0.01em] transition ${
-                    isCollapsed ? "justify-center px-0 py-3" : "gap-3 px-4 py-3 text-lg"
-                  } ${
-                    item.key === active
-                      ? "bg-[#1e62d8] text-white"
-                      : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
-                  }`}
-                >
-                  <Icon className="h-[18px] w-[18px] shrink-0" />
-                  {!isCollapsed ? item.label : null}
-                  {isCollapsed ? (
-                    <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 -translate-y-1/2 whitespace-nowrap rounded-lg border border-slate-700 bg-[#0d234f] px-3 py-1.5 text-sm font-semibold text-white opacity-0 shadow-2xl transition duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
-                      {item.label}
-                    </span>
-                  ) : null}
-                </Link>
-              );
-            })}
-
-            {visibleManagementItems.length > 0 ? (
-              isCollapsed ? (
-                <div ref={managementMenuRef} className="relative">
-                  <button
-                    type="button"
-                    title="Quản lý"
-                    onClick={() => {
-                      setIsManagementMenuOpen((prev) => !prev);
-                      setIsUserMenuOpen(false);
-                    }}
-                    className={`group relative flex w-full items-center justify-center rounded-xl px-0 py-3 text-left font-medium tracking-[-0.01em] transition ${
-                      active === "attendanceManagement" || active === "timeRequestManagement"
-                        ? "bg-[#0b1e43] text-white"
+          <div className="scrollbar-none min-h-0 flex-1 overflow-y-auto overflow-x-visible">
+            <nav className="space-y-2">
+              {visibleSidebarItems.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.key}
+                    href={item.href}
+                    title={item.label}
+                    className={`group relative flex w-full items-center rounded-xl text-left font-medium tracking-[-0.01em] transition ${
+                      isCollapsed ? "justify-center px-0 py-3" : "gap-3 px-4 py-3 text-lg"
+                    } ${
+                      item.key === active
+                        ? "bg-[#1e62d8] text-white"
                         : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
                     }`}
                   >
-                    <ClockIcon className="h-[18px] w-[18px] shrink-0" />
-                    <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 -translate-y-1/2 whitespace-nowrap rounded-lg border border-slate-700 bg-[#0d234f] px-3 py-1.5 text-sm font-semibold text-white opacity-0 shadow-2xl transition duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
-                      Quản lý
-                    </span>
-                  </button>
+                    <Icon className="h-[18px] w-[18px] shrink-0" />
+                    {!isCollapsed ? item.label : null}
+                    {isCollapsed ? (
+                      <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 -translate-y-1/2 whitespace-nowrap rounded-lg border border-slate-700 bg-[#0d234f] px-3 py-1.5 text-sm font-semibold text-white opacity-0 shadow-2xl transition duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
+                        {item.label}
+                      </span>
+                    ) : null}
+                  </Link>
+                );
+              })}
 
-                  {isManagementMenuOpen ? (
-                    <div className="absolute left-full top-0 z-50 ml-3 w-[240px] rounded-xl border border-slate-700 bg-[#0d234f] p-2 shadow-2xl">
-                      <div className="mb-2 rounded-xl bg-[#12306b] px-3 py-2">
-                        <p className="text-sm font-semibold text-white">Quản lý</p>
-                        <p className="mt-1 text-xs text-slate-300">Các màn tác vụ quản trị nội bộ</p>
-                      </div>
-                      {visibleManagementItems.map((item) => (
-                        <Link
-                          key={item.key}
-                          href={item.href}
-                          onClick={() => setIsManagementMenuOpen(false)}
-                          className={`mb-1 flex min-h-9 items-center rounded-lg px-3 py-2 text-sm font-semibold transition last:mb-0 ${
-                            item.key === active
-                              ? "bg-[#1e62d8] text-white"
-                              : "text-slate-100 hover:bg-[#12306b]"
-                          }`}
-                        >
-                          {item.label}
-                        </Link>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ) : (
-                <Collapsible open={isManagementMenuOpen} onOpenChange={setIsManagementMenuOpen}>
-                  <div className="space-y-2">
-                    <CollapsibleTrigger
+              {visibleManagementItems.length > 0 ? (
+                isCollapsed ? (
+                  <div ref={managementMenuRef} className="relative">
+                    <button
+                      type="button"
                       title="Quản lý"
-                      className={`flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-lg font-medium tracking-[-0.01em] transition ${
+                      onClick={() => {
+                        setIsManagementMenuOpen((prev) => !prev);
+                        setIsUserMenuOpen(false);
+                      }}
+                      className={`group relative flex w-full items-center justify-center rounded-xl px-0 py-3 text-left font-medium tracking-[-0.01em] transition ${
                         active === "attendanceManagement" || active === "timeRequestManagement"
                           ? "bg-[#0b1e43] text-white"
                           : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
                       }`}
                     >
-                      <span className="flex items-center gap-3">
-                        <ClockIcon className="h-[18px] w-[18px] shrink-0" />
+                      <ClockIcon className="h-[18px] w-[18px] shrink-0" />
+                      <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 -translate-y-1/2 whitespace-nowrap rounded-lg border border-slate-700 bg-[#0d234f] px-3 py-1.5 text-sm font-semibold text-white opacity-0 shadow-2xl transition duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
                         Quản lý
                       </span>
-                      {isManagementMenuOpen ? (
-                        <ChevronUpIcon className="h-4 w-4 text-slate-300" />
-                      ) : (
-                        <ChevronDownIcon className="h-4 w-4 text-slate-300" />
-                      )}
-                    </CollapsibleTrigger>
+                    </button>
 
-                    <CollapsibleContent className="space-y-2">
-                      {visibleManagementItems.map((item) => (
-                        <Link
-                          key={item.key}
-                          href={item.href}
-                          className={`ml-5 flex w-[calc(100%-1.25rem)] items-center rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
-                            item.key === active
-                              ? "bg-[#1e62d8] text-white"
-                              : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
-                          }`}
-                        >
-                          {item.label}
-                        </Link>
-                      ))}
-                    </CollapsibleContent>
+                    {isManagementMenuOpen ? (
+                      <div className="absolute left-full top-0 z-50 ml-3 w-[240px] rounded-xl border border-slate-700 bg-[#0d234f] p-2 shadow-2xl">
+                        <div className="mb-2 rounded-xl bg-[#12306b] px-3 py-2">
+                          <p className="text-sm font-semibold text-white">Quản lý</p>
+                          <p className="mt-1 text-xs text-slate-300">Các màn tác vụ quản trị nội bộ</p>
+                        </div>
+                        {visibleManagementItems.map((item) => (
+                          <Link
+                            key={item.key}
+                            href={item.href}
+                            onClick={() => setIsManagementMenuOpen(false)}
+                            className={`mb-1 flex min-h-9 items-center rounded-lg px-3 py-2 text-sm font-semibold transition last:mb-0 ${
+                              item.key === active
+                                ? "bg-[#1e62d8] text-white"
+                                : "text-slate-100 hover:bg-[#12306b]"
+                            }`}
+                          >
+                            {item.label}
+                          </Link>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
-                </Collapsible>
-              )
-            ) : null}
-          </nav>
+                ) : (
+                  <Collapsible open={isManagementMenuOpen} onOpenChange={setIsManagementMenuOpen}>
+                    <div className="space-y-2">
+                      <CollapsibleTrigger
+                        title="Quản lý"
+                        className={`flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-lg font-medium tracking-[-0.01em] transition ${
+                          active === "attendanceManagement" || active === "timeRequestManagement"
+                            ? "bg-[#0b1e43] text-white"
+                            : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
+                        }`}
+                      >
+                        <span className="flex items-center gap-3">
+                          <ClockIcon className="h-[18px] w-[18px] shrink-0" />
+                          Quản lý
+                        </span>
+                        {isManagementMenuOpen ? (
+                          <ChevronUpIcon className="h-4 w-4 text-slate-300" />
+                        ) : (
+                          <ChevronDownIcon className="h-4 w-4 text-slate-300" />
+                        )}
+                      </CollapsibleTrigger>
 
-          <div className="mt-auto space-y-4">
-            <div ref={userMenuRef} className="relative">
+                      <CollapsibleContent className="space-y-2">
+                        {visibleManagementItems.map((item) => (
+                          <Link
+                            key={item.key}
+                            href={item.href}
+                            className={`ml-5 flex w-[calc(100%-1.25rem)] items-center rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+                              item.key === active
+                                ? "bg-[#1e62d8] text-white"
+                                : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
+                            }`}
+                          >
+                            {item.label}
+                          </Link>
+                        ))}
+                      </CollapsibleContent>
+                    </div>
+                  </Collapsible>
+                )
+              ) : null}
+            </nav>
+          </div>
+
+          <div className="mt-4 space-y-4 overflow-visible">
+            <div ref={userMenuRef} className="relative overflow-visible">
               <button
                 type="button"
                 onClick={() => {
@@ -424,7 +431,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
                 <div
                   className={`rounded-xl border border-slate-700 bg-[#0d234f] p-2 shadow-2xl ${
                     isCollapsed
-                      ? "absolute bottom-0 left-full ml-3 w-[240px] z-50"
+                      ? "absolute left-[calc(100%+0.75rem)] top-1/2 z-[60] w-[240px] -translate-y-1/2"
                       : "mt-2"
                   }`}
                 >

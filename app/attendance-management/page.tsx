@@ -393,12 +393,6 @@ export default function AttendanceManagementPage() {
                 <h1 className="mt-1 text-3xl font-semibold tracking-[-0.02em] text-slate-900">
                   Quản lý chấm công
                 </h1>
-                <p className="mt-1 text-sm text-slate-500">
-                  Vai trò hiện tại: <span className="font-semibold text-slate-700">{toRoleScopeLabel(roleScope)}</span>
-                </p>
-                <p className="mt-1 text-sm text-slate-500">
-                  Director xem toàn bộ nhân sự. Leader xem member và leader cùng phòng ban hoặc phòng ban con.
-                </p>
               </div>
             </div>
           </header>

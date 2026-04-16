@@ -1,3 +1,5 @@
+import { formatGoalTypeLabel, getGoalProgressHelp } from "@/lib/constants/goals";
+import { formatKeyResultMetric, formatKeyResultUnit } from "@/lib/constants/key-results";
 import { buildGoalProgressMap, buildKeyResultProgressMap, getComputedTaskProgress } from "@/lib/okr";
 
 export type DashboardTaskStatus = "todo" | "doing" | "done" | "blocked" | "cancelled";
@@ -40,6 +42,9 @@ export type DashboardGoalItem = {
   label: string;
   team: string;
   progress: number;
+  goalTypeLabel: string;
+  metricLabel: string;
+  progressHelp: string;
   statusLabel: string;
 };
 
@@ -348,7 +353,7 @@ const toEntityLabel = (entityType: string | null) => {
     return "mục tiêu";
   }
   if (entityType === "key_result") {
-    return "kết quả then chốt";
+    return "KR";
   }
   if (entityType === "task") {
     return "công việc";
@@ -426,33 +431,36 @@ export const buildGoalProgressItems = ({
   goals,
   goalDepartments,
   keyResults,
-  tasks,
   departmentNamesById,
 }: {
   goals: Array<{
     id: string;
     name: string;
+    type: string | null;
     status: string | null;
     department_id: string | null;
+    target: number | null;
+    unit: string | null;
   }>;
   goalDepartments: Array<{
     goal_id: string | null;
     department_id: string | null;
     role?: string | null;
   }>;
-  keyResults: Array<{ id: string; goal_id: string | null }>;
-  tasks: Array<{
-    key_result_id: string | null;
-    type: string | null;
-    status: string | null;
-    progress: number | null;
-    weight: number | null;
+  keyResults: Array<{
+    id: string;
+    goal_id: string | null;
+    contribution_type?: string | null;
+    start_value: number | null;
+    current: number | null;
+    target: number | null;
+    weight?: number | null;
   }>;
   departmentNamesById: Record<string, string>;
 }) => {
-  const keyResultProgressMap = buildKeyResultProgressMap(keyResults, tasks);
+  const keyResultProgressMap = buildKeyResultProgressMap(keyResults);
   const goalProgressMap = buildGoalProgressMap(
-    goals.map((goal) => goal.id),
+    goals.map((goal) => ({ id: goal.id, type: goal.type, target: goal.target })),
     keyResults,
     keyResultProgressMap,
   );
@@ -495,6 +503,12 @@ export const buildGoalProgressItems = ({
       return participantNames.join(", ");
     })(),
     progress: goalProgressMap[goal.id] ?? 0,
+    goalTypeLabel: formatGoalTypeLabel(goal.type),
+    metricLabel:
+      goal.target !== null || goal.unit
+        ? `${formatKeyResultMetric(goal.target, goal.unit)} · ${formatKeyResultUnit(goal.unit)}`
+        : "Chưa đặt chỉ tiêu mục tiêu",
+    progressHelp: getGoalProgressHelp(goal.type),
     statusLabel: goal.status ? String(goal.status) : "Không rõ",
   }));
 };

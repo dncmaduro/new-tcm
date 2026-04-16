@@ -5,7 +5,20 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { ClearableNumberInput } from "@/components/ui/clearable-number-input";
-import { GOAL_STATUSES, GOAL_TYPES, GoalStatusValue, GoalTypeValue } from "@/lib/constants/goals";
+import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
+import {
+  GOAL_STATUSES,
+  GOAL_TYPES,
+  GoalStatusValue,
+  GoalTypeValue,
+  normalizeGoalTypeValue,
+} from "@/lib/constants/goals";
+import {
+  KEY_RESULT_UNITS,
+  KeyResultUnitValue,
+  formatKeyResultUnit,
+} from "@/lib/constants/key-results";
+import { syncGoalOwners } from "@/lib/goal-owners";
 import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
 import {
@@ -22,12 +35,10 @@ type DepartmentOption = {
   parentDepartmentId: string | null;
 };
 
-type ParentGoalOption = {
+type ProfileOption = {
   id: string;
   name: string;
-  departmentId: string | null;
-  quarter: number | null;
-  year: number | null;
+  email: string | null;
 };
 
 type GoalDepartmentRole = "owner" | "participant" | "supporter";
@@ -63,46 +74,92 @@ type GoalCreatePermissionDebug = {
   error: string | null;
 };
 
+type SavedGoalSnapshot = {
+  id: string;
+  name: string;
+  target: number | null;
+  unit: string | null;
+};
+
 type GoalFormState = {
   name: string;
   description: string;
   type: GoalTypeValue;
   departmentId: string;
+  ownerIds: string[];
   status: GoalStatusValue;
   quarter: number;
   year: number;
   note: string;
-  parentGoalId: string;
   startDate: string;
   endDate: string;
+  target: string;
+  unit: KeyResultUnitValue;
 };
 
 const now = new Date();
 const initialQuarter = Math.floor(now.getMonth() / 3) + 1;
-const NO_PARENT_GOAL_VALUE = "__no_parent_goal__";
-const quarterStartDate = new Date(now.getFullYear(), (initialQuarter - 1) * 3, 1);
-const quarterEndDate = new Date(now.getFullYear(), initialQuarter * 3, 0);
 const toDateInputValue = (value: Date) =>
   `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
-const defaultStartDate = toDateInputValue(quarterStartDate);
-const defaultEndDate = toDateInputValue(quarterEndDate);
+
+const getQuarterDateRange = (year: number, quarter: number) => {
+  const safeQuarter = Math.min(4, Math.max(1, Math.round(quarter || 1)));
+  const safeYear = Number.isFinite(year) ? Math.round(year) : now.getFullYear();
+  const startDate = new Date(safeYear, (safeQuarter - 1) * 3, 1);
+  const endDate = new Date(safeYear, safeQuarter * 3, 0);
+
+  return {
+    startDate: toDateInputValue(startDate),
+    endDate: toDateInputValue(endDate),
+  };
+};
+
+const { startDate: defaultStartDate, endDate: defaultEndDate } = getQuarterDateRange(
+  now.getFullYear(),
+  initialQuarter,
+);
 
 const defaultForm: GoalFormState = {
   name: "",
   description: "",
   type: GOAL_TYPES[0].value,
   departmentId: "",
+  ownerIds: [],
   status: GOAL_STATUSES[0].value,
   quarter: initialQuarter,
   year: now.getFullYear(),
   note: "",
-  parentGoalId: "",
   startDate: defaultStartDate,
   endDate: defaultEndDate,
+  target: "",
+  unit: KEY_RESULT_UNITS[0].value,
 };
+
+const isSameGoalTargetValue = (left: number | null, right: number | null) => {
+  if (left === null && right === null) {
+    return true;
+  }
+
+  return Number(left ?? NaN) === Number(right ?? NaN);
+};
+
+const isSameGoalNameValue = (left: string, right: string) => left.trim() === right.trim();
 
 const DEFAULT_GOAL_WEIGHT = 50;
 const DEFAULT_KR_WEIGHT = 50;
+
+const normalizeParticipationWeightPair = (goalWeight: number) => {
+  const safeGoalWeight = Number.isFinite(goalWeight)
+    ? Math.min(100, Math.max(0, Number(goalWeight)))
+    : DEFAULT_GOAL_WEIGHT;
+  const roundedGoalWeight = Number(safeGoalWeight.toFixed(1));
+  const roundedKrWeight = Number((100 - roundedGoalWeight).toFixed(1));
+
+  return {
+    goalWeight: roundedGoalWeight,
+    krWeight: roundedKrWeight,
+  };
+};
 
 const createDepartmentParticipation = (
   departmentId: string,
@@ -110,8 +167,7 @@ const createDepartmentParticipation = (
 ): DepartmentParticipationFormState => ({
   departmentId,
   role,
-  goalWeight: DEFAULT_GOAL_WEIGHT,
-  krWeight: DEFAULT_KR_WEIGHT,
+  ...normalizeParticipationWeightPair(DEFAULT_GOAL_WEIGHT),
 });
 
 const normalizeDepartmentParticipations = (
@@ -122,7 +178,10 @@ const normalizeDepartmentParticipations = (
     if (!row.departmentId || acc.some((item) => item.departmentId === row.departmentId)) {
       return acc;
     }
-    acc.push(row);
+    acc.push({
+      ...row,
+      ...normalizeParticipationWeightPair(Number(row.goalWeight)),
+    });
     return acc;
   }, []);
 
@@ -135,11 +194,13 @@ const normalizeDepartmentParticipations = (
     .map((row) => ({
       ...row,
       role: "participant" as GoalDepartmentRole,
+      ...normalizeParticipationWeightPair(Number(row.goalWeight)),
     }))
     .concat({
       ...withOwner,
       departmentId: ownerDepartmentId,
       role: "owner",
+      ...normalizeParticipationWeightPair(Number(withOwner.goalWeight)),
     });
 };
 
@@ -161,14 +222,23 @@ const getUniqueDepartmentLinks = (goalId: string, rows: DepartmentParticipationF
       goal_id: goalId,
       department_id: item.departmentId,
       role: item.role,
-      goal_weight: Number(item.goalWeight) / 100,
-      kr_weight: Number(item.krWeight) / 100,
+      goal_weight: normalizeParticipationWeightPair(Number(item.goalWeight)).goalWeight / 100,
+      kr_weight: normalizeParticipationWeightPair(Number(item.goalWeight)).krWeight / 100,
     });
     return acc;
   }, []);
 
 const sortDepartmentsByName = (rows: DepartmentOption[]) =>
   [...rows].sort((a, b) => a.name.localeCompare(b.name, "vi"));
+
+const findMarketingDepartmentId = (rows: DepartmentOption[]) => {
+  const exactMatch = rows.find((department) => department.name.trim().toLowerCase() === "marketing");
+  if (exactMatch) {
+    return exactMatch.id;
+  }
+
+  return rows.find((department) => department.name.trim().toLowerCase().includes("marketing"))?.id ?? null;
+};
 
 const buildDepartmentTree = (rows: DepartmentOption[]): DepartmentTreeNode[] => {
   if (!rows.length) {
@@ -319,11 +389,11 @@ function NewGoalPageContent() {
 
   const [form, setForm] = useState<GoalFormState>(defaultForm);
   const [allDepartments, setAllDepartments] = useState<DepartmentOption[]>([]);
+  const [profileOptions, setProfileOptions] = useState<ProfileOption[]>([]);
   const [departmentParticipations, setDepartmentParticipations] = useState<
     DepartmentParticipationFormState[]
   >([]);
   const [collapsedDepartmentIds, setCollapsedDepartmentIds] = useState<Record<string, boolean>>({});
-  const [parentGoalOptions, setParentGoalOptions] = useState<ParentGoalOption[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -366,18 +436,24 @@ function NewGoalPageContent() {
 
     if (!canCreateGoal) {
       setAllDepartments([]);
+      setProfileOptions([]);
       setDepartmentParticipations([]);
-      setParentGoalOptions([]);
       return;
     }
 
     let isActive = true;
 
     const loadFormData = async () => {
-      const { data: allDepartmentsData, error: allDepartmentsError } = await supabase
-        .from("departments")
-        .select("id,name,parent_department_id")
-        .order("name", { ascending: true });
+      const [
+        { data: allDepartmentsData, error: allDepartmentsError },
+        { data: profilesData, error: profilesError },
+      ] = await Promise.all([
+        supabase
+          .from("departments")
+          .select("id,name,parent_department_id")
+          .order("name", { ascending: true }),
+        supabase.from("profiles").select("id,name,email").order("name", { ascending: true }),
+      ]);
 
       if (!isActive) {
         return;
@@ -394,39 +470,26 @@ function NewGoalPageContent() {
             }))
           : rootDepartments.map((department) => ({ ...department }));
       setAllDepartments(departmentOptions);
-
-      const { data: existingGoals, error: existingGoalsError } = await supabase
-        .from("goals")
-        .select("id,name,department_id,quarter,year")
-        .order("created_at", { ascending: false });
-
-      if (!isActive) {
-        return;
-      }
-
-      if (existingGoalsError) {
-        setParentGoalOptions([]);
-      } else {
-        setParentGoalOptions(
-          (existingGoals ?? []).map((goal) => ({
-            id: String(goal.id),
-            name: String(goal.name),
-            departmentId: goal.department_id ? String(goal.department_id) : null,
-            quarter: typeof goal.quarter === "number" ? goal.quarter : null,
-            year: typeof goal.year === "number" ? goal.year : null,
-          })),
-        );
-      }
+      setProfileOptions(
+        !profilesError && (profilesData?.length ?? 0) > 0
+          ? profilesData.map((profile) => ({
+              id: String(profile.id),
+              name: profile.name?.trim() || profile.email?.trim() || "Chưa có tên",
+              email: profile.email ? String(profile.email) : null,
+            }))
+          : [],
+      );
 
       if (editGoalId) {
         const [
           { data: goalData, error: goalError },
           { data: goalDepartmentData, error: goalDepartmentError },
+          { data: goalOwnerRows, error: goalOwnersError },
         ] = await Promise.all([
           supabase
             .from("goals")
             .select(
-              "id,name,description,type,department_id,status,quarter,year,note,parent_goal_id,start_date,end_date",
+              "id,name,description,type,department_id,status,quarter,year,note,start_date,end_date,target,unit",
             )
             .eq("id", editGoalId)
             .maybeSingle(),
@@ -434,6 +497,7 @@ function NewGoalPageContent() {
             .from("goal_departments")
             .select("department_id,role,goal_weight,kr_weight")
             .eq("goal_id", editGoalId),
+          supabase.from("goal_owners").select("profile_id").eq("goal_id", editGoalId),
         ]);
 
         if (!isActive) {
@@ -457,18 +521,41 @@ function NewGoalPageContent() {
                 },
               ];
 
+        const nextQuarter = typeof goalData.quarter === "number" ? goalData.quarter : initialQuarter;
+        const nextYear = typeof goalData.year === "number" ? goalData.year : now.getFullYear();
+        const normalizedGoalType = normalizeGoalTypeValue(
+          goalData.type ? String(goalData.type) : GOAL_TYPES[0].value,
+        );
+        const nextDateRange = getQuarterDateRange(nextYear, nextQuarter);
+
         setForm({
           name: String(goalData.name ?? ""),
           description: String(goalData.description ?? ""),
-          type: String(goalData.type ?? GOAL_TYPES[0].value) as GoalTypeValue,
+          type: normalizedGoalType,
           departmentId: goalData.department_id ? String(goalData.department_id) : "",
+          ownerIds:
+            !goalOwnersError && (goalOwnerRows?.length ?? 0) > 0
+              ? [
+                  ...new Set(
+                    goalOwnerRows
+                      .map((item) => (item.profile_id ? String(item.profile_id) : null))
+                      .filter((value): value is string => Boolean(value)),
+                  ),
+                ]
+              : [],
           status: String(goalData.status ?? GOAL_STATUSES[0].value) as GoalStatusValue,
-          quarter: typeof goalData.quarter === "number" ? goalData.quarter : initialQuarter,
-          year: typeof goalData.year === "number" ? goalData.year : now.getFullYear(),
+          quarter: nextQuarter,
+          year: nextYear,
           note: String(goalData.note ?? ""),
-          parentGoalId: goalData.parent_goal_id ? String(goalData.parent_goal_id) : "",
-          startDate: goalData.start_date ? String(goalData.start_date) : defaultStartDate,
-          endDate: goalData.end_date ? String(goalData.end_date) : defaultEndDate,
+          startDate: nextDateRange.startDate,
+          endDate: nextDateRange.endDate,
+          target:
+            normalizedGoalType === "okr" || goalData.target === null || goalData.target === undefined
+              ? ""
+              : String(goalData.target),
+          unit:
+            KEY_RESULT_UNITS.find((unit) => unit.value === goalData.unit)?.value ??
+            KEY_RESULT_UNITS[0].value,
         });
         setDepartmentParticipations(
           normalizeDepartmentParticipations(
@@ -477,14 +564,11 @@ function NewGoalPageContent() {
               .map((item) => ({
                 departmentId: String(item.department_id),
                 role: (item.role === "owner" ? "owner" : "participant") as GoalDepartmentRole,
-                goalWeight:
+                ...normalizeParticipationWeightPair(
                   typeof item.goal_weight === "number"
                     ? Number(item.goal_weight) * 100
                     : DEFAULT_GOAL_WEIGHT,
-                krWeight:
-                  typeof item.kr_weight === "number"
-                    ? Number(item.kr_weight) * 100
-                    : DEFAULT_KR_WEIGHT,
+                ),
               })),
             goalData.department_id ? String(goalData.department_id) : "",
           ),
@@ -492,16 +576,25 @@ function NewGoalPageContent() {
         return;
       }
 
-      const matchedFromQuery = queryDepartmentId
-        ? departmentOptions.find((department) => department.id === queryDepartmentId)
-        : null;
-      const nextDepartmentId = matchedFromQuery?.id ?? departmentOptions[0]?.id ?? "";
-      setDepartmentParticipations(
-        nextDepartmentId ? [createDepartmentParticipation(nextDepartmentId, "owner")] : [],
-      );
+      const nextDepartmentId =
+        findMarketingDepartmentId(departmentOptions) ??
+        (queryDepartmentId
+          ? departmentOptions.find((department) => department.id === queryDepartmentId)?.id ?? null
+          : null) ??
+        departmentOptions[0]?.id ??
+        "";
+      resetDepartmentParticipationState(nextDepartmentId);
       setForm((prev) => ({
         ...prev,
         departmentId: nextDepartmentId,
+        ownerIds:
+          prev.ownerIds.length > 0
+            ? prev.ownerIds
+            : workspaceAccess.profileId
+              ? [workspaceAccess.profileId]
+              : profilesData?.[0]?.id
+                ? [String(profilesData[0].id)]
+                : [],
       }));
     };
 
@@ -510,14 +603,14 @@ function NewGoalPageContent() {
     return () => {
       isActive = false;
     };
-  }, [canCreateGoal, editGoalId, isCheckingPermission, queryDepartmentId, rootDepartments]);
-
-  const departmentsById = useMemo(() => {
-    return allDepartments.reduce<Record<string, DepartmentOption>>((acc, department) => {
-      acc[department.id] = department;
-      return acc;
-    }, {});
-  }, [allDepartments]);
+  }, [
+    canCreateGoal,
+    editGoalId,
+    isCheckingPermission,
+    queryDepartmentId,
+    rootDepartments,
+    workspaceAccess.profileId,
+  ]);
 
   const departmentTree = useMemo(() => buildDepartmentTree(allDepartments), [allDepartments]);
 
@@ -533,6 +626,15 @@ function NewGoalPageContent() {
     () => departmentParticipations.filter((item) => item.departmentId !== form.departmentId).length,
     [departmentParticipations, form.departmentId],
   );
+  const isKpiGoal = form.type === "kpi";
+  const isOkrGoal = form.type === "okr";
+
+  const resetDepartmentParticipationState = (primaryDepartmentId: string) => {
+    setCollapsedDepartmentIds({});
+    setDepartmentParticipations(
+      primaryDepartmentId ? [createDepartmentParticipation(primaryDepartmentId, "owner")] : [],
+    );
+  };
 
   useEffect(() => {
     setCollapsedDepartmentIds((prev) => {
@@ -552,38 +654,46 @@ function NewGoalPageContent() {
     });
   }, [departmentTree]);
 
-  const availableParentGoals = useMemo(() => {
-    const selectedDepartment = departmentsById[form.departmentId];
-    const parentDepartmentId = selectedDepartment?.parentDepartmentId ?? null;
+  useEffect(() => {
+    const normalizedQuarter = Math.min(4, Math.max(1, Math.round(form.quarter || 1)));
+    const normalizedYear =
+      Number.isFinite(form.year) && form.year >= 2000 ? Math.round(form.year) : now.getFullYear();
+    const nextDateRange = getQuarterDateRange(normalizedYear, normalizedQuarter);
 
-    if (!parentDepartmentId) {
-      return [];
-    }
+    setForm((prev) => {
+      if (
+        prev.quarter === normalizedQuarter &&
+        prev.year === normalizedYear &&
+        prev.startDate === nextDateRange.startDate &&
+        prev.endDate === nextDateRange.endDate
+      ) {
+        return prev;
+      }
 
-    return parentGoalOptions.filter(
-      (goal) => goal.departmentId === parentDepartmentId && goal.id !== editGoalId,
-    );
-  }, [departmentsById, editGoalId, form.departmentId, parentGoalOptions]);
-
-  const hasParentGoal = form.parentGoalId.trim().length > 0;
-  const selectedDepartment = useMemo(
-    () => allDepartments.find((department) => department.id === form.departmentId) ?? null,
-    [allDepartments, form.departmentId],
-  );
+      return {
+        ...prev,
+        quarter: normalizedQuarter,
+        year: normalizedYear,
+        startDate: nextDateRange.startDate,
+        endDate: nextDateRange.endDate,
+      };
+    });
+  }, [form.quarter, form.year]);
 
   const isFormValid = useMemo(() => {
+    const hasValidGoalTarget =
+      !form.target.trim() ||
+      (Number.isFinite(Number(form.target)) &&
+        Number(form.target) > 0);
     const hasValidDepartmentParticipations =
       departmentParticipations.length > 0 &&
       departmentParticipations.every((item) => {
         const goalWeight = Number(item.goalWeight);
-        const krWeight = Number(item.krWeight);
         return (
           item.departmentId.trim().length > 0 &&
           Number.isFinite(goalWeight) &&
-          Number.isFinite(krWeight) &&
           goalWeight >= 0 &&
-          krWeight >= 0 &&
-          Math.abs(goalWeight + krWeight - 100) <= 0.001
+          goalWeight <= 100
         );
       });
 
@@ -600,12 +710,18 @@ function NewGoalPageContent() {
       form.startDate.trim().length > 0 &&
       form.endDate.trim().length > 0 &&
       new Date(form.startDate).getTime() <= new Date(form.endDate).getTime() &&
+      hasValidGoalTarget &&
+      (form.type === "okr" || Number(form.target) > 0) &&
       hasValidDepartmentParticipations
     );
   }, [departmentParticipations, form]);
 
   const toggleRelatedDepartment = (departmentId: string) => {
     setDepartmentParticipations((prev) => {
+      if (!form.departmentId) {
+        return prev;
+      }
+
       if (departmentId === form.departmentId) {
         return normalizeDepartmentParticipations(prev, form.departmentId);
       }
@@ -628,6 +744,15 @@ function NewGoalPageContent() {
     }));
   };
 
+  const toggleOwnerSelection = (profileId: string) => {
+    setForm((prev) => ({
+      ...prev,
+      ownerIds: prev.ownerIds.includes(profileId)
+        ? prev.ownerIds.filter((ownerId) => ownerId !== profileId)
+        : [...prev.ownerIds, profileId],
+    }));
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -641,26 +766,33 @@ function NewGoalPageContent() {
       return;
     }
 
+    const safeGoalTarget = form.target.trim().length > 0 ? Number(form.target) : null;
+    if (form.type === "kpi" && (safeGoalTarget === null || !Number.isFinite(safeGoalTarget) || safeGoalTarget <= 0)) {
+      setSubmitError("Goal kiểu KPI phải có target lớn hơn 0.");
+      return;
+    }
+    if (safeGoalTarget !== null && (!Number.isFinite(safeGoalTarget) || safeGoalTarget < 0)) {
+      setSubmitError("Target của goal phải là số hợp lệ.");
+      return;
+    }
+
     const normalizedParticipations = normalizeDepartmentParticipations(
       departmentParticipations,
       form.departmentId,
     );
     const invalidParticipation = normalizedParticipations.find((item) => {
       const goalWeight = Number(item.goalWeight);
-      const krWeight = Number(item.krWeight);
       return (
         !item.departmentId ||
         !Number.isFinite(goalWeight) ||
-        !Number.isFinite(krWeight) ||
         goalWeight < 0 ||
-        krWeight < 0 ||
-        Math.abs(goalWeight + krWeight - 100) > 0.001
+        goalWeight > 100
       );
     });
 
     if (invalidParticipation) {
       setSubmitError(
-        "Mỗi phòng ban tham gia phải có trọng số hợp lệ và tổng trọng số phải bằng 100%.",
+        "Mỗi phòng ban tham gia phải có trọng số mục tiêu hợp lệ từ 0 đến 100%.",
       );
       return;
     }
@@ -678,15 +810,23 @@ function NewGoalPageContent() {
         quarter: Math.round(form.quarter),
         year: Math.round(form.year),
         note: form.note.trim() || null,
-        parent_goal_id: form.parentGoalId || null,
         start_date: form.startDate || null,
         end_date: form.endDate || null,
+        target: form.type === "okr" ? null : safeGoalTarget,
+        unit: form.type === "okr" ? null : form.unit || null,
       };
 
       let savedGoalId = editGoalId ? String(editGoalId) : null;
 
+      let savedGoalSnapshot: SavedGoalSnapshot | null = null;
+
       if (isEditMode && savedGoalId) {
-        const { error } = await supabase.from("goals").update(payload).eq("id", savedGoalId);
+        const { data, error } = await supabase
+          .from("goals")
+          .update(payload)
+          .eq("id", savedGoalId)
+          .select("id,name,target,unit")
+          .maybeSingle();
 
         if (error) {
           if (error.code === "42501") {
@@ -698,11 +838,33 @@ function NewGoalPageContent() {
           }
           return;
         }
+
+        if (!data) {
+          setSubmitError(
+            "Không cập nhật được mục tiêu. DB trả về 0 dòng, nhiều khả năng do RLS hoặc policy UPDATE của bảng goals.",
+          );
+          return;
+        }
+
+        savedGoalSnapshot =
+          typeof data === "object"
+            ? {
+                id: String(data.id),
+                name: data.name ? String(data.name) : "",
+                target:
+                  data.target === null || data.target === undefined
+                    ? null
+                    : typeof data.target === "number"
+                      ? data.target
+                      : Number(data.target),
+                unit: data.unit ? String(data.unit) : null,
+              }
+            : null;
       } else {
         const { data: createdGoal, error } = await supabase
           .from("goals")
           .insert(payload)
-          .select("id")
+          .select("id,name,target,unit")
           .maybeSingle();
 
         if (error || !createdGoal) {
@@ -717,10 +879,50 @@ function NewGoalPageContent() {
         }
 
         savedGoalId = String(createdGoal.id);
+        savedGoalSnapshot = {
+          id: String(createdGoal.id),
+          name: createdGoal.name ? String(createdGoal.name) : "",
+          target:
+            createdGoal.target === null || createdGoal.target === undefined
+              ? null
+              : typeof createdGoal.target === "number"
+                ? createdGoal.target
+                : Number(createdGoal.target),
+          unit: createdGoal.unit ? String(createdGoal.unit) : null,
+        };
       }
 
       if (!savedGoalId) {
         setSubmitError("Không xác định được mục tiêu cần lưu.");
+        return;
+      }
+
+      if (
+        savedGoalSnapshot &&
+        (!isSameGoalNameValue(savedGoalSnapshot.name, payload.name) ||
+          savedGoalSnapshot.unit !== (payload.unit ?? null) ||
+          !isSameGoalTargetValue(savedGoalSnapshot.target, payload.target))
+      ) {
+        setSubmitError(
+          `DB không lưu đúng dữ liệu mục tiêu. Name hiện tại trong DB là "${
+            savedGoalSnapshot.name || "null"
+          }", unit là "${savedGoalSnapshot.unit ?? "null"}", target là "${
+            savedGoalSnapshot.target ?? "null"
+          }". Payload vừa gửi là name "${payload.name}", unit "${
+            payload.unit ?? "null"
+          }", target "${payload.target ?? "null"}".`,
+        );
+        return;
+      }
+
+      try {
+        await syncGoalOwners(savedGoalId, form.ownerIds);
+      } catch (ownerSyncError) {
+        setSubmitError(
+          ownerSyncError instanceof Error
+            ? `${isEditMode ? "Đã lưu mục tiêu" : "Đã tạo mục tiêu"} nhưng chưa đồng bộ được Owners: ${ownerSyncError.message}`
+            : `${isEditMode ? "Đã lưu mục tiêu" : "Đã tạo mục tiêu"} nhưng chưa đồng bộ được Owners.`,
+        );
         return;
       }
 
@@ -822,8 +1024,8 @@ function NewGoalPageContent() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
-      <div className="flex min-h-screen w-full">
+    <div className="fixed inset-0 bg-[#f3f5fa] text-slate-900">
+      <div className="flex h-full w-full overflow-hidden">
         <WorkspaceSidebar active="goals" />
 
         <div className="flex h-screen w-full flex-1 flex-col overflow-hidden lg:pl-[var(--workspace-sidebar-width)]">
@@ -838,14 +1040,6 @@ function NewGoalPageContent() {
                   {isEditMode ? "Chỉnh sửa mục tiêu" : "Tạo mục tiêu mới"}
                 </span>
               </div>
-              <div className="flex items-center gap-2">
-                <Link
-                  href="/goals"
-                  className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Quay lại
-                </Link>
-              </div>
             </div>
           </header>
 
@@ -855,7 +1049,7 @@ function NewGoalPageContent() {
                 <p className="mb-2 font-semibold text-sky-300">
                   Debug quyền tạo mục tiêu (debugPermission=1)
                 </p>
-                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed">
+                <pre className="whitespace-pre-wrap break-words text-[11px] leading-relaxed">
                   {JSON.stringify(permissionDebug, null, 2)}
                 </pre>
               </div>
@@ -912,7 +1106,11 @@ function NewGoalPageContent() {
                       <Select
                         value={form.type}
                         onValueChange={(value: GoalTypeValue) =>
-                          setForm((prev) => ({ ...prev, type: value }))
+                          setForm((prev) => ({
+                            ...prev,
+                            type: value,
+                            target: value === "okr" ? "" : prev.target,
+                          }))
                         }
                       >
                         <SelectTrigger>
@@ -952,26 +1150,122 @@ function NewGoalPageContent() {
                     </div>
                   </div>
 
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-semibold text-slate-700">
+                        Người chịu trách nhiệm
+                      </label>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        {profileOptions.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {profileOptions.map((profile) => {
+                              const isSelected = form.ownerIds.includes(profile.id);
+
+                              return (
+                                <button
+                                  key={profile.id}
+                                  type="button"
+                                  onClick={() => toggleOwnerSelection(profile.id)}
+                                  className={`inline-flex min-h-10 items-center rounded-xl border px-3 py-2 text-left text-sm font-medium transition ${
+                                    isSelected
+                                      ? "border-blue-600 bg-blue-600 text-white"
+                                      : "border-slate-200 bg-white text-slate-700 hover:border-blue-300"
+                                  }`}
+                                >
+                                  <span className="line-clamp-1">
+                                    {profile.name}
+                                    {profile.email ? ` · ${profile.email}` : ""}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-slate-500">
+                            Chưa có hồ sơ nào để gán người chịu trách nhiệm.
+                          </p>
+                        )}
+                        <p className="mt-3 text-xs text-slate-500">
+                          Một Goal có thể có nhiều người chịu trách nhiệm ngang vai trò. Có thể để
+                          trống nếu chưa muốn gán ngay.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-semibold text-slate-700">
+                        Đơn vị đo mục tiêu
+                      </label>
+                      <Select
+                        value={isOkrGoal ? undefined : form.unit}
+                        disabled={isOkrGoal}
+                        onValueChange={(value: KeyResultUnitValue) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            unit: value,
+                          }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue
+                            placeholder={isOkrGoal ? "Goal OKR không dùng đơn vị" : "Chọn đơn vị"}
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {KEY_RESULT_UNITS.map((unit) => (
+                            <SelectItem key={unit.value} value={unit.value}>
+                              {unit.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
                   <div className="space-y-1.5">
-                    <label className="text-sm font-semibold text-slate-700">Phòng ban *</label>
+                    <label htmlFor="goal-target" className="text-sm font-semibold text-slate-700">
+                      Chỉ tiêu {isKpiGoal ? "*" : ""}
+                    </label>
+                    <FormattedNumberInput
+                      id="goal-target"
+                      value={form.target}
+                      onValueChange={(value) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          target: value,
+                        }))
+                      }
+                      disabled={isOkrGoal}
+                      className={`h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
+                        isOkrGoal
+                          ? "cursor-not-allowed bg-slate-50 text-slate-400"
+                          : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      }`}
+                      placeholder={
+                        isKpiGoal
+                          ? "Ví dụ: 1.200.000.000"
+                          : "Goal OKR không nhập chỉ tiêu"
+                      }
+                    />
+                    <p className="text-xs text-slate-500">
+                      {isKpiGoal
+                        ? `Goal kiểu KPI nên có target rõ ràng theo đơn vị ${formatKeyResultUnit(form.unit)}.`
+                        : `Goal kiểu OKR không nhập chỉ tiêu ở mức goal. Đơn vị hiện tại: ${formatKeyResultUnit(form.unit)}.`}
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-semibold text-slate-700">
+                      Phòng ban chịu trách nhiệm chính *
+                    </label>
                     <Select
                       value={form.departmentId || undefined}
                       onValueChange={(value) => {
                         setForm((prev) => ({
                           ...prev,
                           departmentId: value,
-                          parentGoalId: "",
                         }));
-                        setDepartmentParticipations((prev) =>
-                          normalizeDepartmentParticipations(
-                            prev.map((item) =>
-                              item.departmentId === form.departmentId
-                                ? { ...item, departmentId: value }
-                                : item,
-                            ),
-                            value,
-                          ),
-                        );
+                        resetDepartmentParticipationState(value);
                       }}
                     >
                       <SelectTrigger>
@@ -987,8 +1281,8 @@ function NewGoalPageContent() {
                     </Select>
                   </div>
 
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <div className="max-h-[700px] overflow-y-auto pr-1">
+                  {form.departmentId ? (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                       <div className="space-y-2">
                         <div className="flex items-center justify-between gap-3">
                           <label className="text-sm font-semibold text-slate-700">
@@ -1014,12 +1308,15 @@ function NewGoalPageContent() {
                           </div>
                           <p className="mt-3 text-xs text-slate-500">
                             Bấm vào từng node để thêm hoặc bỏ phòng ban tham gia. Goal vẫn có
-                            `department_id` là đơn vị chính. Mỗi phòng ban tham gia có vai trò,
-                            tỷ trọng mục tiêu và tỷ trọng KR để phục vụ chấm hiệu suất theo mục tiêu.
+                            `department_id` là đơn vị chính. Mỗi phòng ban tham gia có trọng số
+                            mục tiêu để phục vụ chấm hiệu suất theo mục tiêu.
                           </p>
                         </div>
                         {departmentParticipations.length > 0 ? (
                           <div className="mt-3 space-y-3">
+                            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-800">
+                              Trọng số mục tiêu (%) là tỷ trọng ảnh hưởng của tiến độ mục tiêu lên hiệu suất của phòng ban đó
+                            </div>
                             {departmentParticipations
                               .slice()
                               .sort((a, b) =>
@@ -1034,14 +1331,12 @@ function NewGoalPageContent() {
                                   allDepartments.find(
                                     (department) => department.id === item.departmentId,
                                   )?.name ?? "Phòng ban";
-                                const totalWeight = Number(item.goalWeight) + Number(item.krWeight);
                                 const isPrimary = item.departmentId === form.departmentId;
-                                const hasValidTotalWeight = Math.abs(totalWeight - 100) <= 0.001;
 
                                 return (
                                   <div
                                     key={item.departmentId}
-                                    className="grid gap-3 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-[minmax(0,1.2fr)_160px_140px_140px_auto]"
+                                    className="grid gap-3 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-[minmax(0,1.3fr)_160px_160px]"
                                   >
                                     <div>
                                       <p className="text-sm font-semibold text-slate-800">
@@ -1053,13 +1348,6 @@ function NewGoalPageContent() {
                                           : "Đơn vị tham gia thực thi"}
                                       </p>
                                     </div>
-
-                                    <label className="space-y-1 text-xs font-medium text-slate-600">
-                                      <span>Vai trò</span>
-                                      <div className="flex h-10 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700">
-                                        {isPrimary ? "Đơn vị chính" : "Tham gia"}
-                                      </div>
-                                    </label>
 
                                     <label className="space-y-1 text-xs font-medium text-slate-600">
                                       <span>Trọng số mục tiêu (%)</span>
@@ -1074,7 +1362,7 @@ function NewGoalPageContent() {
                                               row.departmentId === item.departmentId
                                                 ? {
                                                     ...row,
-                                                    goalWeight: value,
+                                                    ...normalizeParticipationWeightPair(value),
                                                   }
                                                 : row,
                                             ),
@@ -1086,47 +1374,10 @@ function NewGoalPageContent() {
 
                                     <label className="space-y-1 text-xs font-medium text-slate-600">
                                       <span>Trọng số KR (%)</span>
-                                      <ClearableNumberInput
-                                        min={0}
-                                        max={100}
-                                        step="0.1"
-                                        value={item.krWeight}
-                                        onValueChange={(value) =>
-                                          setDepartmentParticipations((prev) =>
-                                            prev.map((row) =>
-                                              row.departmentId === item.departmentId
-                                                ? {
-                                                    ...row,
-                                                    krWeight: value,
-                                                  }
-                                                : row,
-                                            ),
-                                          )
-                                        }
-                                        className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                                      />
+                                      <div className="flex h-10 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700">
+                                        {item.krWeight}%
+                                      </div>
                                     </label>
-
-                                    <div className="flex items-end justify-between gap-2 md:justify-end">
-                                      <span
-                                        className={`inline-flex h-10 items-center rounded-lg px-3 text-xs font-semibold ${
-                                          hasValidTotalWeight
-                                            ? "bg-emerald-50 text-emerald-700"
-                                            : "bg-rose-50 text-rose-700"
-                                        }`}
-                                      >
-                                        {hasValidTotalWeight ? "Đủ 100%" : "Tổng phải 100%"}
-                                      </span>
-                                      {!isPrimary ? (
-                                        <button
-                                          type="button"
-                                          onClick={() => toggleRelatedDepartment(item.departmentId)}
-                                          className="inline-flex h-10 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-                                        >
-                                          Bỏ
-                                        </button>
-                                      ) : null}
-                                    </div>
                                   </div>
                                 );
                               })}
@@ -1134,88 +1385,12 @@ function NewGoalPageContent() {
                         ) : null}
                       </div>
                     </div>
-                  </div>
-
-                  {selectedDepartment ? (
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                      <p className="font-semibold text-slate-800">
-                        Đơn vị chính: {selectedDepartment.name}
-                      </p>
-                      <p className="mt-1">
-                        Mục tiêu mới sẽ được tạo theo cấu trúc `goal -&gt; key_results -&gt; tasks`.
-                        Sau khi tạo goal, bạn có thể vào trang chi tiết để thêm key result và phân
-                        công task theo từng key result.
-                      </p>
-                    </div>
                   ) : null}
 
-                  <div className="space-y-1.5">
-                    <label className="text-sm font-semibold text-slate-700">Mục tiêu cha</label>
-                    <Select
-                      value={form.parentGoalId || NO_PARENT_GOAL_VALUE}
-                      onValueChange={(value) => {
-                        const nextParentGoalId = value === NO_PARENT_GOAL_VALUE ? "" : value;
-                        setForm((prev) => {
-                          if (!nextParentGoalId) {
-                            return { ...prev, parentGoalId: "" };
-                          }
-
-                          const selectedParentGoal = availableParentGoals.find(
-                            (goal) => goal.id === nextParentGoalId,
-                          );
-
-                          if (
-                            !selectedParentGoal ||
-                            selectedParentGoal.quarter === null ||
-                            selectedParentGoal.year === null
-                          ) {
-                            return { ...prev, parentGoalId: nextParentGoalId };
-                          }
-
-                          return {
-                            ...prev,
-                            parentGoalId: nextParentGoalId,
-                            quarter: selectedParentGoal.quarter,
-                            year: selectedParentGoal.year,
-                          };
-                        });
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Không có mục tiêu cha" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={NO_PARENT_GOAL_VALUE}>Không có mục tiêu cha</SelectItem>
-                        {availableParentGoals.map((goal) => (
-                          <SelectItem key={goal.id} value={goal.id}>
-                            {goal.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-3">
-                    <div className="space-y-1.5">
-                      <label
-                        htmlFor="goal-progress"
-                        className="text-sm font-semibold text-slate-700"
-                      >
-                        Tiến độ (%)
-                      </label>
-                      <input
-                        id="goal-progress"
-                        type="number"
-                        value={0}
-                        disabled
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 text-sm font-semibold text-slate-600 outline-none"
-                      />
-                    </div>
-
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                     <div className="space-y-1.5">
                       <label className="text-sm font-semibold text-slate-700">Quý (1-4) *</label>
                       <Select
-                        disabled={hasParentGoal}
                         value={String(form.quarter)}
                         onValueChange={(value) =>
                           setForm((prev) => ({
@@ -1244,7 +1419,6 @@ function NewGoalPageContent() {
                         id="goal-year"
                         min={2000}
                         max={2100}
-                        disabled={hasParentGoal}
                         value={form.year}
                         onValueChange={(value) =>
                           setForm((prev) => ({
@@ -1252,7 +1426,7 @@ function NewGoalPageContent() {
                             year: value,
                           }))
                         }
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-500"
+                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       />
                     </div>
                   </div>
@@ -1269,13 +1443,9 @@ function NewGoalPageContent() {
                         id="goal-start-date"
                         type="date"
                         value={form.startDate}
-                        onChange={(event) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            startDate: event.target.value,
-                          }))
-                        }
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        disabled
+                        readOnly
+                        className="h-11 w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-500 outline-none"
                       />
                     </div>
 
@@ -1291,28 +1461,22 @@ function NewGoalPageContent() {
                         type="date"
                         min={form.startDate || undefined}
                         value={form.endDate}
-                        onChange={(event) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            endDate: event.target.value,
-                          }))
-                        }
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        disabled
+                        readOnly
+                        className="h-11 w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-500 outline-none"
                       />
                     </div>
                   </div>
+
+                  <p className="-mt-2 text-xs text-slate-500">
+                    Ngày bắt đầu và ngày kết thúc được tự động khóa theo quý và năm đã chọn.
+                  </p>
 
                   {form.startDate &&
                   form.endDate &&
                   new Date(form.startDate).getTime() > new Date(form.endDate).getTime() ? (
                     <p className="-mt-2 text-xs text-rose-600">
                       Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.
-                    </p>
-                  ) : null}
-
-                  {hasParentGoal ? (
-                    <p className="-mt-2 text-xs text-slate-500">
-                      Quý và năm đang tự động lấy theo mục tiêu cha đã chọn.
                     </p>
                   ) : null}
 
@@ -1338,24 +1502,26 @@ function NewGoalPageContent() {
                     />
                   </div>
 
-                  <div className="space-y-1.5">
-                    <label htmlFor="goal-note" className="text-sm font-semibold text-slate-700">
-                      Ghi chú (note)
-                    </label>
-                    <textarea
-                      id="goal-note"
-                      rows={3}
-                      value={form.note}
-                      onChange={(event) =>
-                        setForm((prev) => ({
-                          ...prev,
-                          note: event.target.value,
-                        }))
-                      }
-                      className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                      placeholder="Ghi chú nội bộ"
-                    />
-                  </div>
+                  {!form.description.trim() ? (
+                    <div className="space-y-1.5">
+                      <label htmlFor="goal-note" className="text-sm font-semibold text-slate-700">
+                        Ghi chú (note)
+                      </label>
+                      <textarea
+                        id="goal-note"
+                        rows={3}
+                        value={form.note}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            note: event.target.value,
+                          }))
+                        }
+                        className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        placeholder="Ghi chú nội bộ"
+                      />
+                    </div>
+                  ) : null}
 
                   <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
                     <Link

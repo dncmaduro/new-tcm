@@ -1,90 +1,115 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { format } from "date-fns";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import {
+  BlockState,
+  ReportStatusBadge,
+  SectionTitle,
+} from "@/app/reports/_components/reporting-ui";
+import {
+  REPORT_PERIOD_TYPES,
+  REPORT_STATUSES,
+  type PerformanceReportRow,
+  type ReportingScopeDirectory,
+  formatReportDateRange,
+  formatReportPeriodTypeLabel,
+  formatReportScopeLabel,
+  formatReportScore,
+  loadReportingScopeDirectory,
+  normalizePerformanceReportRow,
+} from "@/lib/performance-reports";
+import { useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
-
-type RoleScope = "director" | "leader" | "member";
-
-type RoleRow = {
-  id: string;
-  name: string | null;
-};
-
-type ProfileRow = {
-  id: string;
-  name: string | null;
-};
-
-type UserRoleRow = {
-  profile_id: string | null;
-  department_id: string | null;
-  role_id: string | null;
-};
-
-type DepartmentRow = {
-  id: string;
-  parent_department_id: string | null;
-};
-
-type PerformanceReportRow = {
-  id: string;
-  user_id: string | null;
-  completed_percent: number | null;
-  tasks: number | null;
-  created_at: string | null;
-  updated_at: string | null;
-};
-
-const normalizeName = (value: string | null | undefined) => (value ?? "").trim().toLowerCase();
-
-const toRoleScopeLabel = (scope: RoleScope) => {
-  if (scope === "director") {
-    return "Giám đốc";
-  }
-  if (scope === "leader") {
-    return "Trưởng nhóm";
-  }
-  return "Thành viên";
-};
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const formatDateTime = (value: string | null) => {
   if (!value) {
-    return "--";
+    return "Chưa cập nhật";
   }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return "--";
+    return "Không hợp lệ";
   }
-  return new Intl.DateTimeFormat("vi-VN", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(date);
+  return format(date, "dd/MM/yyyy HH:mm");
 };
 
-const formatPercent = (value: number | null) => {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    return "--";
-  }
-  return `${value}%`;
+const formatScoreText = (value: number | null | undefined) => {
+  const formatted = formatReportScore(value);
+  return formatted === "--" ? "Chưa có điểm" : formatted;
 };
 
-const formatNumber = (value: number | null) => {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    return "--";
-  }
-  return value.toString();
-};
+function FilterField({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div>
+      <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function SummaryCard({
+  title,
+  value,
+  helper,
+  valueClassName = "text-slate-950",
+}: {
+  title: string;
+  value: ReactNode;
+  helper: string;
+  valueClassName?: string;
+}) {
+  return (
+    <article className="rounded-2xl border border-slate-200 bg-white p-5">
+      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">{title}</p>
+      <p className={`mt-3 text-4xl font-semibold tracking-[-0.04em] ${valueClassName}`}>{value}</p>
+      <p className="mt-3 text-sm leading-6 text-slate-500">{helper}</p>
+    </article>
+  );
+}
+
+function TableHeaderWithHint({
+  title,
+  hint,
+}: {
+  title: string;
+  hint?: string;
+}) {
+  return (
+    <div>
+      <p className="font-semibold text-slate-400">{title}</p>
+      {hint ? <p className="mt-1 normal-case tracking-normal text-[11px] leading-4 text-slate-400/90">{hint}</p> : null}
+    </div>
+  );
+}
 
 export default function ReportsPage() {
-  const [roleScope, setRoleScope] = useState<RoleScope>("member");
+  const access = useWorkspaceAccess();
+  const [scopeDirectory, setScopeDirectory] = useState<ReportingScopeDirectory | null>(null);
   const [reports, setReports] = useState<PerformanceReportRow[]>([]);
-  const [profileNameById, setProfileNameById] = useState<Record<string, string>>({});
+  const [employeeFilter, setEmployeeFilter] = useState("all");
+  const [departmentFilter, setDepartmentFilter] = useState("all");
+  const [periodTypeFilter, setPeriodTypeFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [periodKeyFilter, setPeriodKeyFilter] = useState("");
+  const [dateFromFilter, setDateFromFilter] = useState("");
+  const [dateToFilter, setDateToFilter] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (access.isLoading || !access.isLoaded) {
+      return;
+    }
+
     let isActive = true;
 
     const loadReports = async () => {
@@ -92,233 +117,130 @@ export default function ReportsPage() {
       setError(null);
 
       try {
-        const { data: authData, error: authError } = await supabase.auth.getUser();
-        if (authError || !authData.user) {
-          if (!isActive) {
-            return;
-          }
-          setError("Không xác thực được người dùng hiện tại.");
-          setReports([]);
-          setProfileNameById({});
-          setIsLoading(false);
-          return;
-        }
-
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("id,name")
-          .eq("user_id", authData.user.id)
-          .maybeSingle();
-
-        if (profileError || !profile?.id) {
-          if (!isActive) {
-            return;
-          }
-          setError(profileError?.message ?? "Không tìm thấy hồ sơ người dùng.");
-          setReports([]);
-          setProfileNameById({});
-          setIsLoading(false);
-          return;
-        }
-
-        const currentProfileId = String(profile.id);
-        const currentProfileName = profile.name ? String(profile.name) : "Không rõ";
-
-        const { data: rolesData, error: rolesError } = await supabase.from("roles").select("id,name");
-        if (rolesError) {
-          throw new Error(rolesError.message || "Không tải được danh sách vai trò.");
-        }
-
-        const typedRoles = (rolesData ?? []) as RoleRow[];
-        const directorRoleIds = typedRoles
-          .filter((role) => normalizeName(role.name) === "giám đốc")
-          .map((role) => String(role.id));
-        const leaderRoleIds = typedRoles
-          .filter((role) => normalizeName(role.name) === "leader")
-          .map((role) => String(role.id));
-        const memberRoleIds = typedRoles
-          .filter((role) => normalizeName(role.name) === "member")
-          .map((role) => String(role.id));
-
-        const { data: currentUserRolesData, error: currentUserRolesError } = await supabase
-          .from("user_role_in_department")
-          .select("profile_id,department_id,role_id")
-          .eq("profile_id", currentProfileId);
-
-        if (currentUserRolesError) {
-          throw new Error(currentUserRolesError.message || "Không tải được vai trò người dùng.");
-        }
-
-        const currentUserRoles = (currentUserRolesData ?? []) as UserRoleRow[];
-        const hasDirectorRole = currentUserRoles.some(
-          (row) => row.role_id && directorRoleIds.includes(String(row.role_id))
-        );
-        const hasLeaderRole = currentUserRoles.some(
-          (row) => row.role_id && leaderRoleIds.includes(String(row.role_id))
-        );
-
-        let scopedRole: RoleScope = "member";
-        if (hasDirectorRole) {
-          scopedRole = "director";
-        } else if (hasLeaderRole) {
-          scopedRole = "leader";
-        }
-
-        if (!isActive) {
-          return;
-        }
-        setRoleScope(scopedRole);
-
-        let allowedProfileIds: string[] | null = null;
-
-        if (scopedRole === "member") {
-          allowedProfileIds = [currentProfileId];
-        } else if (scopedRole === "leader") {
-          const ownLeaderDepartmentIds = [
-            ...new Set(
-              currentUserRoles
-                .filter((row) => row.department_id && row.role_id && leaderRoleIds.includes(String(row.role_id)))
-                .map((row) => String(row.department_id))
-            ),
-          ];
-
-          if (ownLeaderDepartmentIds.length === 0) {
-            allowedProfileIds = [currentProfileId];
-          } else {
-            const { data: allDepartmentsData, error: allDepartmentsError } = await supabase
-              .from("departments")
-              .select("id,parent_department_id");
-
-            if (allDepartmentsError) {
-              throw new Error(allDepartmentsError.message || "Không tải được cây phòng ban.");
-            }
-
-            const typedDepartments = (allDepartmentsData ?? []) as DepartmentRow[];
-            const childrenByParent = typedDepartments.reduce<Record<string, string[]>>((acc, department) => {
-              const parentId = department.parent_department_id ? String(department.parent_department_id) : null;
-              if (!parentId) {
-                return acc;
-              }
-              if (!acc[parentId]) {
-                acc[parentId] = [];
-              }
-              acc[parentId].push(String(department.id));
-              return acc;
-            }, {});
-
-            const scopedDepartmentIds = new Set<string>(ownLeaderDepartmentIds);
-            const queue = [...ownLeaderDepartmentIds];
-            while (queue.length > 0) {
-              const departmentId = queue.shift() as string;
-              const children = childrenByParent[departmentId] ?? [];
-              for (const childId of children) {
-                if (scopedDepartmentIds.has(childId)) {
-                  continue;
-                }
-                scopedDepartmentIds.add(childId);
-                queue.push(childId);
-              }
-            }
-
-            const effectiveRoleIds = [...new Set([...leaderRoleIds, ...memberRoleIds])];
-            if (effectiveRoleIds.length === 0) {
-              allowedProfileIds = [currentProfileId];
-            } else {
-              const { data: scopedUserRolesData, error: scopedUserRolesError } = await supabase
-                .from("user_role_in_department")
-                .select("profile_id,department_id,role_id")
-                .in("department_id", Array.from(scopedDepartmentIds))
-                .in("role_id", effectiveRoleIds);
-
-              if (scopedUserRolesError) {
-                throw new Error(scopedUserRolesError.message || "Không tải được nhân sự theo phạm vi Leader.");
-              }
-
-              allowedProfileIds = [
-                ...new Set(
-                  ((scopedUserRolesData ?? []) as UserRoleRow[])
-                    .map((row) => row.profile_id)
-                    .filter(Boolean)
-                    .map((item) => String(item))
-                ),
-              ];
-            }
-          }
-        }
-
-        const reportsQuery = supabase
-          .from("performance_reports")
-          .select("id,user_id,completed_percent,tasks,created_at,updated_at")
-          .order("created_at", { ascending: false });
+        const directory = await loadReportingScopeDirectory({
+          currentProfileId: access.profileId,
+          currentProfileName: access.profileName,
+          memberships: access.memberships,
+          hasDirectorRole: access.hasDirectorRole,
+          canManage: access.canManage,
+          managedDepartments: access.managedDepartments,
+          departments: access.departments,
+        });
 
         let reportsData: PerformanceReportRow[] = [];
-        if (scopedRole === "director") {
-          const { data, error: reportsError } = await reportsQuery;
+
+        if (directory.roleScope === "director") {
+          const { data, error: reportsError } = await supabase
+            .from("performance_reports")
+            .select(
+              "id,profile_id,department_id,period_type,period_key,period_start,period_end,overall_score,business_score,support_score,execution_score,goal_count,direct_kr_count,support_kr_count,task_count,completed_task_count,overdue_task_count,self_comment,manager_comment,status,created_by,reviewed_by,created_at,updated_at",
+            )
+            .order("updated_at", { ascending: false });
+
           if (reportsError) {
-            throw new Error(reportsError.message || "Không tải được báo cáo hiệu suất.");
+            throw new Error(reportsError.message || "Không tải được lịch sử báo cáo.");
           }
-          reportsData = (data ?? []) as PerformanceReportRow[];
-        } else {
-          const scopedIds = allowedProfileIds ?? [];
-          if (scopedIds.length === 0) {
-            reportsData = [];
-          } else {
-            const { data, error: reportsError } = await reportsQuery.in("user_id", scopedIds);
-            if (reportsError) {
-              throw new Error(reportsError.message || "Không tải được báo cáo hiệu suất.");
-            }
-            reportsData = (data ?? []) as PerformanceReportRow[];
+
+          reportsData = (data ?? []).map((item) => normalizePerformanceReportRow(item as Record<string, unknown>));
+        } else if (directory.accessibleProfileIds.length > 0) {
+          const { data, error: reportsError } = await supabase
+            .from("performance_reports")
+            .select(
+              "id,profile_id,department_id,period_type,period_key,period_start,period_end,overall_score,business_score,support_score,execution_score,goal_count,direct_kr_count,support_kr_count,task_count,completed_task_count,overdue_task_count,self_comment,manager_comment,status,created_by,reviewed_by,created_at,updated_at",
+            )
+            .in("profile_id", directory.accessibleProfileIds)
+            .order("updated_at", { ascending: false });
+
+          if (reportsError) {
+            throw new Error(reportsError.message || "Không tải được lịch sử báo cáo.");
           }
+
+          reportsData = (data ?? []).map((item) => normalizePerformanceReportRow(item as Record<string, unknown>));
         }
 
-        if (!isActive) {
-          return;
-        }
-
-        setReports(reportsData);
-
-        const profileIdsInReports = [
-          ...new Set(reportsData.map((report) => report.user_id).filter(Boolean).map((item) => String(item))),
+        const extraProfileIds = [
+          ...new Set(
+            reportsData
+              .map((report) => report.profile_id)
+              .filter((value): value is string => Boolean(value))
+              .filter((value) => !directory.profileNameById[value]),
+          ),
         ];
 
-        if (profileIdsInReports.length === 0) {
-          setProfileNameById({
-            [currentProfileId]: currentProfileName,
+        const extraDepartmentIds = [
+          ...new Set(
+            reportsData
+              .map((report) => report.department_id)
+              .filter((value): value is string => Boolean(value))
+              .filter((value) => !directory.departmentNameById[value]),
+          ),
+        ];
+
+        if (extraProfileIds.length > 0) {
+          const { data: extraProfiles, error: extraProfilesError } = await supabase
+            .from("profiles")
+            .select("id,name,email")
+            .in("id", extraProfileIds);
+
+          if (extraProfilesError) {
+            throw new Error(extraProfilesError.message || "Không tải được tên nhân sự báo cáo.");
+          }
+
+          (extraProfiles ?? []).forEach((profile) => {
+            directory.profileNameById[String(profile.id)] = profile.name?.trim() || profile.email?.trim() || "Không rõ";
           });
-          setIsLoading(false);
-          return;
         }
 
-        const { data: profilesData, error: profilesError } = await supabase
-          .from("profiles")
-          .select("id,name")
-          .in("id", profileIdsInReports);
+        if (extraDepartmentIds.length > 0) {
+          const { data: extraDepartments, error: extraDepartmentsError } = await supabase
+            .from("departments")
+            .select("id,name,parent_department_id")
+            .in("id", extraDepartmentIds);
 
-        if (profilesError) {
-          throw new Error(profilesError.message || "Không tải được tên nhân sự.");
+          if (extraDepartmentsError) {
+            throw new Error(extraDepartmentsError.message || "Không tải được tên phòng ban báo cáo.");
+          }
+
+          (extraDepartments ?? []).forEach((department) => {
+            directory.departmentNameById[String(department.id)] = String(department.name);
+          });
         }
 
         if (!isActive) {
           return;
         }
 
-        const nameMap = ((profilesData ?? []) as ProfileRow[]).reduce<Record<string, string>>((acc, item) => {
-          acc[String(item.id)] = item.name ? String(item.name) : "Không rõ";
-          return acc;
-        }, {});
-
-        if (!nameMap[currentProfileId]) {
-          nameMap[currentProfileId] = currentProfileName;
-        }
-
-        setProfileNameById(nameMap);
+        setScopeDirectory({
+          ...directory,
+          profileOptions: [
+            ...directory.profileOptions,
+            ...extraProfileIds
+              .filter((id) => !directory.profileOptions.some((item) => item.id === id))
+              .map((id) => ({
+                id,
+                name: directory.profileNameById[id] ?? "Không rõ",
+                email: null,
+              })),
+          ].sort((a, b) => a.name.localeCompare(b.name, "vi")),
+          departmentOptions: [
+            ...directory.departmentOptions,
+            ...extraDepartmentIds
+              .filter((id) => !directory.departmentOptions.some((item) => item.id === id))
+              .map((id) => ({
+                id,
+                name: directory.departmentNameById[id] ?? "Không rõ",
+                parentDepartmentId: null,
+              })),
+          ].sort((a, b) => a.name.localeCompare(b.name, "vi")),
+        });
+        setReports(reportsData);
       } catch (loadError) {
         if (!isActive) {
           return;
         }
         setError(loadError instanceof Error ? loadError.message : "Không tải được dữ liệu báo cáo.");
         setReports([]);
-        setProfileNameById({});
+        setScopeDirectory(null);
       } finally {
         if (isActive) {
           setIsLoading(false);
@@ -331,15 +253,84 @@ export default function ReportsPage() {
     return () => {
       isActive = false;
     };
-  }, []);
+  }, [
+    access.canManage,
+    access.departments,
+    access.hasDirectorRole,
+    access.isLoaded,
+    access.isLoading,
+    access.managedDepartments,
+    access.memberships,
+    access.profileId,
+    access.profileName,
+  ]);
 
-  const averageCompletedPercent = useMemo(() => {
-    if (reports.length === 0) {
-      return 0;
+  const filteredReports = useMemo(() => {
+    return [...reports]
+      .filter((report) => {
+        if (employeeFilter !== "all" && report.profile_id !== employeeFilter) {
+          return false;
+        }
+        if (departmentFilter !== "all" && report.department_id !== departmentFilter) {
+          return false;
+        }
+        if (periodTypeFilter !== "all" && report.period_type !== periodTypeFilter) {
+          return false;
+        }
+        if (statusFilter !== "all" && report.status !== statusFilter) {
+          return false;
+        }
+        if (periodKeyFilter.trim()) {
+          const keyword = periodKeyFilter.trim().toLowerCase();
+          const employeeName = report.profile_id ? scopeDirectory?.profileNameById[report.profile_id] ?? "" : "";
+          const departmentName = report.department_id ? scopeDirectory?.departmentNameById[report.department_id] ?? "" : "";
+          const searchText = `${report.period_key} ${employeeName} ${departmentName}`.toLowerCase();
+          if (!searchText.includes(keyword)) {
+            return false;
+          }
+        }
+        if (dateFromFilter && report.period_end && report.period_end < dateFromFilter) {
+          return false;
+        }
+        if (dateToFilter && report.period_start && report.period_start > dateToFilter) {
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const aTime = new Date(a.updated_at ?? a.created_at ?? 0).getTime();
+        const bTime = new Date(b.updated_at ?? b.created_at ?? 0).getTime();
+        return bTime - aTime;
+      });
+  }, [dateFromFilter, dateToFilter, departmentFilter, employeeFilter, periodKeyFilter, periodTypeFilter, reports, scopeDirectory, statusFilter]);
+
+  const summary = useMemo(() => {
+    if (filteredReports.length === 0) {
+      return {
+        totalReports: 0,
+        averageOverallScore: null as number | null,
+        pendingReview: 0,
+        lockedReports: 0,
+      };
     }
-    const sum = reports.reduce((acc, item) => acc + (typeof item.completed_percent === "number" ? item.completed_percent : 0), 0);
-    return Number((sum / reports.length).toFixed(2));
-  }, [reports]);
+
+    const scoredReports = filteredReports.filter((report) => typeof report.overall_score === "number");
+    const averageOverallScore =
+      scoredReports.length > 0
+        ? Number(
+            (
+              scoredReports.reduce((sum, report) => sum + Number(report.overall_score ?? 0), 0) / scoredReports.length
+            ).toFixed(1),
+          )
+        : null;
+
+    return {
+      totalReports: filteredReports.length,
+      averageOverallScore,
+      pendingReview: filteredReports.filter((report) => report.status === "submitted").length,
+      lockedReports: filteredReports.filter((report) => report.status === "locked").length,
+    };
+  }, [filteredReports]);
 
   return (
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
@@ -355,86 +346,229 @@ export default function ReportsPage() {
                     Bảng điều khiển
                   </Link>
                   <span className="px-2">›</span>
-                  <span className="font-semibold text-slate-700">Báo cáo</span>
+                  <span className="font-semibold text-slate-700">Báo cáo hiệu suất</span>
                 </p>
-                <h1 className="mt-1 text-3xl font-semibold tracking-[-0.02em] text-slate-900">Báo cáo hiệu suất</h1>
+                <h1 className="mt-1 text-3xl font-semibold tracking-[-0.02em] text-slate-900">Lịch sử báo cáo hiệu suất</h1>
+                <p className="mt-2 text-sm text-slate-500">
+                  Xem lại các báo cáo theo tuần, tháng hoặc quý của từng nhân viên trong phạm vi bạn có quyền theo dõi.
+                </p>
                 <p className="mt-1 text-sm text-slate-500">
-                  Quyền xem hiện tại: <span className="font-semibold text-slate-700">{toRoleScopeLabel(roleScope)}</span>
+                  Phạm vi đang xem:{" "}
+                  <span className="font-semibold text-slate-700">
+                    {scopeDirectory ? formatReportScopeLabel(scopeDirectory.roleScope) : "Đang xác định"}
+                  </span>
                 </p>
               </div>
+
             </div>
           </header>
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-7">
-            <section className="grid gap-4 md:grid-cols-3">
-              <article className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
-                <p className="text-xs font-bold tracking-[0.08em] text-slate-400 uppercase">Tổng báo cáo</p>
-                <p className="mt-2 text-4xl font-semibold tracking-[-0.02em] text-blue-700">{reports.length}</p>
-              </article>
+            <section className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="grid gap-3 xl:grid-cols-5">
+                <FilterField label="Nhân viên">
+                  <Select value={employeeFilter} onValueChange={setEmployeeFilter}>
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder="Chọn nhân viên" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Tất cả</SelectItem>
+                      {(scopeDirectory?.profileOptions ?? []).map((profile) => (
+                        <SelectItem key={profile.id} value={profile.id}>
+                          {profile.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FilterField>
 
-              <article className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
-                <p className="text-xs font-bold tracking-[0.08em] text-slate-400 uppercase">Tiến độ trung bình</p>
-                <p className="mt-2 text-4xl font-semibold tracking-[-0.02em] text-emerald-600">
-                  {formatPercent(averageCompletedPercent)}
-                </p>
-              </article>
+                <FilterField label="Phòng ban">
+                  <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder="Chọn phòng ban" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Tất cả</SelectItem>
+                      {(scopeDirectory?.departmentOptions ?? []).map((department) => (
+                        <SelectItem key={department.id} value={department.id}>
+                          {department.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FilterField>
 
-              <article className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
-                <p className="text-xs font-bold tracking-[0.08em] text-slate-400 uppercase">Vai trò</p>
-                <p className="mt-2 text-2xl font-semibold tracking-[-0.01em] text-slate-900">{toRoleScopeLabel(roleScope)}</p>
-              </article>
+                <FilterField label="Loại kỳ">
+                  <Select value={periodTypeFilter} onValueChange={setPeriodTypeFilter}>
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder="Chọn loại kỳ" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Tất cả</SelectItem>
+                      {REPORT_PERIOD_TYPES.map((item) => (
+                        <SelectItem key={item.value} value={item.value}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FilterField>
+
+                <FilterField label="Trạng thái">
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder="Chọn trạng thái" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Tất cả</SelectItem>
+                      {REPORT_STATUSES.map((item) => (
+                        <SelectItem key={item.value} value={item.value}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FilterField>
+
+                <FilterField label="Tìm kiếm">
+                  <input
+                    value={periodKeyFilter}
+                    onChange={(event) => setPeriodKeyFilter(event.target.value)}
+                    placeholder="Tìm theo kỳ hoặc tên nhân viên"
+                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  />
+                </FilterField>
+              </div>
+
+              <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <FilterField label="Từ ngày">
+                  <input
+                    type="date"
+                    value={dateFromFilter}
+                    onChange={(event) => setDateFromFilter(event.target.value)}
+                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  />
+                </FilterField>
+
+                <FilterField label="Đến ngày">
+                  <input
+                    type="date"
+                    value={dateToFilter}
+                    onChange={(event) => setDateToFilter(event.target.value)}
+                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  />
+                </FilterField>
+              </div>
+            </section>
+
+            <section className="mt-5 grid gap-4 lg:grid-cols-4">
+              <SummaryCard
+                title="Số báo cáo"
+                value={summary.totalReports}
+                helper="Tổng số báo cáo trong phạm vi đang lọc."
+              />
+              <SummaryCard
+                title="Điểm trung bình"
+                value={formatScoreText(summary.averageOverallScore)}
+                helper="Trung bình điểm hiệu suất của các báo cáo."
+              />
+              <SummaryCard
+                title="Chờ duyệt"
+                value={summary.pendingReview}
+                helper="Số báo cáo đang chờ quản lý xem xét."
+                valueClassName="text-amber-700"
+              />
+              <SummaryCard
+                title="Đã khóa"
+                value={summary.lockedReports}
+                helper="Số báo cáo đã hoàn tất và không thể chỉnh sửa."
+              />
             </section>
 
             <section className="mt-5 rounded-2xl border border-slate-200 bg-white">
-              <div className="border-b border-slate-100 px-5 py-4">
-                <h2 className="text-2xl font-semibold text-slate-900">Báo cáo hiệu suất</h2>
+              <SectionTitle
+                title="Danh sách báo cáo"
+                description="Mỗi dòng là một báo cáo của một nhân viên trong một kỳ cụ thể."
+              />
+              <div className="border-b border-slate-100 px-5 py-4 text-sm leading-6 text-slate-500">
+                <span className="font-semibold text-slate-700">Giải thích cột điểm:</span> Tổng là điểm hiệu suất tổng hợp. Kinh doanh tính từ các KR trực tiếp. Hỗ trợ tính từ các KR hỗ trợ. Thực thi tổng hợp từ tiến độ công việc.
               </div>
 
-              {isLoading ? (
-                <div className="px-5 py-8 text-sm text-slate-500">Đang tải báo cáo...</div>
-              ) : error ? (
-                <div className="px-5 py-8 text-sm text-rose-600">{error}</div>
+              {isLoading || error || filteredReports.length === 0 ? (
+                <BlockState
+                  loading={isLoading}
+                  error={error}
+                  empty={filteredReports.length === 0}
+                  emptyText="Chưa có báo cáo trong phạm vi này. Hãy tạo báo cáo đầu tiên để bắt đầu theo dõi hiệu suất."
+                />
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[1100px] text-left">
+                  <table className="w-full min-w-[1440px] text-left">
                     <thead>
-                      <tr className="text-xs tracking-[0.08em] text-slate-400 uppercase">
-                        <th className="px-5 py-3 font-semibold">Mã báo cáo</th>
-                        <th className="px-5 py-3 font-semibold">Người dùng</th>
-                        <th className="px-5 py-3 font-semibold">Tỷ lệ hoàn thành</th>
-                        <th className="px-5 py-3 font-semibold">Số công việc</th>
-                        <th className="px-5 py-3 font-semibold">Ngày tạo</th>
-                        <th className="px-5 py-3 font-semibold">Ngày cập nhật</th>
+                      <tr className="text-[11px] uppercase tracking-[0.08em] text-slate-400">
+                        <th className="px-5 py-3 font-semibold">
+                          <TableHeaderWithHint title="Nhân sự" />
+                        </th>
+                        <th className="px-4 py-3 font-semibold">
+                          <TableHeaderWithHint title="Phòng ban" />
+                        </th>
+                        <th className="px-4 py-3 font-semibold">
+                          <TableHeaderWithHint title="Loại kỳ" />
+                        </th>
+                        <th className="px-4 py-3 font-semibold">
+                          <TableHeaderWithHint title="Mã kỳ" />
+                        </th>
+                        <th className="px-4 py-3 font-semibold">
+                          <TableHeaderWithHint title="Khoảng thời gian" />
+                        </th>
+                        <th className="px-4 py-3 font-semibold">
+                          <TableHeaderWithHint title="Tổng" hint="Điểm hiệu suất tổng hợp" />
+                        </th>
+                        <th className="px-4 py-3 font-semibold">
+                          <TableHeaderWithHint title="Kinh doanh" hint="Tính từ các KR trực tiếp" />
+                        </th>
+                        <th className="px-4 py-3 font-semibold">
+                          <TableHeaderWithHint title="Hỗ trợ" hint="Tính từ các KR hỗ trợ" />
+                        </th>
+                        <th className="px-4 py-3 font-semibold">
+                          <TableHeaderWithHint title="Thực thi" hint="Tổng hợp từ tiến độ công việc" />
+                        </th>
+                        <th className="px-4 py-3 font-semibold">
+                          <TableHeaderWithHint title="Trạng thái" />
+                        </th>
+                        <th className="px-4 py-3 font-semibold">
+                          <TableHeaderWithHint title="Cập nhật lần cuối" />
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {reports.map((item) => (
-                        <tr key={item.id} className="border-t border-slate-100">
-                          <td className="px-5 py-4 text-xs text-slate-700">{item.id}</td>
-                          <td className="px-5 py-4 text-xs text-slate-700">
-                            <div className="space-y-1">
-                              <p>{item.user_id ?? "--"}</p>
-                              <p className="text-[11px] text-slate-500">
-                                {item.user_id ? profileNameById[item.user_id] ?? "Không rõ" : "--"}
-                              </p>
-                            </div>
+                      {filteredReports.map((report) => (
+                        <tr key={report.id} className="border-t border-slate-100 align-top">
+                          <td className="px-5 py-4">
+                            <Link href={`/reports/${report.id}`} className="text-sm font-semibold text-slate-900 hover:text-blue-700">
+                              {report.profile_id ? scopeDirectory?.profileNameById[report.profile_id] ?? report.profile_id : "Chưa gắn nhân viên"}
+                            </Link>
                           </td>
-                          <td className="px-5 py-4 text-sm font-semibold text-slate-700">
-                            {formatPercent(item.completed_percent)}
+                          <td className="px-4 py-4 text-sm text-slate-600">
+                            {report.department_id
+                              ? scopeDirectory?.departmentNameById[report.department_id] ?? report.department_id
+                              : "Không gắn phòng ban"}
                           </td>
-                          <td className="px-5 py-4 text-sm text-slate-700">{formatNumber(item.tasks)}</td>
-                          <td className="px-5 py-4 text-sm text-slate-600">{formatDateTime(item.created_at)}</td>
-                          <td className="px-5 py-4 text-sm text-slate-600">{formatDateTime(item.updated_at)}</td>
+                          <td className="px-4 py-4 text-sm text-slate-600">{formatReportPeriodTypeLabel(report.period_type)}</td>
+                          <td className="px-4 py-4 text-sm font-semibold text-slate-700">{report.period_key}</td>
+                          <td className="px-4 py-4 text-sm text-slate-600">
+                            {formatReportDateRange(report.period_start, report.period_end)}
+                          </td>
+                          <td className="px-4 py-4 text-sm font-semibold text-slate-900">{formatScoreText(report.overall_score)}</td>
+                          <td className="px-4 py-4 text-sm text-slate-700">{formatScoreText(report.business_score)}</td>
+                          <td className="px-4 py-4 text-sm text-slate-700">{formatScoreText(report.support_score)}</td>
+                          <td className="px-4 py-4 text-sm text-slate-700">{formatScoreText(report.execution_score)}</td>
+                          <td className="px-4 py-4">
+                            <ReportStatusBadge status={report.status} />
+                          </td>
+                          <td className="px-4 py-4 text-sm text-slate-600">{formatDateTime(report.updated_at)}</td>
                         </tr>
                       ))}
-
-                      {reports.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} className="px-5 py-8 text-center text-sm text-slate-500">
-                            Chưa có báo cáo nào trong phạm vi quyền hiện tại.
-                          </td>
-                        </tr>
-                      ) : null}
                     </tbody>
                   </table>
                 </div>

@@ -1,55 +1,85 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { normalizeDashboardStatus } from "@/lib/dashboard";
 import {
-  formatActivityMessage,
-  getDateDiffFromToday,
-  getDateUrgencyMeta,
-  formatHoursShort,
-  formatRelativeTimeVi,
-  getInitial,
-  getWorkedMinutes,
-  normalizeDashboardStatus,
-  toDashboardTaskProgress,
-} from "@/lib/dashboard";
+  formatGoalOwnersSummary,
+  getGoalOwnerSearchText,
+  loadGoalOwnersByGoalIds,
+  type GoalOwnerProfile,
+} from "@/lib/goal-owners";
+import { computeWeightedProgress, buildGoalProgressMap, buildKeyResultProgressMap } from "@/lib/okr";
+import { formatGoalTypeLabel, normalizeGoalTypeValue } from "@/lib/constants/goals";
 import {
-  buildGoalDepartmentPerformanceMap,
-  buildGoalProgressMap,
-  buildKeyResultProgressMap,
-} from "@/lib/okr";
+  formatKeyResultContributionTypeLabel,
+  formatKeyResultMetric,
+  formatKeyResultTypeLabel,
+  formatMetricValue,
+  normalizeKeyResultContributionTypeValue,
+  normalizeKeyResultTypeValue,
+} from "@/lib/constants/key-results";
 import { supabase } from "@/lib/supabase";
 
 type GoalRow = {
   id: string;
   name: string;
+  type: string | null;
   department_id: string | null;
-  owner_id: string | null;
   status: string | null;
   quarter: number | null;
   year: number | null;
-  end_date: string | null;
+  target: number | null;
+  unit: string | null;
   start_date: string | null;
+  end_date: string | null;
 };
 
 type GoalDepartmentRow = {
   goal_id: string | null;
   department_id: string | null;
-  role: string | null;
-  goal_weight: number | null;
-  kr_weight: number | null;
 };
 
 type KeyResultRow = {
   id: string;
   goal_id: string | null;
   name: string;
+  type: string | null;
+  contribution_type: string | null;
   start_value: number | null;
   current: number | null;
   target: number | null;
+  unit: string | null;
   weight: number | null;
   responsible_department_id: string | null;
   start_date: string | null;
   end_date: string | null;
+};
+
+type KeyResultGoalRefRow = {
+  id: string;
+  goal_id: string | null;
+};
+
+type SupportLinkRow = {
+  id: string;
+  support_key_result_id: string | null;
+  target_key_result_id: string | null;
+  allocated_value: number | null;
+  allocated_percent: number | null;
+  note: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+type ActivityLogRow = {
+  id: string;
+  entity_id: string | null;
+  entity_type: string | null;
+  profile_id: string | null;
+  action: string | null;
+  old_value: Record<string, unknown> | null;
+  new_value: Record<string, unknown> | null;
+  created_at: string | null;
 };
 
 type TaskRow = {
@@ -57,13 +87,11 @@ type TaskRow = {
   name: string;
   key_result_id: string | null;
   assignee_id: string | null;
+  profile_id: string | null;
   status: string | null;
   progress: number | null;
-  weight: number | null;
   start_date: string | null;
   end_date: string | null;
-  created_at: string | null;
-  updated_at: string | null;
   type: string | null;
 };
 
@@ -84,97 +112,9 @@ type UserRoleRow = {
   department_id: string | null;
 };
 
-type TimeRow = {
-  profile_id: string | null;
-  date: string;
-  check_in: string | null;
-  check_out: string | null;
-};
-
-type ActivityLogRow = {
-  id: string;
-  profile_id: string | null;
-  entity_type: string | null;
-  entity_id: string | null;
-  action: string | null;
-  old_value: Record<string, unknown> | null;
-  new_value: Record<string, unknown> | null;
-  created_at: string | null;
-};
-
-export type DepartmentGoalExecutionItem = {
+type DepartmentRow = {
   id: string;
   name: string;
-  ownerName: string;
-  status: string;
-  progress: number;
-  health: "on_track" | "at_risk" | "off_track" | "completed";
-  krCount: number;
-  taskCount: number;
-  overdueTaskCount: number;
-  endDate: string | null;
-  participationRole: string;
-  goalWeight: number;
-  krWeight: number;
-  goalInfluence: number;
-  krInfluence: number;
-  departmentPerformance: number;
-  keyResults: Array<{
-    id: string;
-    name: string;
-    responsibleDepartmentName: string;
-    startValue: number;
-    current: number;
-    target: number;
-    progress: number;
-    weight: number;
-    taskCount: number;
-    assigneeDistribution: string;
-    ownedBySelectedDepartment: boolean;
-    startDate: string | null;
-    endDate: string | null;
-  }>;
-};
-
-export type DepartmentMemberPerformanceItem = {
-  id: string;
-  name: string;
-  roleName: string;
-  assignedTasks: number;
-  completionRate: number;
-  inProgressTasks: number;
-  overdueTasks: number;
-  averageTaskProgress: number;
-  goalsInvolved: number;
-  keyResultsInvolved: number;
-  workedHoursToday: string;
-  workedHoursWeek: string;
-  blockedTasks: number;
-  activeTasks: number;
-};
-
-export type DepartmentUpcomingTaskItem = {
-  id: string;
-  taskName: string;
-  assigneeName: string;
-  keyResultName: string;
-  goalName: string;
-  endDateAt: string;
-  urgencyLabel: string;
-  urgencyClassName: string;
-};
-
-export type DepartmentActivityItem = {
-  id: string;
-  actorName: string;
-  actorInitial: string;
-  message: string;
-  when: string;
-};
-
-export type DepartmentRiskItem = {
-  title: string;
-  description: string;
 };
 
 type FilterParams = {
@@ -182,77 +122,342 @@ type FilterParams = {
   quarter: string;
   year: string;
   goalStatus: string;
-  assigneeId: string;
-  onlyOverdue: boolean;
+  ownerId: string;
+  goalType: string;
+  keyResultType: string;
+  keyResultContributionType: string;
+  memberId: string;
   search: string;
 };
 
 type RawData = {
   departmentName: string;
+  primaryGoalIds: string[];
+  primaryKeyResultIds: string[];
   goals: GoalRow[];
-  goalDepartments: GoalDepartmentRow[];
+  goalOwnersByGoalId: Record<string, GoalOwnerProfile[]>;
+  goalLogsByGoalId: Record<string, ActivityLogRow[]>;
   keyResults: KeyResultRow[];
+  supportLinks: SupportLinkRow[];
   tasks: TaskRow[];
   departmentNamesById: Record<string, string>;
   profilesById: Record<string, string>;
   memberRolesById: Record<string, string>;
-  weekWorkedMinutesByProfileId: Record<string, number>;
-  todayWorkedMinutesByProfileId: Record<string, number>;
-  recentActivities: ActivityLogRow[];
+  memberIds: string[];
+};
+
+export type DepartmentPerformanceHealth = "on_track" | "at_risk" | "off_track" | "achieved";
+
+export type DepartmentGoalPerformanceItem = {
+  id: string;
+  name: string;
+  type: string | null;
+  typeLabel: string;
+  owners: GoalOwnerProfile[];
+  ownersSummary: string;
+  status: string;
+  progress: number;
+  health: DepartmentPerformanceHealth;
+  target: number | null;
+  unit: string | null;
+  currentValue: number | null;
+  currentUnit: string | null;
+  metricSummary: string;
+  startDate: string | null;
+  endDate: string | null;
+  daysRemaining: number | null;
+  expectedProgress: number | null;
+  scheduleGap: number | null;
+  recentProgressChange: number | null;
+  velocityPerWeek: number | null;
+  requiredPerWeek: number | null;
+  lastActivityAt: string | null;
+  inactivityDays: number | null;
+  trendPoints: Array<{
+    id: string;
+    label: string;
+    progress: number;
+    createdAt: string | null;
+  }>;
+  actionText: string;
+  directKrCount: number;
+  supportKrCount: number;
+  directKrRiskCount: number;
+  supportKrRiskCount: number;
+  riskNote: string;
+};
+
+export type DepartmentDirectKeyResultItem = {
+  id: string;
+  goalId: string | null;
+  goalName: string;
+  name: string;
+  type: string | null;
+  typeLabel: string;
+  contributionTypeLabel: string;
+  target: number | null;
+  current: number | null;
+  unit: string | null;
+  progress: number;
+  expectedProgress: number | null;
+  scheduleGap: number | null;
+  requiredPerWeek: number | null;
+  paceLabel: string;
+  paceNote: string;
+  health: DepartmentPerformanceHealth;
+  responsibleDepartmentName: string;
+  startDate: string | null;
+  endDate: string | null;
+  daysRemaining: number | null;
+  supportPreview: Array<{
+    id: string;
+    name: string;
+    goalName: string;
+  }>;
+  supportCount: number;
+  riskNote: string;
+};
+
+export type DepartmentSupportKeyResultItem = {
+  id: string;
+  goalId: string | null;
+  goalName: string;
+  name: string;
+  type: string | null;
+  typeLabel: string;
+  contributionTypeLabel: string;
+  target: number | null;
+  current: number | null;
+  unit: string | null;
+  progress: number;
+  expectedProgress: number | null;
+  scheduleGap: number | null;
+  requiredPerWeek: number | null;
+  paceLabel: string;
+  paceNote: string;
+  health: DepartmentPerformanceHealth;
+  responsibleDepartmentName: string;
+  startDate: string | null;
+  endDate: string | null;
+  daysRemaining: number | null;
+  allocationModeLabel: string;
+  supportedDirectKeyResults: Array<{
+    id: string;
+    name: string;
+    goalName: string;
+    allocationLabel: string;
+  }>;
+  riskNote: string;
+};
+
+export type DepartmentRiskDeadlineItem = {
+  id: string;
+  entityType: "goal" | "key_result";
+  name: string;
+  parentName: string;
+  endDate: string;
+  progress: number;
+  health: DepartmentPerformanceHealth;
+  daysRemaining: number | null;
+  reason: string;
+};
+
+export type DepartmentMemberContributionItem = {
+  id: string;
+  name: string;
+  roleName: string;
+  goalsInvolved: number;
+  keyResultsInvolved: number;
+  performanceScore: number | null;
+  overdueTasks: number;
+  blockedTasks: number;
+  status: "strong" | "watching" | "bottleneck";
+  signalText: string;
+};
+
+export type DepartmentExecutionContextItem = {
+  keyResultId: string;
+  keyResultName: string;
+  goalName: string;
+  overdueTasks: number;
+  blockedTasks: number;
+  openTasks: number;
+  completionRate: number;
+};
+
+export type DepartmentTrendPoint = {
+  key: string;
+  label: string;
+  overallPerformance: number | null;
+  businessPerformance: number | null;
+  supportPerformance: number | null;
+  goalCount: number;
+  directKrCount: number;
+  supportKrCount: number;
+};
+
+export type DepartmentGoalChartItem = {
+  id: string;
+  name: string;
+  progress: number;
+  health: DepartmentPerformanceHealth;
+  typeLabel: string;
+  ownersSummary: string;
+};
+
+export type DepartmentKrStructureSegment = {
+  key: "direct_on_track" | "support_on_track" | "needs_attention";
+  label: string;
+  count: number;
+  note: string;
+};
+
+type DepartmentExecutionContext = {
+  overdueTasks: number;
+  blockedTasks: number;
+  openTasks: number;
+  items: DepartmentExecutionContextItem[];
 };
 
 const defaultRawData: RawData = {
   departmentName: "",
+  primaryGoalIds: [],
+  primaryKeyResultIds: [],
   goals: [],
-  goalDepartments: [],
+  goalOwnersByGoalId: {},
+  goalLogsByGoalId: {},
   keyResults: [],
+  supportLinks: [],
   tasks: [],
   departmentNamesById: {},
   profilesById: {},
   memberRolesById: {},
-  weekWorkedMinutesByProfileId: {},
-  todayWorkedMinutesByProfileId: {},
-  recentActivities: [],
+  memberIds: [],
 };
 
-const computeGoalHealth = ({
-  progress,
-  endDate,
-}: {
-  progress: number;
-  endDate: string | null;
-}): DepartmentGoalExecutionItem["health"] => {
-  if (progress >= 100) {
-    return "completed";
-  }
-  if (!endDate) {
-    return progress >= 60 ? "on_track" : progress > 0 ? "at_risk" : "off_track";
-  }
-  const deadline = new Date(endDate);
-  const today = new Date();
-  deadline.setHours(0, 0, 0, 0);
-  today.setHours(0, 0, 0, 0);
-  const diffDays = Math.round((deadline.getTime() - today.getTime()) / 86400000);
-  if (diffDays < 0 && progress < 100) {
-    return "off_track";
-  }
-  if (diffDays <= 7 && progress < 70) {
-    return "at_risk";
-  }
-  return progress >= 60 ? "on_track" : progress > 0 ? "at_risk" : "off_track";
+const goalStatusLabelMap: Record<string, string> = {
+  draft: "Nháp",
+  active: "Đang hoạt động",
+  completed: "Hoàn thành",
+  cancelled: "Đã hủy",
+  "Chưa đặt": "Chưa đặt",
 };
 
-const toAssigneeDistribution = (tasks: TaskRow[], profilesById: Record<string, string>) => {
-  const counts = tasks.reduce<Record<string, number>>((acc, task) => {
-    const assigneeId = task.assignee_id ? String(task.assignee_id) : "unknown";
-    acc[assigneeId] = (acc[assigneeId] ?? 0) + 1;
-    return acc;
-  }, {});
-  const summary = Object.entries(counts)
-    .map(([profileId, count]) => `${profilesById[profileId] ?? "Chưa gán"} (${count})`)
-    .slice(0, 3);
-  return summary.length ? summary.join(", ") : "Chưa phân bổ";
+const healthRankMap: Record<DepartmentPerformanceHealth, number> = {
+  off_track: 0,
+  at_risk: 1,
+  on_track: 2,
+  achieved: 3,
 };
+
+const emptyAsyncResult = <TValue,>() => Promise.resolve({ data: [] as TValue[], error: null });
+
+const shortDateFormatter = new Intl.DateTimeFormat("vi-VN", {
+  day: "2-digit",
+  month: "2-digit",
+});
+
+const toNumeric = (value: number | string | null | undefined) => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const nextValue = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(nextValue) ? nextValue : null;
+};
+
+const roundToOne = (value: number) => Math.round(value * 10) / 10;
+
+const clampPercentage = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
+
+const normalizeGoalRow = (value: GoalRow) =>
+  ({
+    ...value,
+    id: String(value.id),
+    department_id: value.department_id ? String(value.department_id) : null,
+    target: toNumeric(value.target),
+    unit: value.unit ? String(value.unit) : null,
+    type: value.type ? String(value.type) : null,
+    status: value.status ? String(value.status) : null,
+    start_date: value.start_date ? String(value.start_date) : null,
+    end_date: value.end_date ? String(value.end_date) : null,
+  }) satisfies GoalRow;
+
+const normalizeKeyResultRow = (value: KeyResultRow) =>
+  ({
+    ...value,
+    id: String(value.id),
+    goal_id: value.goal_id ? String(value.goal_id) : null,
+    name: String(value.name),
+    type: value.type ? String(value.type) : null,
+    contribution_type: value.contribution_type ? String(value.contribution_type) : null,
+    start_value: toNumeric(value.start_value),
+    current: toNumeric(value.current),
+    target: toNumeric(value.target),
+    unit: value.unit ? String(value.unit) : null,
+    weight: toNumeric(value.weight),
+    responsible_department_id: value.responsible_department_id ? String(value.responsible_department_id) : null,
+    start_date: value.start_date ? String(value.start_date) : null,
+    end_date: value.end_date ? String(value.end_date) : null,
+  }) satisfies KeyResultRow;
+
+const normalizeSupportLinkRow = (value: SupportLinkRow) =>
+  ({
+    ...value,
+    id: String(value.id),
+    support_key_result_id: value.support_key_result_id ? String(value.support_key_result_id) : null,
+    target_key_result_id: value.target_key_result_id ? String(value.target_key_result_id) : null,
+    allocated_value: toNumeric(value.allocated_value),
+    allocated_percent: toNumeric(value.allocated_percent),
+    note: value.note ? String(value.note) : null,
+    created_at: value.created_at ? String(value.created_at) : null,
+    updated_at: value.updated_at ? String(value.updated_at) : null,
+  }) satisfies SupportLinkRow;
+
+const normalizeActivityLogRow = (value: ActivityLogRow) =>
+  ({
+    ...value,
+    id: String(value.id),
+    entity_id: value.entity_id ? String(value.entity_id) : null,
+    entity_type: value.entity_type ? String(value.entity_type) : null,
+    profile_id: value.profile_id ? String(value.profile_id) : null,
+    action: value.action ? String(value.action) : null,
+    old_value:
+      value.old_value && typeof value.old_value === "object" && !Array.isArray(value.old_value)
+        ? value.old_value
+        : null,
+    new_value:
+      value.new_value && typeof value.new_value === "object" && !Array.isArray(value.new_value)
+        ? value.new_value
+        : null,
+    created_at: value.created_at ? String(value.created_at) : null,
+  }) satisfies ActivityLogRow;
+
+const normalizeTaskRow = (value: TaskRow) =>
+  ({
+    ...value,
+    id: String(value.id),
+    key_result_id: value.key_result_id ? String(value.key_result_id) : null,
+    assignee_id: value.assignee_id ? String(value.assignee_id) : null,
+    profile_id: value.profile_id ? String(value.profile_id) : null,
+    status: value.status ? String(value.status) : null,
+    progress: toNumeric(value.progress),
+    start_date: value.start_date ? String(value.start_date) : null,
+    end_date: value.end_date ? String(value.end_date) : null,
+    type: value.type ? String(value.type) : null,
+  }) satisfies TaskRow;
+
+const normalizeKeyResultGoalRefRow = (value: KeyResultGoalRefRow) =>
+  ({
+    id: String(value.id),
+    goal_id: value.goal_id ? String(value.goal_id) : null,
+  }) satisfies KeyResultGoalRefRow;
+
+const sortUniqueNumbers = (values: Array<number | null | undefined>, direction: "asc" | "desc" = "asc") =>
+  [...new Set(values.filter((value): value is number => Number.isFinite(value)))].sort((a, b) =>
+    direction === "asc" ? a - b : b - a,
+  );
+
+const getTaskAssigneeId = (task: TaskRow) => task.assignee_id ?? task.profile_id ?? null;
 
 const isTaskOverdue = (task: TaskRow, now = new Date()) => {
   if (!task.end_date) {
@@ -265,6 +470,572 @@ const isTaskOverdue = (task: TaskRow, now = new Date()) => {
   return deadline < today && !["done", "cancelled"].includes(normalizeDashboardStatus(task.status));
 };
 
+const getDateDiffInDays = (value: string | null, now = new Date()) => {
+  if (!value) {
+    return null;
+  }
+  const target = new Date(value);
+  if (Number.isNaN(target.getTime())) {
+    return null;
+  }
+  const start = new Date(now);
+  target.setHours(0, 0, 0, 0);
+  start.setHours(0, 0, 0, 0);
+  return Math.round((target.getTime() - start.getTime()) / 86400000);
+};
+
+const getDaysSince = (value: string | null, now = new Date()) => {
+  const diff = getDateDiffInDays(value, now);
+  return diff === null ? null : Math.max(0, -diff);
+};
+
+const formatTimelineLabel = (value: string | null) => {
+  if (!value) {
+    return "Hôm nay";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "Hôm nay";
+  }
+  return shortDateFormatter.format(date);
+};
+
+const extractProgressFromLogPayload = (value: Record<string, unknown> | null | undefined) => {
+  if (!value) {
+    return null;
+  }
+
+  const directProgress = toNumeric(value.progress as number | string | null | undefined);
+  if (directProgress !== null) {
+    return clampPercentage(directProgress);
+  }
+
+  const currentValue = toNumeric(value.current as number | string | null | undefined);
+  const targetValue = toNumeric(value.target as number | string | null | undefined);
+  if (currentValue !== null && targetValue !== null && targetValue > 0) {
+    return clampPercentage((currentValue / targetValue) * 100);
+  }
+
+  return null;
+};
+
+const getExpectedProgress = ({
+  startDate,
+  endDate,
+  now = new Date(),
+}: {
+  startDate: string | null;
+  endDate: string | null;
+  now?: Date;
+}) => {
+  if (!startDate || !endDate) {
+    return null;
+  }
+
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  const current = new Date(now);
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return null;
+  }
+
+  start.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
+  current.setHours(0, 0, 0, 0);
+
+  if (current <= start) {
+    return 0;
+  }
+  if (current >= end) {
+    return 100;
+  }
+
+  const duration = end.getTime() - start.getTime();
+  if (duration <= 0) {
+    return null;
+  }
+
+  return clampPercentage(((current.getTime() - start.getTime()) / duration) * 100);
+};
+
+const buildGoalTrendInsights = ({
+  logs,
+  currentProgress,
+  now = new Date(),
+}: {
+  logs: ActivityLogRow[];
+  currentProgress: number;
+  now?: Date;
+}) => {
+  const sortedLogs = [...logs]
+    .filter((log) => Boolean(log.created_at))
+    .sort((a, b) => new Date(a.created_at as string).getTime() - new Date(b.created_at as string).getTime());
+
+  const progressSnapshots = sortedLogs
+    .map((log) => {
+      const progress =
+        extractProgressFromLogPayload(log.new_value) ?? extractProgressFromLogPayload(log.old_value);
+      if (progress === null || !log.created_at) {
+        return null;
+      }
+      return {
+        id: log.id,
+        createdAt: log.created_at,
+        progress,
+      };
+    })
+    .filter(
+      (
+        value,
+      ): value is {
+        id: string;
+        createdAt: string;
+        progress: number;
+      } => Boolean(value),
+    );
+
+  const latestSnapshotByDay = progressSnapshots.reduce<
+    Record<string, { id: string; createdAt: string; progress: number }>
+  >((acc, snapshot) => {
+    const key = snapshot.createdAt.slice(0, 10);
+    acc[key] = snapshot;
+    return acc;
+  }, {});
+
+  const dedupedSnapshots = Object.values(latestSnapshotByDay).sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+  );
+
+  const latestLoggedSnapshot = dedupedSnapshots[dedupedSnapshots.length - 1] ?? null;
+  const latestLoggedProgress = latestLoggedSnapshot?.progress ?? null;
+  const currentPoint = {
+    id: "current",
+    createdAt: now.toISOString(),
+    progress: clampPercentage(currentProgress),
+  };
+  const shouldAppendCurrent =
+    latestLoggedProgress === null ||
+    latestLoggedProgress !== currentPoint.progress ||
+    latestLoggedSnapshot?.createdAt.slice(0, 10) !== currentPoint.createdAt.slice(0, 10);
+
+  const trendBase = shouldAppendCurrent ? [...dedupedSnapshots, currentPoint] : dedupedSnapshots;
+
+  const trendPoints = trendBase.slice(-6).map((point) => ({
+    id: point.id,
+    label: point.id === "current" ? "Hôm nay" : formatTimelineLabel(point.createdAt),
+    progress: point.progress,
+    createdAt: point.createdAt,
+  }));
+
+  const lastActivityAt = sortedLogs[sortedLogs.length - 1]?.created_at ?? null;
+
+  const recentWindowStart = new Date(now);
+  recentWindowStart.setDate(recentWindowStart.getDate() - 14);
+
+  const baselineSnapshot =
+    [...dedupedSnapshots]
+      .filter((snapshot) => new Date(snapshot.createdAt).getTime() <= recentWindowStart.getTime())
+      .at(-1) ??
+    dedupedSnapshots.find((snapshot) => new Date(snapshot.createdAt).getTime() >= recentWindowStart.getTime()) ??
+    null;
+
+  const latestReferencePoint =
+    trendBase[trendBase.length - 1] ?? {
+      id: "current",
+      createdAt: now.toISOString(),
+      progress: clampPercentage(currentProgress),
+    };
+
+  const recentProgressChange =
+    baselineSnapshot && latestReferencePoint
+      ? roundToOne(latestReferencePoint.progress - baselineSnapshot.progress)
+      : null;
+
+  const velocityPerWeek =
+    baselineSnapshot && latestReferencePoint
+      ? (() => {
+          const spanDays = Math.max(
+            1,
+            Math.round(
+              (new Date(latestReferencePoint.createdAt).getTime() - new Date(baselineSnapshot.createdAt).getTime()) /
+                86400000,
+            ),
+          );
+          return roundToOne(((latestReferencePoint.progress - baselineSnapshot.progress) / spanDays) * 7);
+        })()
+      : null;
+
+  return {
+    trendPoints,
+    lastActivityAt,
+    recentProgressChange,
+    velocityPerWeek,
+  };
+};
+
+const computeHealth = ({
+  progress,
+  endDate,
+  status,
+}: {
+  progress: number;
+  endDate: string | null;
+  status?: string | null;
+}): DepartmentPerformanceHealth => {
+  if (status === "completed" || progress >= 100) {
+    return "achieved";
+  }
+  if (!endDate) {
+    return progress >= 75 ? "on_track" : progress >= 45 ? "at_risk" : "off_track";
+  }
+  const diffDays = getDateDiffInDays(endDate);
+  if (diffDays !== null && diffDays < 0) {
+    return "off_track";
+  }
+  if (diffDays !== null && diffDays <= 14 && progress < 75) {
+    return "at_risk";
+  }
+  return progress >= 75 ? "on_track" : progress >= 45 ? "at_risk" : "off_track";
+};
+
+const dedupeById = <TValue extends { id: string }>(rows: TValue[]) =>
+  Object.values(
+    rows.reduce<Record<string, TValue>>((acc, row) => {
+      acc[row.id] = row;
+      return acc;
+    }, {}),
+  );
+
+const sortByHealthAndProgress = <TValue extends { health: DepartmentPerformanceHealth; progress: number; endDate: string | null }>(
+  rows: TValue[],
+) =>
+  [...rows].sort((a, b) => {
+    const healthDiff = healthRankMap[a.health] - healthRankMap[b.health];
+    if (healthDiff !== 0) {
+      return healthDiff;
+    }
+    if (a.progress !== b.progress) {
+      return a.progress - b.progress;
+    }
+    const aDate = a.endDate ? new Date(a.endDate).getTime() : Number.POSITIVE_INFINITY;
+    const bDate = b.endDate ? new Date(b.endDate).getTime() : Number.POSITIVE_INFINITY;
+    return aDate - bDate;
+  });
+
+const computePortfolioPerformance = (
+  keyResults: KeyResultRow[],
+  keyResultProgressMap: Record<string, number>,
+) => {
+  if (!keyResults.length) {
+    return null;
+  }
+
+  return computeWeightedProgress(
+    keyResults.map((keyResult) => ({
+      progress: keyResultProgressMap[keyResult.id] ?? 0,
+      weight:
+        normalizeKeyResultContributionTypeValue(keyResult.contribution_type) === "direct" &&
+        normalizeKeyResultTypeValue(keyResult.type) === "okr"
+          ? keyResult.weight ?? 1
+          : 1,
+    })),
+  );
+};
+
+const averageRounded = (values: Array<number | null | undefined>) => {
+  const safeValues = values.filter((value): value is number => Number.isFinite(value));
+  if (!safeValues.length) {
+    return null;
+  }
+  return Math.round(safeValues.reduce((sum, value) => sum + value, 0) / safeValues.length);
+};
+
+const isNeedsAttention = (health: DepartmentPerformanceHealth) => health === "at_risk" || health === "off_track";
+
+const getGoalMetricSummary = ({
+  goal,
+  directKeyResults,
+}: {
+  goal: GoalRow;
+  directKeyResults: KeyResultRow[];
+}) => {
+  const consistentUnit =
+    goal.unit &&
+    directKeyResults.length > 0 &&
+    directKeyResults.every((keyResult) => (keyResult.unit ?? null) === goal.unit);
+
+  if (normalizeGoalTypeValue(goal.type) === "kpi" && consistentUnit) {
+    const currentValue = directKeyResults.reduce((sum, keyResult) => sum + (keyResult.current ?? 0), 0);
+    if (Number.isFinite(goal.target)) {
+      return {
+        currentValue,
+        currentUnit: goal.unit,
+        metricSummary: `${formatKeyResultMetric(currentValue, goal.unit)} / ${formatKeyResultMetric(goal.target, goal.unit)}`,
+      };
+    }
+    return {
+      currentValue,
+      currentUnit: goal.unit,
+      metricSummary: formatKeyResultMetric(currentValue, goal.unit),
+    };
+  }
+
+  if (goal.target !== null) {
+    return {
+      currentValue: null,
+      currentUnit: goal.unit,
+      metricSummary: `Chỉ tiêu ${formatKeyResultMetric(goal.target, goal.unit)}`,
+    };
+  }
+
+  return {
+    currentValue: null,
+    currentUnit: null,
+    metricSummary: "Tiến độ được tổng hợp từ các KR thuộc mục tiêu",
+  };
+};
+
+const getGoalRiskNote = ({
+  progress,
+  endDate,
+  directKrRiskCount,
+  supportKrRiskCount,
+}: {
+  progress: number;
+  endDate: string | null;
+  directKrRiskCount: number;
+  supportKrRiskCount: number;
+}) => {
+  const diffDays = getDateDiffInDays(endDate);
+  if (diffDays !== null && diffDays < 0) {
+    return `Đã quá hạn và mới đạt ${progress}%.`;
+  }
+  if (diffDays !== null && diffDays <= 7 && progress < 100) {
+    return `Còn ${diffDays} ngày đến hạn và hiện ở mức ${progress}%.`;
+  }
+  if (directKrRiskCount > 0) {
+    return `${directKrRiskCount} KR trực tiếp đang kéo tiến độ xuống.`;
+  }
+  if (supportKrRiskCount > 0) {
+    return `${supportKrRiskCount} KR hỗ trợ cần theo dõi thêm.`;
+  }
+  return progress >= 75 ? "Tiến độ đang ổn định trong phạm vi hiện tại." : "Tiến độ còn thấp so với mục tiêu kỳ này.";
+};
+
+const getGoalActionText = ({
+  progress,
+  scheduleGap,
+  velocityPerWeek,
+  requiredPerWeek,
+  directKrRiskCount,
+  supportKrRiskCount,
+  inactivityDays,
+}: {
+  progress: number;
+  scheduleGap: number | null;
+  velocityPerWeek: number | null;
+  requiredPerWeek: number | null;
+  directKrRiskCount: number;
+  supportKrRiskCount: number;
+  inactivityDays: number | null;
+}) => {
+  if (progress >= 100) {
+    return "Mục tiêu đã đạt. Chuyển sang theo dõi tính bền vững và giữ nhịp cập nhật.";
+  }
+
+  if (directKrRiskCount > 0) {
+    return `Ưu tiên xử lý ${directKrRiskCount} KR trực tiếp đang kéo tiến độ mục tiêu xuống.`;
+  }
+
+  if (scheduleGap !== null && scheduleGap <= -15) {
+    return `Tiến độ đang chậm ${Math.abs(scheduleGap)} điểm so với kế hoạch. Cần tăng nhịp hoàn thành ngay.`;
+  }
+
+  if (
+    velocityPerWeek !== null &&
+    requiredPerWeek !== null &&
+    requiredPerWeek > 0 &&
+    velocityPerWeek < requiredPerWeek
+  ) {
+    return `Nhịp hiện tại chưa đủ để kịp hạn. Cần tăng thêm khoảng ${roundToOne(requiredPerWeek - velocityPerWeek)} điểm mỗi tuần.`;
+  }
+
+  if (inactivityDays !== null && inactivityDays >= 7) {
+    return `Mục tiêu đã ${inactivityDays} ngày chưa có cập nhật mới. Cần rà lại tiến độ thực tế.`;
+  }
+
+  if (supportKrRiskCount > 0) {
+    return `Có ${supportKrRiskCount} KR hỗ trợ cần gỡ vướng để giữ nhịp cho mục tiêu này.`;
+  }
+
+  return "Tiến độ hiện còn trong tầm kiểm soát. Tiếp tục giữ nhịp cập nhật đều và theo dõi KR chính.";
+};
+
+const getPaceAssessment = ({
+  progress,
+  expectedProgress,
+  requiredPerWeek,
+  daysRemaining,
+}: {
+  progress: number;
+  expectedProgress: number | null;
+  requiredPerWeek: number | null;
+  daysRemaining: number | null;
+}) => {
+  if (progress >= 100) {
+    return {
+      paceLabel: "Đã đạt chỉ tiêu",
+      paceNote: "Không cần tăng thêm nhịp hoàn thành.",
+    };
+  }
+
+  if (expectedProgress === null) {
+    return {
+      paceLabel: "Chưa đủ dữ liệu",
+      paceNote: "Cần có ngày bắt đầu và hạn cuối để đánh giá nhịp đạt đích.",
+    };
+  }
+
+  const gap = Math.round(progress - expectedProgress);
+  const paceLabel =
+    gap <= -15 ? `Chậm ${Math.abs(gap)} điểm` : gap >= 15 ? `Nhanh ${gap} điểm` : "Theo sát kế hoạch";
+
+  if (daysRemaining !== null && daysRemaining < 0) {
+    return {
+      paceLabel,
+      paceNote: "Đã quá hạn, cần rà lại chỉ tiêu và phần việc chậm.",
+    };
+  }
+
+  if (requiredPerWeek === null) {
+    return {
+      paceLabel,
+      paceNote: "Chưa đủ dữ liệu để ước tính nhịp cần thiết.",
+    };
+  }
+
+  return {
+    paceLabel,
+    paceNote: `Cần khoảng ${roundToOne(requiredPerWeek)} điểm mỗi tuần để kịp hạn.`,
+  };
+};
+
+const getKeyResultRiskNote = ({
+  progress,
+  endDate,
+  supportCount,
+  supportedDirectCount,
+}: {
+  progress: number;
+  endDate: string | null;
+  supportCount?: number;
+  supportedDirectCount?: number;
+}) => {
+  const diffDays = getDateDiffInDays(endDate);
+  if (diffDays !== null && diffDays < 0) {
+    return `Đã quá hạn và mới đạt ${progress}%.`;
+  }
+  if (diffDays !== null && diffDays <= 7 && progress < 100) {
+    return `Còn ${diffDays} ngày đến hạn và hiện ở mức ${progress}%.`;
+  }
+  if ((supportCount ?? 0) > 0) {
+    return `Đang được hỗ trợ bởi ${supportCount} KR hỗ trợ.`;
+  }
+  if ((supportedDirectCount ?? 0) > 0) {
+    return `Đang phân bổ cho ${supportedDirectCount} KR trực tiếp.`;
+  }
+  return progress >= 75 ? "Tiến độ đang trong vùng an toàn." : "Tiến độ thấp và cần theo dõi thêm.";
+};
+
+const getMemberSignalText = ({
+  performanceScore,
+  overdueTasks,
+  blockedTasks,
+}: {
+  performanceScore: number | null;
+  overdueTasks: number;
+  blockedTasks: number;
+}) => {
+  if (overdueTasks > 0) {
+    return `${overdueTasks} công việc quá hạn đang ảnh hưởng KR theo dõi.`;
+  }
+  if (blockedTasks > 0) {
+    return `${blockedTasks} công việc bị chặn cần tháo gỡ.`;
+  }
+  if (performanceScore !== null && performanceScore < 50) {
+    return "Điểm đóng góp hiện ở mức thấp so với phạm vi lọc.";
+  }
+  if (performanceScore !== null && performanceScore >= 80) {
+    return "Đóng góp ổn định trên các mục tiêu và KR đang tham gia.";
+  }
+  return "Cần theo dõi thêm nhịp cải thiện trên các KR đang tham gia.";
+};
+
+const getPeriodKey = (goal: GoalRow) => {
+  const year = goal.year ?? 0;
+  const quarter = goal.quarter ?? 0;
+  return `${year}-q${quarter}`;
+};
+
+const getPeriodLabel = (goal: GoalRow) => {
+  if (goal.quarter && goal.year) {
+    return `Q${goal.quarter}/${goal.year}`;
+  }
+  if (goal.year) {
+    return `Năm ${goal.year}`;
+  }
+  return "Không xác định kỳ";
+};
+
+const sortGoalsByPeriod = (goals: GoalRow[]) =>
+  [...goals].sort((a, b) => {
+    const yearDiff = (a.year ?? 0) - (b.year ?? 0);
+    if (yearDiff !== 0) {
+      return yearDiff;
+    }
+    return (a.quarter ?? 0) - (b.quarter ?? 0);
+  });
+
+const getSupportAllocationModeLabel = (type: string | null | undefined) =>
+  normalizeKeyResultTypeValue(type) === "okr" ? "Phần trăm phân bổ" : "Lượng phân bổ";
+
+const getSupportAllocationLabel = ({
+  type,
+  allocatedValue,
+  allocatedPercent,
+  unit,
+}: {
+  type: string | null | undefined;
+  allocatedValue: number | null;
+  allocatedPercent: number | null;
+  unit: string | null;
+}) => {
+  if (normalizeKeyResultTypeValue(type) === "okr") {
+    return allocatedPercent === null ? "Chưa đặt" : `${formatMetricValue(allocatedPercent)}%`;
+  }
+
+  return allocatedValue === null ? "Chưa đặt" : formatKeyResultMetric(allocatedValue, unit);
+};
+
+const getMemberContributionStatus = ({
+  performanceScore,
+  overdueTasks,
+  blockedTasks,
+}: {
+  performanceScore: number | null;
+  overdueTasks: number;
+  blockedTasks: number;
+}): DepartmentMemberContributionItem["status"] => {
+  if (overdueTasks > 0 || blockedTasks > 0 || (performanceScore !== null && performanceScore < 50)) {
+    return "bottleneck";
+  }
+  if ((performanceScore ?? 0) >= 80) {
+    return "strong";
+  }
+  return "watching";
+};
+
 export function useDepartmentPerformance(filters: FilterParams) {
   const [rawData, setRawData] = useState<RawData>(defaultRawData);
   const [isLoading, setIsLoading] = useState(false);
@@ -274,6 +1045,7 @@ export function useDepartmentPerformance(filters: FilterParams) {
     if (!filters.departmentId) {
       setRawData(defaultRawData);
       setIsLoading(false);
+      setError(null);
       return;
     }
 
@@ -284,285 +1056,419 @@ export function useDepartmentPerformance(filters: FilterParams) {
       setError(null);
 
       try {
-        const today = new Date();
-        const weekStart = new Date(today);
-        weekStart.setDate(today.getDate() - ((today.getDay() + 6) % 7));
-        weekStart.setHours(0, 0, 0, 0);
+        const [
+          { data: departmentRow, error: departmentError },
+          { data: memberRoleRows, error: memberRoleError },
+          { data: ownedGoalRows, error: ownedGoalError },
+          { data: linkedGoalRows, error: linkedGoalError },
+          { data: departmentKeyResultRows, error: departmentKeyResultError },
+        ] = await Promise.all([
+          supabase.from("departments").select("id,name").eq("id", filters.departmentId).maybeSingle(),
+          supabase
+            .from("user_role_in_department")
+            .select("profile_id,role_id,department_id")
+            .eq("department_id", filters.departmentId),
+          supabase
+            .from("goals")
+            .select("id,name,type,department_id,status,quarter,year,target,unit,start_date,end_date")
+            .eq("department_id", filters.departmentId),
+          supabase.from("goal_departments").select("goal_id,department_id").eq("department_id", filters.departmentId),
+          supabase
+            .from("key_results")
+            .select(
+              "id,goal_id,name,type,contribution_type,start_value,current,target,unit,weight,responsible_department_id,start_date,end_date",
+            )
+            .eq("responsible_department_id", filters.departmentId),
+        ]);
 
-        const [{ data: departmentRows }, { data: memberRoleRows }, { data: directGoalsRows }, { data: linkedGoalRows }] =
-          await Promise.all([
-            supabase.from("departments").select("id,name").eq("id", filters.departmentId).limit(1),
-            supabase
-              .from("user_role_in_department")
-              .select("profile_id,role_id,department_id")
-              .eq("department_id", filters.departmentId),
-            supabase
-              .from("goals")
-              .select("id,name,department_id,owner_id,status,quarter,year,end_date,start_date")
-              .eq("department_id", filters.departmentId),
-            supabase
-              .from("goal_departments")
-              .select("goal_id,department_id,role,goal_weight,kr_weight")
-              .eq("department_id", filters.departmentId),
-          ]);
-
+        if (departmentError) {
+          throw new Error(departmentError.message || "Không tải được thông tin phòng ban.");
+        }
+        if (memberRoleError) {
+          throw new Error(memberRoleError.message || "Không tải được vai trò thành viên của phòng ban.");
+        }
+        if (ownedGoalError) {
+          throw new Error(ownedGoalError.message || "Không tải được danh sách mục tiêu của phòng ban.");
+        }
+        if (linkedGoalError) {
+          throw new Error(linkedGoalError.message || "Không tải được danh sách mục tiêu liên quan.");
+        }
+        if (departmentKeyResultError) {
+          throw new Error(departmentKeyResultError.message || "Không tải được danh sách KR của phòng ban.");
+        }
         if (!isActive) {
           return;
         }
 
-        const memberProfileIds = [
+        const normalizedDepartmentKeyResults = ((departmentKeyResultRows ?? []) as KeyResultRow[]).map(normalizeKeyResultRow);
+        const departmentKeyResultIds = normalizedDepartmentKeyResults.map((item) => item.id);
+        const memberIds = [
           ...new Set(
             ((memberRoleRows ?? []) as UserRoleRow[])
-              .map((item) => item.profile_id)
-              .filter((value): value is string => Boolean(value))
-              .map((value) => String(value)),
+              .map((row) => (row.profile_id ? String(row.profile_id) : null))
+              .filter((value): value is string => Boolean(value)),
           ),
         ];
         const roleIds = [
           ...new Set(
             ((memberRoleRows ?? []) as UserRoleRow[])
-              .map((item) => item.role_id)
-              .filter((value): value is string => Boolean(value))
-              .map((value) => String(value)),
+              .map((row) => (row.role_id ? String(row.role_id) : null))
+              .filter((value): value is string => Boolean(value)),
           ),
         ];
-        const linkedGoalIds = [
-          ...new Set(
-            ((linkedGoalRows ?? []) as GoalDepartmentRow[])
-              .map((item) => item.goal_id)
-              .filter((value): value is string => Boolean(value))
-              .map((value) => String(value)),
-          ),
-        ];
-        const directGoals = (directGoalsRows ?? []) as GoalRow[];
-        const existingGoalIds = new Set(directGoals.map((goal) => String(goal.id)));
-        const missingGoalIds = linkedGoalIds.filter((goalId) => !existingGoalIds.has(goalId));
 
-        const [{ data: missingGoalsRows }, { data: profileRows }, { data: roleRows }] = await Promise.all([
-          missingGoalIds.length > 0
-            ? supabase
-                .from("goals")
-                .select("id,name,department_id,owner_id,status,quarter,year,end_date,start_date")
-                .in("id", missingGoalIds)
-            : Promise.resolve({ data: [] }),
-          memberProfileIds.length > 0
-            ? supabase.from("profiles").select("id,name,email").in("id", memberProfileIds)
-            : Promise.resolve({ data: [] }),
+        const [
+          { data: memberProfiles, error: memberProfilesError },
+          { data: roleRows, error: roleRowsError },
+          outboundSupportResult,
+          inboundSupportResult,
+        ] = await Promise.all([
+          memberIds.length > 0
+            ? supabase.from("profiles").select("id,name,email").in("id", memberIds)
+            : emptyAsyncResult<ProfileRow>(),
           roleIds.length > 0
             ? supabase.from("roles").select("id,name").in("id", roleIds)
-            : Promise.resolve({ data: [] }),
+            : emptyAsyncResult<RoleRow>(),
+          departmentKeyResultIds.length > 0
+            ? supabase
+                .from("key_result_support_links")
+                .select(
+                  "id,support_key_result_id,target_key_result_id,allocated_value,allocated_percent,note,created_at,updated_at",
+                )
+                .in("support_key_result_id", departmentKeyResultIds)
+            : emptyAsyncResult<SupportLinkRow>(),
+          departmentKeyResultIds.length > 0
+            ? supabase
+                .from("key_result_support_links")
+                .select(
+                  "id,support_key_result_id,target_key_result_id,allocated_value,allocated_percent,note,created_at,updated_at",
+                )
+                .in("target_key_result_id", departmentKeyResultIds)
+            : emptyAsyncResult<SupportLinkRow>(),
         ]);
+
+        if (memberProfilesError) {
+          throw new Error(memberProfilesError.message || "Không tải được hồ sơ thành viên.");
+        }
+        if (roleRowsError) {
+          throw new Error(roleRowsError.message || "Không tải được danh sách vai trò.");
+        }
+        if (outboundSupportResult.error) {
+          throw new Error(outboundSupportResult.error.message || "Không tải được liên kết hỗ trợ đi ra.");
+        }
+        if (inboundSupportResult.error) {
+          throw new Error(inboundSupportResult.error.message || "Không tải được liên kết hỗ trợ đi vào.");
+        }
+        if (!isActive) {
+          return;
+        }
+
+        const baseSupportLinks = dedupeById(
+          [...(outboundSupportResult.data ?? []), ...(inboundSupportResult.data ?? [])].map((row) =>
+            normalizeSupportLinkRow(row as SupportLinkRow),
+          ),
+        );
+
+        const baseRelatedKeyResultIds = [
+          ...new Set(
+            baseSupportLinks
+              .flatMap((link) => [link.support_key_result_id, link.target_key_result_id])
+              .filter((value): value is string => Boolean(value))
+              .filter((value) => !departmentKeyResultIds.includes(value)),
+          ),
+        ];
+
+        const { data: relatedKeyResultGoalRows, error: relatedKeyResultGoalError } =
+          baseRelatedKeyResultIds.length > 0
+            ? await supabase.from("key_results").select("id,goal_id").in("id", baseRelatedKeyResultIds)
+            : { data: [] as KeyResultGoalRefRow[], error: null };
+
+        if (relatedKeyResultGoalError) {
+          throw new Error(relatedKeyResultGoalError.message || "Không tải được mục tiêu liên quan qua liên kết hỗ trợ.");
+        }
+        if (!isActive) {
+          return;
+        }
+
+        const primaryGoalIds = [
+          ...new Set(
+            [
+              ...((ownedGoalRows ?? []) as GoalRow[]).map((row) => String(row.id)),
+              ...((linkedGoalRows ?? []) as GoalDepartmentRow[])
+                .map((row) => (row.goal_id ? String(row.goal_id) : null))
+                .filter((value): value is string => Boolean(value)),
+              ...normalizedDepartmentKeyResults
+                .map((row) => row.goal_id)
+                .filter((value): value is string => Boolean(value)),
+              ...((relatedKeyResultGoalRows ?? []) as KeyResultGoalRefRow[])
+                .map(normalizeKeyResultGoalRefRow)
+                .map((row) => row.goal_id)
+                .filter((value): value is string => Boolean(value)),
+            ].filter(Boolean),
+          ),
+        ];
+
+        const { data: goalRows, error: goalRowsError } =
+          primaryGoalIds.length > 0
+            ? await supabase
+                .from("goals")
+                .select("id,name,type,department_id,status,quarter,year,target,unit,start_date,end_date")
+                .in("id", primaryGoalIds)
+            : { data: [] as GoalRow[], error: null };
+
+        if (goalRowsError) {
+          throw new Error(goalRowsError.message || "Không tải được danh sách mục tiêu trong phạm vi phòng ban.");
+        }
+        if (!isActive) {
+          return;
+        }
+
+        const normalizedGoals = ((goalRows ?? []) as GoalRow[]).map(normalizeGoalRow);
+        const normalizedGoalIds = normalizedGoals.map((goal) => goal.id);
+        const goalOwnersByGoalId = await loadGoalOwnersByGoalIds(normalizedGoalIds);
 
         if (!isActive) {
           return;
         }
 
-        const allGoals = [...directGoals, ...((missingGoalsRows ?? []) as GoalRow[])].reduce<Record<string, GoalRow>>(
-          (acc, goal) => {
-            acc[String(goal.id)] = {
-              ...goal,
-              id: String(goal.id),
-            };
+        const [{ data: primaryKeyResultRows, error: primaryKeyResultError }, goalLogResult] = await Promise.all([
+          normalizedGoalIds.length > 0
+            ? supabase
+                .from("key_results")
+                .select(
+                  "id,goal_id,name,type,contribution_type,start_value,current,target,unit,weight,responsible_department_id,start_date,end_date",
+                )
+                .in("goal_id", normalizedGoalIds)
+            : Promise.resolve({ data: [] as KeyResultRow[], error: null }),
+          normalizedGoalIds.length > 0
+            ? supabase
+                .from("activity_logs")
+                .select("id,entity_id,entity_type,profile_id,action,old_value,new_value,created_at")
+                .eq("entity_type", "goal")
+                .in("entity_id", normalizedGoalIds)
+                .order("created_at", { ascending: true })
+            : Promise.resolve({ data: [] as ActivityLogRow[], error: null }),
+        ]);
+
+        if (primaryKeyResultError) {
+          throw new Error(primaryKeyResultError.message || "Không tải được danh sách KR trong phạm vi mục tiêu.");
+        }
+        if (goalLogResult.error) {
+          throw new Error(goalLogResult.error.message || "Không tải được lịch sử cập nhật mục tiêu.");
+        }
+        if (!isActive) {
+          return;
+        }
+
+        const normalizedPrimaryKeyResults = ((primaryKeyResultRows ?? []) as KeyResultRow[]).map(normalizeKeyResultRow);
+        const goalLogsByGoalId = ((goalLogResult.data ?? []) as ActivityLogRow[])
+          .map(normalizeActivityLogRow)
+          .reduce<Record<string, ActivityLogRow[]>>((acc, log) => {
+            if (!log.entity_id) {
+              return acc;
+            }
+            if (!acc[log.entity_id]) {
+              acc[log.entity_id] = [];
+            }
+            acc[log.entity_id].push(log);
+            return acc;
+          }, {});
+        const primaryKeyResultIds = normalizedPrimaryKeyResults.map((item) => item.id);
+
+        const [taskResult, allOutboundSupportResult, allInboundSupportResult] = await Promise.all([
+          primaryKeyResultIds.length > 0
+            ? supabase
+                .from("tasks")
+                .select("id,name,key_result_id,assignee_id,profile_id,status,progress,start_date,end_date,type")
+                .in("key_result_id", primaryKeyResultIds)
+            : emptyAsyncResult<TaskRow>(),
+          primaryKeyResultIds.length > 0
+            ? supabase
+                .from("key_result_support_links")
+                .select(
+                  "id,support_key_result_id,target_key_result_id,allocated_value,allocated_percent,note,created_at,updated_at",
+                )
+                .in("support_key_result_id", primaryKeyResultIds)
+            : emptyAsyncResult<SupportLinkRow>(),
+          primaryKeyResultIds.length > 0
+            ? supabase
+                .from("key_result_support_links")
+                .select(
+                  "id,support_key_result_id,target_key_result_id,allocated_value,allocated_percent,note,created_at,updated_at",
+                )
+                .in("target_key_result_id", primaryKeyResultIds)
+            : emptyAsyncResult<SupportLinkRow>(),
+        ]);
+
+        if (taskResult.error) {
+          throw new Error(taskResult.error.message || "Không tải được dữ liệu thực thi của KR.");
+        }
+        if (allOutboundSupportResult.error) {
+          throw new Error(allOutboundSupportResult.error.message || "Không tải được liên kết hỗ trợ của KR.");
+        }
+        if (allInboundSupportResult.error) {
+          throw new Error(allInboundSupportResult.error.message || "Không tải được liên kết hỗ trợ đi vào của KR.");
+        }
+        if (!isActive) {
+          return;
+        }
+
+        const primarySupportLinks = dedupeById(
+          [...(allOutboundSupportResult.data ?? []), ...(allInboundSupportResult.data ?? [])].map((row) =>
+            normalizeSupportLinkRow(row as SupportLinkRow),
+          ),
+        );
+        const supportRelatedKeyResultIds = [
+          ...new Set(
+            primarySupportLinks
+              .flatMap((link) => [link.support_key_result_id, link.target_key_result_id])
+              .filter((value): value is string => Boolean(value))
+              .filter((value) => !primaryKeyResultIds.includes(value)),
+          ),
+        ];
+
+        const { data: externalSupportKeyResultRows, error: externalSupportKeyResultError } =
+          supportRelatedKeyResultIds.length > 0
+            ? await supabase
+                .from("key_results")
+                .select(
+                  "id,goal_id,name,type,contribution_type,start_value,current,target,unit,weight,responsible_department_id,start_date,end_date",
+                )
+                .in("id", supportRelatedKeyResultIds)
+            : { data: [] as KeyResultRow[], error: null };
+
+        if (externalSupportKeyResultError) {
+          throw new Error(externalSupportKeyResultError.message || "Không tải được KR liên kết hỗ trợ.");
+        }
+        if (!isActive) {
+          return;
+        }
+
+        const normalizedExternalSupportKeyResults = ((externalSupportKeyResultRows ?? []) as KeyResultRow[]).map(
+          normalizeKeyResultRow,
+        );
+        const extraGoalIds = [
+          ...new Set(
+            normalizedExternalSupportKeyResults
+              .map((item) => item.goal_id)
+              .filter((value): value is string => Boolean(value))
+              .filter((value) => !normalizedGoalIds.includes(value)),
+          ),
+        ];
+
+        const [extraGoalResult, extraProfilesResult, departmentsResult] = await Promise.all([
+          extraGoalIds.length > 0
+            ? supabase
+                .from("goals")
+                .select("id,name,type,department_id,status,quarter,year,target,unit,start_date,end_date")
+                .in("id", extraGoalIds)
+            : emptyAsyncResult<GoalRow>(),
+          (() => {
+            const taskAssigneeIds = [
+              ...new Set(
+                ((taskResult.data ?? []) as TaskRow[])
+                  .map(normalizeTaskRow)
+                  .map((task) => getTaskAssigneeId(task))
+                  .filter((value): value is string => Boolean(value))
+                  .filter((value) => !memberIds.includes(value)),
+              ),
+            ];
+
+            return taskAssigneeIds.length > 0
+              ? supabase.from("profiles").select("id,name,email").in("id", taskAssigneeIds)
+              : emptyAsyncResult<ProfileRow>();
+          })(),
+          (() => {
+            const relatedDepartmentIds = [
+              ...new Set(
+                [
+                  filters.departmentId,
+                  ...normalizedGoals
+                    .map((goal) => goal.department_id)
+                    .filter((value): value is string => Boolean(value)),
+                  ...normalizedPrimaryKeyResults
+                    .map((keyResult) => keyResult.responsible_department_id)
+                    .filter((value): value is string => Boolean(value)),
+                  ...normalizedExternalSupportKeyResults
+                    .map((keyResult) => keyResult.responsible_department_id)
+                    .filter((value): value is string => Boolean(value)),
+                ].filter(Boolean),
+              ),
+            ];
+
+            return relatedDepartmentIds.length > 0
+              ? supabase.from("departments").select("id,name").in("id", relatedDepartmentIds)
+              : emptyAsyncResult<DepartmentRow>();
+          })(),
+        ]);
+
+        if (extraGoalResult.error) {
+          throw new Error(extraGoalResult.error.message || "Không tải được mục tiêu liên kết hỗ trợ.");
+        }
+        if (extraProfilesResult.error) {
+          throw new Error(extraProfilesResult.error.message || "Không tải được hồ sơ người tham gia thực thi.");
+        }
+        if (departmentsResult.error) {
+          throw new Error(departmentsResult.error.message || "Không tải được danh sách phòng ban liên quan.");
+        }
+        if (!isActive) {
+          return;
+        }
+
+        const profilesById = [...((memberProfiles ?? []) as ProfileRow[]), ...((extraProfilesResult.data ?? []) as ProfileRow[])].reduce<
+          Record<string, string>
+        >((acc, profile) => {
+          acc[String(profile.id)] = profile.name?.trim() || profile.email?.trim() || "Không rõ";
+          return acc;
+        }, {});
+
+        const roleNamesById = ((roleRows ?? []) as RoleRow[]).reduce<Record<string, string>>((acc, role) => {
+          acc[String(role.id)] = role.name?.trim() || "Không rõ vai trò";
+          return acc;
+        }, {});
+
+        const memberRolesById = ((memberRoleRows ?? []) as UserRoleRow[]).reduce<Record<string, string>>((acc, row) => {
+          const profileId = row.profile_id ? String(row.profile_id) : null;
+          const roleId = row.role_id ? String(row.role_id) : null;
+          if (!profileId || !roleId || acc[profileId]) {
+            return acc;
+          }
+          acc[profileId] = roleNamesById[roleId] ?? "Không rõ vai trò";
+          return acc;
+        }, {});
+
+        const departmentNamesById = ((departmentsResult.data ?? []) as DepartmentRow[]).reduce<Record<string, string>>(
+          (acc, department) => {
+            acc[String(department.id)] = String(department.name);
             return acc;
           },
           {},
         );
-        const goalIds = Object.keys(allGoals);
-
-        const [{ data: keyResultsRows }, { data: profilesData }, { data: rolesData }] = await Promise.all([
-          goalIds.length > 0
-            ? supabase
-                .from("key_results")
-                .select("id,goal_id,name,start_value,current,target,weight,responsible_department_id,start_date,end_date")
-                .in("goal_id", goalIds)
-            : Promise.resolve({ data: [] }),
-          Promise.resolve({ data: profileRows ?? [] }),
-          Promise.resolve({ data: roleRows ?? [] }),
-        ]);
-
-        if (!isActive) {
-          return;
-        }
-
-        const keyResults = ((keyResultsRows ?? []) as KeyResultRow[]).map((item) => ({
-          ...item,
-          id: String(item.id),
-          goal_id: item.goal_id ? String(item.goal_id) : null,
-          start_value: typeof item.start_value === "number" ? item.start_value : Number(item.start_value ?? 0),
-          current: typeof item.current === "number" ? item.current : Number(item.current ?? 0),
-          target: typeof item.target === "number" ? item.target : Number(item.target ?? 0),
-          weight: typeof item.weight === "number" ? item.weight : Number(item.weight ?? 1),
-          responsible_department_id: item.responsible_department_id ? String(item.responsible_department_id) : null,
-          start_date: item.start_date ? String(item.start_date) : null,
-          end_date: item.end_date ? String(item.end_date) : null,
-        }));
-        const relatedDepartmentIds = [
-          ...new Set(
-            [
-              filters.departmentId,
-              ...((linkedGoalRows ?? []) as GoalDepartmentRow[])
-                .map((item) => item.department_id)
-                .filter((value): value is string => Boolean(value))
-                .map((value) => String(value)),
-              ...keyResults
-                .map((item) => item.responsible_department_id)
-                .filter((value): value is string => Boolean(value))
-                .map((value) => String(value)),
-            ].filter(Boolean),
-          ),
-        ];
-        const keyResultIds = keyResults.map((item) => item.id);
-
-        const [{ data: taskRows }, { data: timesRows }, { data: relatedDepartmentRows }] = await Promise.all([
-          keyResultIds.length > 0
-            ? supabase
-                .from("tasks")
-                .select("id,name,key_result_id,assignee_id,status,progress,weight,start_date,end_date,created_at,updated_at,type")
-                .in("key_result_id", keyResultIds)
-            : Promise.resolve({ data: [] }),
-          memberProfileIds.length > 0
-            ? supabase
-                .from("times")
-                .select("profile_id,date,check_in,check_out")
-                .in("profile_id", memberProfileIds)
-                .gte("date", weekStart.toISOString().slice(0, 10))
-                .lte("date", today.toISOString().slice(0, 10))
-            : Promise.resolve({ data: [] }),
-          relatedDepartmentIds.length > 0
-            ? supabase.from("departments").select("id,name").in("id", relatedDepartmentIds)
-            : Promise.resolve({ data: [] }),
-        ]);
-
-        if (!isActive) {
-          return;
-        }
-
-        const typedTasks = ((taskRows ?? []) as TaskRow[]).map((task) => ({
-          ...task,
-          id: String(task.id),
-          key_result_id: task.key_result_id ? String(task.key_result_id) : null,
-          assignee_id: task.assignee_id ? String(task.assignee_id) : null,
-          status: task.status ? String(task.status) : null,
-          start_date: task.start_date ? String(task.start_date) : null,
-          end_date: task.end_date ? String(task.end_date) : null,
-          created_at: task.created_at ? String(task.created_at) : null,
-          updated_at: task.updated_at ? String(task.updated_at) : null,
-          type: task.type ? String(task.type) : null,
-        }));
-        const taskIds = typedTasks.map((task) => task.id);
-
-        const activityQueries = [
-          goalIds.length > 0
-            ? supabase
-                .from("activity_logs")
-                .select("id,profile_id,entity_type,entity_id,action,old_value,new_value,created_at")
-                .eq("entity_type", "goal")
-                .in("entity_id", goalIds)
-                .order("created_at", { ascending: false })
-                .limit(8)
-            : Promise.resolve({ data: [] }),
-          keyResultIds.length > 0
-            ? supabase
-                .from("activity_logs")
-                .select("id,profile_id,entity_type,entity_id,action,old_value,new_value,created_at")
-                .eq("entity_type", "key_result")
-                .in("entity_id", keyResultIds)
-                .order("created_at", { ascending: false })
-                .limit(8)
-            : Promise.resolve({ data: [] }),
-          taskIds.length > 0
-            ? supabase
-                .from("activity_logs")
-                .select("id,profile_id,entity_type,entity_id,action,old_value,new_value,created_at")
-                .eq("entity_type", "task")
-                .in("entity_id", taskIds)
-                .order("created_at", { ascending: false })
-                .limit(8)
-            : Promise.resolve({ data: [] }),
-        ];
-
-        const [goalActivities, keyResultActivities, taskActivities] = await Promise.all(activityQueries);
-
-        if (!isActive) {
-          return;
-        }
-
-        const profilesById = ((profilesData ?? []) as ProfileRow[]).reduce<Record<string, string>>((acc, profile) => {
-          acc[String(profile.id)] = profile.name?.trim() || profile.email?.trim() || "Không rõ";
-          return acc;
-        }, {});
-        const roleNamesById = ((rolesData ?? []) as RoleRow[]).reduce<Record<string, string>>((acc, role) => {
-          acc[String(role.id)] = role.name?.trim() || "Không rõ vai trò";
-          return acc;
-        }, {});
-        const memberRolesById = ((memberRoleRows ?? []) as UserRoleRow[]).reduce<Record<string, string>>((acc, row) => {
-          const profileId = row.profile_id ? String(row.profile_id) : null;
-          const roleId = row.role_id ? String(row.role_id) : null;
-          if (profileId && roleId && !acc[profileId]) {
-            acc[profileId] = roleNamesById[roleId] ?? "Không rõ vai trò";
-          }
-          return acc;
-        }, {});
-
-        const todayIso = today.toISOString().slice(0, 10);
-        const typedTimes = (timesRows ?? []) as TimeRow[];
-        const weekWorkedMinutesByProfileId = typedTimes.reduce<Record<string, number>>((acc, row) => {
-          const profileId = row.profile_id ? String(row.profile_id) : null;
-          if (!profileId) {
-            return acc;
-          }
-          acc[profileId] = (acc[profileId] ?? 0) + getWorkedMinutes(row.check_in, row.check_out, today);
-          return acc;
-        }, {});
-        const todayWorkedMinutesByProfileId = typedTimes.reduce<Record<string, number>>((acc, row) => {
-          const profileId = row.profile_id ? String(row.profile_id) : null;
-          if (!profileId || row.date !== todayIso) {
-            return acc;
-          }
-          acc[profileId] = getWorkedMinutes(row.check_in, row.check_out, today);
-          return acc;
-        }, {});
-
-        const recentActivities = [
-          ...((goalActivities.data ?? []) as ActivityLogRow[]),
-          ...((keyResultActivities.data ?? []) as ActivityLogRow[]),
-          ...((taskActivities.data ?? []) as ActivityLogRow[]),
-        ]
-          .sort((a, b) => new Date(b.created_at ?? "").getTime() - new Date(a.created_at ?? "").getTime())
-          .slice(0, 12);
 
         setRawData({
-          departmentName:
-            ((departmentRows ?? []) as Array<{ id: string; name: string }>)[0]?.name ?? "Phòng ban",
-          goals: Object.values(allGoals),
-          goalDepartments: ((linkedGoalRows ?? []) as GoalDepartmentRow[]).map((item) => ({
-            goal_id: item.goal_id ? String(item.goal_id) : null,
-            department_id: item.department_id ? String(item.department_id) : null,
-            role: item.role ? String(item.role) : null,
-            goal_weight:
-              typeof item.goal_weight === "number" ? item.goal_weight : Number(item.goal_weight ?? 0.5),
-            kr_weight: typeof item.kr_weight === "number" ? item.kr_weight : Number(item.kr_weight ?? 0.5),
-          })),
-          keyResults,
-          tasks: typedTasks,
-          departmentNamesById: ((relatedDepartmentRows ?? []) as Array<{ id: string; name: string }>).reduce<
-            Record<string, string>
-          >((acc, item) => {
-            acc[String(item.id)] = String(item.name);
-            return acc;
-          }, {}),
+          departmentName: departmentRow?.name ?? "Phòng ban",
+          primaryGoalIds: normalizedGoalIds,
+          primaryKeyResultIds,
+          goals: dedupeById([
+            ...normalizedGoals,
+            ...((extraGoalResult.data ?? []) as GoalRow[]).map(normalizeGoalRow),
+          ]),
+          goalOwnersByGoalId,
+          goalLogsByGoalId,
+          keyResults: dedupeById([...normalizedPrimaryKeyResults, ...normalizedExternalSupportKeyResults]),
+          supportLinks: primarySupportLinks,
+          tasks: ((taskResult.data ?? []) as TaskRow[]).map(normalizeTaskRow),
+          departmentNamesById,
           profilesById,
           memberRolesById,
-          weekWorkedMinutesByProfileId,
-          todayWorkedMinutesByProfileId,
-          recentActivities,
+          memberIds,
         });
       } catch (loadError) {
         if (!isActive) {
           return;
         }
-        setError(loadError instanceof Error ? loadError.message : "Không tải được dữ liệu phòng ban.");
         setRawData(defaultRawData);
+        setError(loadError instanceof Error ? loadError.message : "Không tải được dữ liệu hiệu suất phòng ban.");
       } finally {
         if (isActive) {
           setIsLoading(false);
@@ -578,36 +1484,120 @@ export function useDepartmentPerformance(filters: FilterParams) {
   }, [filters.departmentId]);
 
   const filtered = useMemo(() => {
-    const today = new Date();
     const keyword = filters.search.trim().toLowerCase();
-    const goalsById = rawData.goals.reduce<Record<string, GoalRow>>((acc, goal) => {
-      acc[String(goal.id)] = goal;
+    const primaryGoalIdSet = new Set(rawData.primaryGoalIds);
+    const primaryKeyResultIdSet = new Set(rawData.primaryKeyResultIds);
+    const allGoalsById = rawData.goals.reduce<Record<string, GoalRow>>((acc, goal) => {
+      acc[goal.id] = goal;
       return acc;
     }, {});
-    const keyResultsByGoalId = rawData.keyResults.reduce<Record<string, KeyResultRow[]>>((acc, keyResult) => {
-      const goalId = keyResult.goal_id ? String(keyResult.goal_id) : null;
-      if (!goalId) {
-        return acc;
-      }
-      if (!acc[goalId]) {
-        acc[goalId] = [];
-      }
-      acc[goalId].push(keyResult);
-      return acc;
-    }, {});
-    const tasksByKeyResultId = rawData.tasks.reduce<Record<string, TaskRow[]>>((acc, task) => {
-      const keyResultId = task.key_result_id ? String(task.key_result_id) : null;
-      if (!keyResultId) {
-        return acc;
-      }
-      if (!acc[keyResultId]) {
-        acc[keyResultId] = [];
-      }
-      acc[keyResultId].push(task);
+    const allKeyResultsById = rawData.keyResults.reduce<Record<string, KeyResultRow>>((acc, keyResult) => {
+      acc[keyResult.id] = keyResult;
       return acc;
     }, {});
 
-    const visibleGoals = rawData.goals.filter((goal) => {
+    const primaryGoals = rawData.goals.filter((goal) => primaryGoalIdSet.has(goal.id));
+    const primaryKeyResults = rawData.keyResults.filter((keyResult) => primaryKeyResultIdSet.has(keyResult.id));
+
+    const primaryKeyResultsByGoalId = primaryKeyResults.reduce<Record<string, KeyResultRow[]>>((acc, keyResult) => {
+      if (!keyResult.goal_id) {
+        return acc;
+      }
+      if (!acc[keyResult.goal_id]) {
+        acc[keyResult.goal_id] = [];
+      }
+      acc[keyResult.goal_id].push(keyResult);
+      return acc;
+    }, {});
+
+    const tasksByKeyResultId = rawData.tasks.reduce<Record<string, TaskRow[]>>((acc, task) => {
+      if (!task.key_result_id) {
+        return acc;
+      }
+      if (!acc[task.key_result_id]) {
+        acc[task.key_result_id] = [];
+      }
+      acc[task.key_result_id].push(task);
+      return acc;
+    }, {});
+
+    const supportLinksByTargetKeyResultId = rawData.supportLinks.reduce<Record<string, SupportLinkRow[]>>((acc, link) => {
+      if (!link.target_key_result_id) {
+        return acc;
+      }
+      if (!acc[link.target_key_result_id]) {
+        acc[link.target_key_result_id] = [];
+      }
+      acc[link.target_key_result_id].push(link);
+      return acc;
+    }, {});
+
+    const supportLinksBySupportKeyResultId = rawData.supportLinks.reduce<Record<string, SupportLinkRow[]>>((acc, link) => {
+      if (!link.support_key_result_id) {
+        return acc;
+      }
+      if (!acc[link.support_key_result_id]) {
+        acc[link.support_key_result_id] = [];
+      }
+      acc[link.support_key_result_id].push(link);
+      return acc;
+    }, {});
+
+    const goalSearchMatchById = primaryGoals.reduce<Record<string, boolean>>((acc, goal) => {
+      const searchText = `${goal.name} ${formatGoalTypeLabel(goal.type)} ${
+        goalStatusLabelMap[goal.status ?? ""] ?? goal.status ?? ""
+      } ${getGoalOwnerSearchText(rawData.goalOwnersByGoalId[goal.id] ?? [])}`.toLowerCase();
+      acc[goal.id] = keyword ? searchText.includes(keyword) : true;
+      return acc;
+    }, {});
+
+    const keyResultSearchMatchById = primaryKeyResults.reduce<Record<string, boolean>>((acc, keyResult) => {
+      const taskAssigneeNames = (tasksByKeyResultId[keyResult.id] ?? [])
+        .map((task) => {
+          const assigneeId = getTaskAssigneeId(task);
+          return assigneeId ? rawData.profilesById[assigneeId] ?? "Không rõ" : "Chưa gán";
+        })
+        .join(" ");
+      const relatedSupportNames = [
+        ...(supportLinksByTargetKeyResultId[keyResult.id] ?? [])
+          .map((link) => link.support_key_result_id)
+          .filter((value): value is string => Boolean(value))
+          .map((id) => allKeyResultsById[id]?.name ?? ""),
+        ...(supportLinksBySupportKeyResultId[keyResult.id] ?? [])
+          .map((link) => link.target_key_result_id)
+          .filter((value): value is string => Boolean(value))
+          .map((id) => allKeyResultsById[id]?.name ?? ""),
+      ].join(" ");
+      const searchText = `${keyResult.name} ${allGoalsById[keyResult.goal_id ?? ""]?.name ?? ""} ${
+        rawData.departmentNamesById[keyResult.responsible_department_id ?? ""] ?? ""
+      } ${formatKeyResultTypeLabel(keyResult.type)} ${formatKeyResultContributionTypeLabel(
+        keyResult.contribution_type,
+      )} ${taskAssigneeNames} ${relatedSupportNames}`.toLowerCase();
+      acc[keyResult.id] = keyword ? searchText.includes(keyword) : true;
+      return acc;
+    }, {});
+
+    const memberOwnedGoalIds =
+      filters.memberId === "all"
+        ? new Set<string>()
+        : new Set(
+            primaryGoals
+              .filter((goal) =>
+                (rawData.goalOwnersByGoalId[goal.id] ?? []).some((owner) => owner.id === filters.memberId),
+              )
+              .map((goal) => goal.id),
+          );
+
+    const memberAssignedKeyResultIds =
+      filters.memberId === "all"
+        ? new Set<string>()
+        : new Set(
+            rawData.tasks
+              .filter((task) => getTaskAssigneeId(task) === filters.memberId && task.key_result_id)
+              .map((task) => String(task.key_result_id)),
+          );
+
+    const baseGoalCandidates = primaryGoals.filter((goal) => {
       if (filters.quarter !== "all" && String(goal.quarter ?? "") !== filters.quarter) {
         return false;
       }
@@ -617,339 +1607,675 @@ export function useDepartmentPerformance(filters: FilterParams) {
       if (filters.goalStatus !== "all" && String(goal.status ?? "") !== filters.goalStatus) {
         return false;
       }
-      const goalKeyword = `${goal.name} ${rawData.profilesById[goal.owner_id ?? ""] ?? ""}`.toLowerCase();
-      if (keyword && !goalKeyword.includes(keyword)) {
-        const hasMatchingKr = (keyResultsByGoalId[goal.id] ?? []).some((keyResult) => {
-          const krKeyword = `${keyResult.name} ${tasksByKeyResultId[keyResult.id]?.map((task) => task.name).join(" ") ?? ""}`.toLowerCase();
-          return krKeyword.includes(keyword);
-        });
-        if (!hasMatchingKr) {
+      if (filters.goalType !== "all" && normalizeGoalTypeValue(goal.type) !== filters.goalType) {
+        return false;
+      }
+      if (
+        filters.ownerId !== "all" &&
+        !(rawData.goalOwnersByGoalId[goal.id] ?? []).some((owner) => owner.id === filters.ownerId)
+      ) {
+        return false;
+      }
+      if (filters.memberId !== "all") {
+        const hasTaskInvolvement = (primaryKeyResultsByGoalId[goal.id] ?? []).some((keyResult) =>
+          memberAssignedKeyResultIds.has(keyResult.id),
+        );
+        if (!memberOwnedGoalIds.has(goal.id) && !hasTaskInvolvement) {
           return false;
         }
       }
       return true;
     });
 
-    const visibleGoalIds = new Set(visibleGoals.map((goal) => goal.id));
-    const visibleGoalDepartments = rawData.goalDepartments.filter((item) => {
-      const goalId = item.goal_id ? String(item.goal_id) : null;
-      const departmentId = item.department_id ? String(item.department_id) : null;
-      return Boolean(goalId && departmentId && visibleGoalIds.has(goalId) && departmentId === filters.departmentId);
-    });
-    const visibleKeyResults = rawData.keyResults.filter((keyResult) => {
-      const goalId = keyResult.goal_id ? String(keyResult.goal_id) : null;
-      return goalId ? visibleGoalIds.has(goalId) : false;
-    });
-    const visibleKeyResultIds = new Set(visibleKeyResults.map((keyResult) => keyResult.id));
+    const baseGoalCandidateIds = new Set(baseGoalCandidates.map((goal) => goal.id));
 
-    const visibleTasks = rawData.tasks.filter((task) => {
-      if (!task.key_result_id || !visibleKeyResultIds.has(String(task.key_result_id))) {
+    const baseKeyResultCandidates = primaryKeyResults.filter((keyResult) => {
+      if (!keyResult.goal_id || !baseGoalCandidateIds.has(keyResult.goal_id)) {
         return false;
       }
-      if (filters.assigneeId !== "all" && String(task.assignee_id ?? "") !== filters.assigneeId) {
+      if (filters.keyResultType !== "all" && normalizeKeyResultTypeValue(keyResult.type) !== filters.keyResultType) {
         return false;
       }
-      if (filters.onlyOverdue && !isTaskOverdue(task)) {
+      if (
+        filters.keyResultContributionType !== "all" &&
+        normalizeKeyResultContributionTypeValue(keyResult.contribution_type) !== filters.keyResultContributionType
+      ) {
         return false;
       }
-      if (keyword) {
-        const relatedGoalId = visibleKeyResults.find((item) => item.id === task.key_result_id)?.goal_id ?? "";
-        const taskKeyword = `${task.name} ${rawData.profilesById[task.assignee_id ?? ""] ?? ""} ${
-          visibleKeyResults.find((item) => item.id === task.key_result_id)?.name ?? ""
-        } ${goalsById[String(relatedGoalId)]?.name ?? ""}`.toLowerCase();
-        return taskKeyword.includes(keyword);
+      if (filters.memberId !== "all" && !memberAssignedKeyResultIds.has(keyResult.id)) {
+        return false;
+      }
+      if (keyword && !(keyResultSearchMatchById[keyResult.id] || goalSearchMatchById[keyResult.goal_id])) {
+        return false;
       }
       return true;
     });
 
-    const keyResultProgressMap = buildKeyResultProgressMap(
-      visibleKeyResults.map((item) => ({
-        id: item.id,
-        goal_id: item.goal_id,
-        start_value: item.start_value,
-        current: item.current,
-        target: item.target,
-        weight: item.weight,
-        responsible_department_id: item.responsible_department_id,
-      })),
-      visibleTasks.map((task) => ({
-        key_result_id: task.key_result_id,
-        type: task.type,
-        status: task.status,
-        progress: task.progress,
-        weight: task.weight,
-      })),
-    );
-    const goalProgressMap = buildGoalProgressMap(
-      visibleGoals.map((goal) => goal.id),
-      visibleKeyResults.map((item) => ({ id: item.id, goal_id: item.goal_id })),
-      keyResultProgressMap,
-    );
-    const departmentPerformanceMap = buildGoalDepartmentPerformanceMap(
-      visibleGoalDepartments.map((item) => ({
-        goal_id: item.goal_id,
-        department_id: item.department_id,
-        role: item.role,
-        goal_weight: item.goal_weight,
-        kr_weight: item.kr_weight,
-      })),
-      visibleKeyResults.map((item) => ({
-        id: item.id,
-        goal_id: item.goal_id,
-        weight: item.weight,
-        responsible_department_id: item.responsible_department_id,
-        start_value: item.start_value,
-        current: item.current,
-        target: item.target,
-      })),
-      keyResultProgressMap,
-      goalProgressMap,
-    );
+    const visibleKeyResultsByGoalId = baseKeyResultCandidates.reduce<Record<string, KeyResultRow[]>>((acc, keyResult) => {
+      if (!keyResult.goal_id) {
+        return acc;
+      }
+      if (!acc[keyResult.goal_id]) {
+        acc[keyResult.goal_id] = [];
+      }
+      acc[keyResult.goal_id].push(keyResult);
+      return acc;
+    }, {});
 
-    const departmentOwnedKeyResultIds = new Set(
-      visibleKeyResults
-        .filter((keyResult) => keyResult.responsible_department_id === filters.departmentId)
-        .map((keyResult) => keyResult.id),
-    );
-    const departmentVisibleTasks = visibleTasks.filter((task) =>
-      task.key_result_id ? departmentOwnedKeyResultIds.has(String(task.key_result_id)) : false,
-    );
+    const hasStrictKrFilters =
+      filters.keyResultType !== "all" ||
+      filters.keyResultContributionType !== "all" ||
+      filters.memberId !== "all";
 
-    const visibleTaskIds = new Set(departmentVisibleTasks.map((task) => task.id));
-    const visibleActivities = rawData.recentActivities.filter((item) => {
-      if (item.entity_type === "goal") {
-        return item.entity_id ? visibleGoalIds.has(String(item.entity_id)) : false;
+    const visibleGoals = baseGoalCandidates.filter((goal) => {
+      const hasVisibleKeyResults = (visibleKeyResultsByGoalId[goal.id] ?? []).length > 0;
+      if (hasStrictKrFilters) {
+        return hasVisibleKeyResults;
       }
-      if (item.entity_type === "key_result") {
-        return item.entity_id ? departmentOwnedKeyResultIds.has(String(item.entity_id)) : false;
+      if (keyword) {
+        return goalSearchMatchById[goal.id] || hasVisibleKeyResults;
       }
-      if (item.entity_type === "task") {
-        return item.entity_id ? visibleTaskIds.has(String(item.entity_id)) : false;
-      }
-      return false;
+      return true;
     });
 
-    const goalExecution = visibleGoals.map((goal) => {
-      const goalKeyResults = visibleKeyResults.filter((keyResult) => keyResult.goal_id === goal.id);
-      const goalTasks = visibleTasks.filter((task) => goalKeyResults.some((keyResult) => keyResult.id === task.key_result_id));
-      const participation = visibleGoalDepartments.find((item) => item.goal_id === goal.id);
-      const departmentPerformanceMeta = departmentPerformanceMap[`${goal.id}:${filters.departmentId}`];
-      const keyResultItems = goalKeyResults.map((keyResult) => {
-        const krTasks = visibleTasks.filter((task) => task.key_result_id === keyResult.id);
+    const visibleGoalIds = new Set(visibleGoals.map((goal) => goal.id));
+    const visibleKeyResults = baseKeyResultCandidates.filter(
+      (keyResult) => keyResult.goal_id && visibleGoalIds.has(keyResult.goal_id),
+    );
+
+    const goalContextKeyResults = primaryKeyResults.filter(
+      (keyResult) => keyResult.goal_id && visibleGoalIds.has(keyResult.goal_id),
+    );
+    const goalContextKeyResultProgressMap = buildKeyResultProgressMap(goalContextKeyResults);
+    const goalProgressMap = buildGoalProgressMap(
+      visibleGoals.map((goal) => ({
+        id: goal.id,
+        type: goal.type,
+        target: goal.target,
+      })),
+      goalContextKeyResults.map((keyResult) => ({
+        id: keyResult.id,
+        goal_id: keyResult.goal_id,
+        type: keyResult.type,
+        contribution_type: keyResult.contribution_type,
+        start_value: keyResult.start_value,
+        current: keyResult.current,
+        target: keyResult.target,
+        weight: keyResult.weight,
+      })),
+      goalContextKeyResultProgressMap,
+    );
+
+    const departmentScopeKeyResults = goalContextKeyResults.filter(
+      (keyResult) => keyResult.responsible_department_id === filters.departmentId,
+    );
+    const departmentVisibleKeyResults = visibleKeyResults.filter(
+      (keyResult) => keyResult.responsible_department_id === filters.departmentId,
+    );
+    const directKeyResults = departmentVisibleKeyResults.filter(
+      (keyResult) => normalizeKeyResultContributionTypeValue(keyResult.contribution_type) === "direct",
+    );
+    const supportKeyResults = departmentVisibleKeyResults.filter(
+      (keyResult) => normalizeKeyResultContributionTypeValue(keyResult.contribution_type) === "support",
+    );
+
+    const goalItems = sortByHealthAndProgress(
+      visibleGoals.map((goal) => {
+        const allGoalKeyResults = goalContextKeyResults.filter((keyResult) => keyResult.goal_id === goal.id);
+        const allDirectGoalKeyResults = allGoalKeyResults.filter(
+          (keyResult) => normalizeKeyResultContributionTypeValue(keyResult.contribution_type) === "direct",
+        );
+        const departmentGoalKeyResults = departmentScopeKeyResults.filter((keyResult) => keyResult.goal_id === goal.id);
+        const departmentDirectKeyResults = departmentGoalKeyResults.filter(
+          (keyResult) => normalizeKeyResultContributionTypeValue(keyResult.contribution_type) === "direct",
+        );
+        const departmentSupportKeyResults = departmentGoalKeyResults.filter(
+          (keyResult) => normalizeKeyResultContributionTypeValue(keyResult.contribution_type) === "support",
+        );
+        const progress = goalProgressMap[goal.id] ?? 0;
+        const health = computeHealth({ progress, endDate: goal.end_date, status: goal.status });
+        const directKrRiskCount = departmentDirectKeyResults.filter((keyResult) =>
+          isNeedsAttention(
+            computeHealth({
+              progress: goalContextKeyResultProgressMap[keyResult.id] ?? 0,
+              endDate: keyResult.end_date,
+            }),
+          ),
+        ).length;
+        const supportKrRiskCount = departmentSupportKeyResults.filter((keyResult) =>
+          isNeedsAttention(
+            computeHealth({
+              progress: goalContextKeyResultProgressMap[keyResult.id] ?? 0,
+              endDate: keyResult.end_date,
+            }),
+          ),
+        ).length;
+        const metricSummary = getGoalMetricSummary({
+          goal,
+          directKeyResults: allDirectGoalKeyResults,
+        });
+        const trendInsights = buildGoalTrendInsights({
+          logs: rawData.goalLogsByGoalId[goal.id] ?? [],
+          currentProgress: progress,
+        });
+        const expectedProgress = getExpectedProgress({
+          startDate: goal.start_date,
+          endDate: goal.end_date,
+        });
+        const scheduleGap =
+          expectedProgress === null ? null : Math.round(progress - expectedProgress);
+        const requiredPerWeek =
+          progress >= 100 || (getDateDiffInDays(goal.end_date) ?? 0) <= 0
+            ? null
+            : roundToOne((100 - progress) / Math.max(1, (getDateDiffInDays(goal.end_date) as number) / 7));
+        const inactivityDays = getDaysSince(trendInsights.lastActivityAt);
+
+        return {
+          id: goal.id,
+          name: goal.name,
+          type: goal.type,
+          typeLabel: formatGoalTypeLabel(goal.type),
+          owners: rawData.goalOwnersByGoalId[goal.id] ?? [],
+          ownersSummary: formatGoalOwnersSummary(rawData.goalOwnersByGoalId[goal.id] ?? [], {
+            limit: 3,
+          }),
+          status: goal.status ? String(goal.status) : "Chưa đặt",
+          progress,
+          health,
+          target: goal.target,
+          unit: goal.unit,
+          currentValue: metricSummary.currentValue,
+          currentUnit: metricSummary.currentUnit,
+          metricSummary: metricSummary.metricSummary,
+          startDate: goal.start_date,
+          endDate: goal.end_date,
+          daysRemaining: getDateDiffInDays(goal.end_date),
+          expectedProgress,
+          scheduleGap,
+          recentProgressChange: trendInsights.recentProgressChange,
+          velocityPerWeek: trendInsights.velocityPerWeek,
+          requiredPerWeek,
+          lastActivityAt: trendInsights.lastActivityAt,
+          inactivityDays,
+          trendPoints: trendInsights.trendPoints,
+          actionText: getGoalActionText({
+            progress,
+            scheduleGap,
+            velocityPerWeek: trendInsights.velocityPerWeek,
+            requiredPerWeek,
+            directKrRiskCount,
+            supportKrRiskCount,
+            inactivityDays,
+          }),
+          directKrCount: departmentDirectKeyResults.length,
+          supportKrCount: departmentSupportKeyResults.length,
+          directKrRiskCount,
+          supportKrRiskCount,
+          riskNote: getGoalRiskNote({
+            progress,
+            endDate: goal.end_date,
+            directKrRiskCount,
+            supportKrRiskCount,
+          }),
+        } satisfies DepartmentGoalPerformanceItem;
+      }),
+    );
+
+    const directKeyResultItems = sortByHealthAndProgress(
+      directKeyResults.map((keyResult) => {
+        const progress = goalContextKeyResultProgressMap[keyResult.id] ?? 0;
+        const inboundSupportLinks = supportLinksByTargetKeyResultId[keyResult.id] ?? [];
+        const health = computeHealth({ progress, endDate: keyResult.end_date });
+        const daysRemaining = getDateDiffInDays(keyResult.end_date);
+        const expectedProgress = getExpectedProgress({
+          startDate: keyResult.start_date,
+          endDate: keyResult.end_date,
+        });
+        const scheduleGap = expectedProgress === null ? null : Math.round(progress - expectedProgress);
+        const requiredPerWeek =
+          progress >= 100 || daysRemaining === null || daysRemaining <= 0
+            ? null
+            : roundToOne((100 - progress) / Math.max(1, daysRemaining / 7));
+        const paceAssessment = getPaceAssessment({
+          progress,
+          expectedProgress,
+          requiredPerWeek,
+          daysRemaining,
+        });
+
         return {
           id: keyResult.id,
+          goalId: keyResult.goal_id,
+          goalName: allGoalsById[keyResult.goal_id ?? ""]?.name ?? "Chưa có mục tiêu",
           name: keyResult.name,
+          type: keyResult.type,
+          typeLabel: formatKeyResultTypeLabel(keyResult.type),
+          contributionTypeLabel: formatKeyResultContributionTypeLabel(keyResult.contribution_type),
+          target: keyResult.target,
+          current: keyResult.current,
+          unit: keyResult.unit,
+          progress,
+          expectedProgress,
+          scheduleGap,
+          requiredPerWeek,
+          paceLabel: paceAssessment.paceLabel,
+          paceNote: paceAssessment.paceNote,
+          health,
           responsibleDepartmentName:
             rawData.departmentNamesById[keyResult.responsible_department_id ?? ""] ?? "Chưa gán phòng ban",
-          startValue: Number(keyResult.start_value ?? 0),
-          current: Number(keyResult.current ?? 0),
-          target: Number(keyResult.target ?? 0),
-          progress: keyResultProgressMap[keyResult.id] ?? 0,
-          weight: Number(keyResult.weight ?? 1),
-          taskCount: krTasks.length,
-          assigneeDistribution: toAssigneeDistribution(krTasks, rawData.profilesById),
-          ownedBySelectedDepartment: keyResult.responsible_department_id === filters.departmentId,
-          startDate: keyResult.start_date ?? null,
-          endDate: keyResult.end_date ?? null,
-        };
+          startDate: keyResult.start_date,
+          endDate: keyResult.end_date,
+          daysRemaining,
+          supportPreview: inboundSupportLinks
+            .map((link) => {
+              const supportKeyResult = link.support_key_result_id
+                ? allKeyResultsById[link.support_key_result_id] ?? null
+                : null;
+              const supportGoalName =
+                supportKeyResult?.goal_id ? allGoalsById[supportKeyResult.goal_id]?.name ?? "Chưa có mục tiêu" : "Chưa có mục tiêu";
+              if (!supportKeyResult) {
+                return null;
+              }
+              return {
+                id: supportKeyResult.id,
+                name: supportKeyResult.name,
+                goalName: supportGoalName,
+              };
+            })
+            .filter((value): value is { id: string; name: string; goalName: string } => Boolean(value)),
+          supportCount: inboundSupportLinks.length,
+          riskNote: getKeyResultRiskNote({
+            progress,
+            endDate: keyResult.end_date,
+            supportCount: inboundSupportLinks.length,
+          }),
+        } satisfies DepartmentDirectKeyResultItem;
+      }),
+    );
+
+    const supportKeyResultItems = sortByHealthAndProgress(
+      supportKeyResults.map((keyResult) => {
+        const progress = goalContextKeyResultProgressMap[keyResult.id] ?? 0;
+        const outboundSupportLinks = supportLinksBySupportKeyResultId[keyResult.id] ?? [];
+        const health = computeHealth({ progress, endDate: keyResult.end_date });
+        const daysRemaining = getDateDiffInDays(keyResult.end_date);
+        const expectedProgress = getExpectedProgress({
+          startDate: keyResult.start_date,
+          endDate: keyResult.end_date,
+        });
+        const scheduleGap = expectedProgress === null ? null : Math.round(progress - expectedProgress);
+        const requiredPerWeek =
+          progress >= 100 || daysRemaining === null || daysRemaining <= 0
+            ? null
+            : roundToOne((100 - progress) / Math.max(1, daysRemaining / 7));
+        const paceAssessment = getPaceAssessment({
+          progress,
+          expectedProgress,
+          requiredPerWeek,
+          daysRemaining,
+        });
+
+        return {
+          id: keyResult.id,
+          goalId: keyResult.goal_id,
+          goalName: allGoalsById[keyResult.goal_id ?? ""]?.name ?? "Chưa có mục tiêu",
+          name: keyResult.name,
+          type: keyResult.type,
+          typeLabel: formatKeyResultTypeLabel(keyResult.type),
+          contributionTypeLabel: formatKeyResultContributionTypeLabel(keyResult.contribution_type),
+          target: keyResult.target,
+          current: keyResult.current,
+          unit: keyResult.unit,
+          progress,
+          expectedProgress,
+          scheduleGap,
+          requiredPerWeek,
+          paceLabel: paceAssessment.paceLabel,
+          paceNote: paceAssessment.paceNote,
+          health,
+          responsibleDepartmentName:
+            rawData.departmentNamesById[keyResult.responsible_department_id ?? ""] ?? "Chưa gán phòng ban",
+          startDate: keyResult.start_date,
+          endDate: keyResult.end_date,
+          daysRemaining,
+          allocationModeLabel: getSupportAllocationModeLabel(keyResult.type),
+          supportedDirectKeyResults: outboundSupportLinks
+            .map((link) => {
+              const targetKeyResult = link.target_key_result_id ? allKeyResultsById[link.target_key_result_id] ?? null : null;
+              if (!targetKeyResult) {
+                return null;
+              }
+              return {
+                id: targetKeyResult.id,
+                name: targetKeyResult.name,
+                goalName: targetKeyResult.goal_id
+                  ? allGoalsById[targetKeyResult.goal_id]?.name ?? "Chưa có mục tiêu"
+                  : "Chưa có mục tiêu",
+                allocationLabel: getSupportAllocationLabel({
+                  type: keyResult.type,
+                  allocatedValue: link.allocated_value,
+                  allocatedPercent: link.allocated_percent,
+                  unit: targetKeyResult.unit,
+                }),
+              };
+            })
+            .filter(
+              (
+                value,
+              ): value is {
+                id: string;
+                name: string;
+                goalName: string;
+                allocationLabel: string;
+              } => Boolean(value),
+            ),
+          riskNote: getKeyResultRiskNote({
+            progress,
+            endDate: keyResult.end_date,
+            supportedDirectCount: outboundSupportLinks.length,
+          }),
+        } satisfies DepartmentSupportKeyResultItem;
+      }),
+    );
+
+    const trackedGoalItems = goalItems.filter((goal) => !["completed", "cancelled"].includes(goal.status));
+    const goalPerformance = averageRounded(trackedGoalItems.map((goal) => goal.progress));
+    const keyResultPerformance = averageRounded(
+      [...directKeyResults, ...supportKeyResults].map((keyResult) => goalContextKeyResultProgressMap[keyResult.id] ?? 0),
+    );
+    const businessPerformance = computePortfolioPerformance(directKeyResults, goalContextKeyResultProgressMap);
+    const supportPerformance = averageRounded(
+      supportKeyResults.map((keyResult) => goalContextKeyResultProgressMap[keyResult.id] ?? 0),
+    );
+    const overallPerformance = averageRounded([goalPerformance, businessPerformance, supportPerformance]);
+
+    const visibleDepartmentTasks = rawData.tasks.filter((task) =>
+      task.key_result_id ? departmentVisibleKeyResults.some((keyResult) => keyResult.id === task.key_result_id) : false,
+    );
+
+    const memberContribution = rawData.memberIds
+      .map((memberId) => {
+        const ownedGoals = goalItems.filter((goal) => goal.owners.some((owner) => owner.id === memberId));
+        const assignedTasks = visibleDepartmentTasks.filter((task) => getTaskAssigneeId(task) === memberId);
+        const assignedKeyResultIds = [
+          ...new Set(
+            assignedTasks
+              .map((task) => task.key_result_id)
+              .filter((value): value is string => Boolean(value)),
+          ),
+        ];
+        const assignedKeyResults = departmentVisibleKeyResults.filter((keyResult) => assignedKeyResultIds.includes(keyResult.id));
+        const goalIdsFromAssignedKeyResults = [
+          ...new Set(
+            assignedKeyResults
+              .map((keyResult) => keyResult.goal_id)
+              .filter((value): value is string => Boolean(value)),
+          ),
+        ];
+        const performanceInputs = [
+          ...ownedGoals.map((goal) => goal.progress),
+          ...assignedKeyResults.map((keyResult) => goalContextKeyResultProgressMap[keyResult.id] ?? 0),
+        ];
+        const performanceScore = averageRounded(performanceInputs);
+        const overdueTasks = assignedTasks.filter((task) => isTaskOverdue(task)).length;
+        const blockedTasks = assignedTasks.filter((task) => normalizeDashboardStatus(task.status) === "blocked").length;
+
+        return {
+          id: memberId,
+          name: rawData.profilesById[memberId] ?? "Không rõ",
+          roleName: rawData.memberRolesById[memberId] ?? "Không rõ vai trò",
+          goalsInvolved: new Set([...ownedGoals.map((goal) => goal.id), ...goalIdsFromAssignedKeyResults]).size,
+          keyResultsInvolved: assignedKeyResultIds.length,
+          performanceScore,
+          overdueTasks,
+          blockedTasks,
+          status: getMemberContributionStatus({ performanceScore, overdueTasks, blockedTasks }),
+          signalText: getMemberSignalText({ performanceScore, overdueTasks, blockedTasks }),
+        } satisfies DepartmentMemberContributionItem;
+      })
+      .filter((member) => {
+        if (filters.memberId !== "all") {
+          return member.id === filters.memberId;
+        }
+        return member.goalsInvolved > 0 || member.keyResultsInvolved > 0;
+      })
+      .sort((a, b) => {
+        const statusRank = { bottleneck: 0, watching: 1, strong: 2 };
+        const statusDiff = statusRank[a.status] - statusRank[b.status];
+        if (statusDiff !== 0) {
+          return statusDiff;
+        }
+        return (b.performanceScore ?? 0) - (a.performanceScore ?? 0);
       });
-      const departmentPerformance = departmentPerformanceMeta?.performance ?? 0;
-      return {
-        id: goal.id,
-        name: goal.name,
-        ownerName: goal.owner_id ? rawData.profilesById[goal.owner_id] ?? "Chưa gán" : "Chưa gán",
-        status: goal.status ? String(goal.status) : "Chưa đặt",
-        progress: departmentPerformance,
-        health: computeGoalHealth({ progress: departmentPerformance, endDate: goal.end_date }),
-        krCount: keyResultItems.length,
-        taskCount: goalTasks.length,
-        overdueTaskCount: goalTasks.filter((task) => isTaskOverdue(task)).length,
-        endDate: goal.end_date ?? null,
-        participationRole: participation?.role ? String(participation.role) : "participant",
-        goalWeight: departmentPerformanceMeta?.goalWeight ?? 0.5,
-        krWeight: departmentPerformanceMeta?.krWeight ?? 0.5,
-        goalInfluence: Math.round(
-          (departmentPerformanceMeta?.goalProgress ?? goalProgressMap[goal.id] ?? 0) *
-            (departmentPerformanceMeta?.goalWeight ?? 0.5),
-        ),
-        krInfluence: Math.round(
-          (departmentPerformanceMeta?.departmentKrProgress ?? 0) * (departmentPerformanceMeta?.krWeight ?? 0.5),
-        ),
-        departmentPerformance,
-        keyResults: keyResultItems,
-      } satisfies DepartmentGoalExecutionItem;
-    });
 
-    const activeGoalExecution = goalExecution.filter((goal) => goal.status !== "draft");
-    const departmentProgress = activeGoalExecution.length
-      ? Math.round(activeGoalExecution.reduce((sum, goal) => sum + goal.progress, 0) / activeGoalExecution.length)
-      : 0;
-    const ownedKeyResults = goalExecution.flatMap((goal) => goal.keyResults).filter((item) => item.ownedBySelectedDepartment);
-    const krAverageProgress = ownedKeyResults.length
-      ? Math.round(ownedKeyResults.reduce((sum, keyResult) => sum + keyResult.progress, 0) / ownedKeyResults.length)
-      : 0;
-    const completedTasks = departmentVisibleTasks.filter((task) => normalizeDashboardStatus(task.status) === "done").length;
-    const overdueTasks = departmentVisibleTasks.filter((task) => isTaskOverdue(task));
-    const taskCompletionRate = departmentVisibleTasks.length
-      ? Math.round((completedTasks / departmentVisibleTasks.length) * 100)
-      : 0;
-
-    const memberPerformance: DepartmentMemberPerformanceItem[] = Object.keys(rawData.profilesById)
-      .filter((profileId) => rawData.memberRolesById[profileId])
-      .map((profileId) => {
-        const memberTasks = departmentVisibleTasks.filter((task) => task.assignee_id === profileId);
-        const activeTasks = memberTasks.filter(
+    const executionContextItems = departmentVisibleKeyResults
+      .map((keyResult) => {
+        const tasks = tasksByKeyResultId[keyResult.id] ?? [];
+        const overdueTasks = tasks.filter((task) => isTaskOverdue(task)).length;
+        const blockedTasks = tasks.filter((task) => normalizeDashboardStatus(task.status) === "blocked").length;
+        const openTasks = tasks.filter(
           (task) => !["done", "cancelled"].includes(normalizeDashboardStatus(task.status)),
         ).length;
-        const overdueCount = memberTasks.filter((task) => isTaskOverdue(task)).length;
-        const blockedCount = memberTasks.filter((task) => normalizeDashboardStatus(task.status) === "blocked").length;
-        const doneCount = memberTasks.filter((task) => normalizeDashboardStatus(task.status) === "done").length;
-        const averageTaskProgress = memberTasks.length
+        const completionRate = tasks.length
           ? Math.round(
-              memberTasks.reduce(
-                (sum, task) =>
-                  sum +
-                  toDashboardTaskProgress({
-                    type: task.type,
-                    status: task.status,
-                    progress: task.progress,
-                  }),
-                0,
-              ) / memberTasks.length,
+              (tasks.filter((task) => normalizeDashboardStatus(task.status) === "done").length / tasks.length) * 100,
             )
           : 0;
-        const keyResultsInvolved = new Set(memberTasks.map((task) => task.key_result_id).filter(Boolean)).size;
-        const goalsInvolved = new Set(
-          memberTasks
-            .map((task) => visibleKeyResults.find((item) => item.id === task.key_result_id)?.goal_id)
-            .filter(Boolean),
-        ).size;
         return {
-          id: profileId,
-          name: rawData.profilesById[profileId] ?? "Không rõ",
-          roleName: rawData.memberRolesById[profileId] ?? "Không rõ vai trò",
-          assignedTasks: memberTasks.length,
-          completionRate: memberTasks.length ? Math.round((doneCount / memberTasks.length) * 100) : 0,
-          inProgressTasks: memberTasks.filter((task) => normalizeDashboardStatus(task.status) === "doing").length,
-          overdueTasks: overdueCount,
-          averageTaskProgress,
-          goalsInvolved,
-          keyResultsInvolved,
-          workedHoursToday: formatHoursShort(rawData.todayWorkedMinutesByProfileId[profileId] ?? 0),
-          workedHoursWeek: formatHoursShort(rawData.weekWorkedMinutesByProfileId[profileId] ?? 0),
-          blockedTasks: blockedCount,
-          activeTasks,
-        };
+          keyResultId: keyResult.id,
+          keyResultName: keyResult.name,
+          goalName: keyResult.goal_id ? allGoalsById[keyResult.goal_id]?.name ?? "Chưa có mục tiêu" : "Chưa có mục tiêu",
+          overdueTasks,
+          blockedTasks,
+          openTasks,
+          completionRate,
+        } satisfies DepartmentExecutionContextItem;
       })
-      .filter((member) => member.assignedTasks > 0 || filters.assigneeId === "all")
-      .sort((a, b) => b.averageTaskProgress - a.averageTaskProgress);
+      .filter((item) => item.overdueTasks > 0 || item.blockedTasks > 0 || item.openTasks > 0)
+      .sort((a, b) => {
+        if (a.overdueTasks !== b.overdueTasks) {
+          return b.overdueTasks - a.overdueTasks;
+        }
+        if (a.blockedTasks !== b.blockedTasks) {
+          return b.blockedTasks - a.blockedTasks;
+        }
+        return b.openTasks - a.openTasks;
+      })
+      .slice(0, 6);
 
-    const membersAtRisk = memberPerformance.filter((member) => member.overdueTasks > 0 || member.blockedTasks > 0).length;
-
-    const risks: DepartmentRiskItem[] = [
-      ...goalExecution
-        .filter((goal) => goal.health === "off_track" || goal.health === "at_risk")
-        .slice(0, 3)
+    const riskDeadlines = [
+      ...goalItems
+        .filter((goal) => goal.endDate)
         .map((goal) => ({
-          title: goal.name,
-          description: `Hiệu suất phòng ban ${goal.departmentPerformance}% · ảnh hưởng goal ${goal.goalInfluence}% · ảnh hưởng KR ${goal.krInfluence}%`,
+          id: goal.id,
+          entityType: "goal" as const,
+          name: goal.name,
+          parentName: "Mục tiêu",
+          endDate: goal.endDate as string,
+          progress: goal.progress,
+          health: goal.health,
+          daysRemaining: goal.daysRemaining,
+          reason: goal.riskNote,
         })),
-      ...goalExecution
-        .flatMap((goal) => goal.keyResults)
-        .filter((keyResult) => keyResult.ownedBySelectedDepartment && keyResult.progress < 40)
-        .slice(0, 3)
+      ...[...directKeyResultItems, ...supportKeyResultItems]
+        .filter((keyResult) => keyResult.endDate)
         .map((keyResult) => ({
-          title: keyResult.name,
-          description: `${keyResult.responsibleDepartmentName} mới đạt ${keyResult.progress}% · ${keyResult.taskCount} task liên kết`,
+          id: keyResult.id,
+          entityType: "key_result" as const,
+          name: keyResult.name,
+          parentName: keyResult.goalName,
+          endDate: keyResult.endDate as string,
+          progress: keyResult.progress,
+          health: keyResult.health,
+          daysRemaining: keyResult.daysRemaining,
+          reason: keyResult.riskNote,
         })),
-      ...memberPerformance
-        .filter((member) => member.overdueTasks >= 2 || member.activeTasks >= 5)
-        .slice(0, 3)
-        .map((member) => ({
-          title: member.name,
-          description: `${member.overdueTasks} quá hạn · ${member.activeTasks} việc đang mở`,
-        })),
-    ].slice(0, 8);
-
-    const upcomingDeadlines: DepartmentUpcomingTaskItem[] = departmentVisibleTasks
-      .filter((task) => task.end_date)
-      .map((task) => {
-        const urgencyMeta = getDateUrgencyMeta(task.end_date, today);
-        return {
-          id: task.id,
-          taskName: task.name,
-          assigneeName: task.assignee_id ? rawData.profilesById[task.assignee_id] ?? "Chưa gán" : "Chưa gán",
-          keyResultName: visibleKeyResults.find((item) => item.id === task.key_result_id)?.name ?? "Chưa có KR",
-          goalName:
-            goalsById[
-              String(visibleKeyResults.find((item) => item.id === task.key_result_id)?.goal_id ?? "")
-            ]?.name ?? "Chưa có goal",
-          endDateAt: task.end_date as string,
-          urgencyLabel: urgencyMeta.label,
-          urgencyClassName: urgencyMeta.className,
-        };
+    ]
+      .filter((item) => item.daysRemaining !== null && item.daysRemaining >= 0 && item.daysRemaining <= 7 && item.progress < 100)
+      .sort((a, b) => {
+        const aTime = new Date(a.endDate).getTime();
+        const bTime = new Date(b.endDate).getTime();
+        if (aTime !== bTime) {
+          return aTime - bTime;
+        }
+        return a.progress - b.progress;
       })
-      .filter((item) => {
-        const diff = getDateDiffFromToday(item.endDateAt, today);
-        return diff !== null && diff <= 7;
-      })
-      .sort((a, b) => new Date(a.endDateAt).getTime() - new Date(b.endDateAt).getTime())
-      .slice(0, 10);
+      .slice(0, 6);
 
-    const recentActivities = visibleActivities.map((activity) => {
-      const actorName = activity.profile_id ? rawData.profilesById[String(activity.profile_id)] ?? "Không rõ" : "Hệ thống";
-      return {
-        id: String(activity.id),
-        actorName,
-        actorInitial: getInitial(actorName),
-        message: formatActivityMessage({
-          actorName,
-          action: activity.action,
-          entityType: activity.entity_type,
-          oldValue: activity.old_value ?? null,
-          newValue: activity.new_value ?? null,
-        }),
-        when: formatRelativeTimeVi(activity.created_at),
-      } satisfies DepartmentActivityItem;
-    });
+    const sortedVisibleGoals = sortGoalsByPeriod(visibleGoals);
+    const trendBucketKeys = [...new Set(sortedVisibleGoals.map((goal) => getPeriodKey(goal)))];
+    const trendPoints =
+      trendBucketKeys.length >= 2
+        ? trendBucketKeys.map((bucketKey) => {
+            const goalsInBucket = visibleGoals.filter((goal) => getPeriodKey(goal) === bucketKey);
+            const goalIdsInBucket = new Set(goalsInBucket.map((goal) => goal.id));
+            const departmentKeyResultsInBucket = departmentScopeKeyResults.filter(
+              (keyResult) => keyResult.goal_id && goalIdsInBucket.has(keyResult.goal_id),
+            );
+            const directKeyResultsInBucket = departmentKeyResultsInBucket.filter(
+              (keyResult) => normalizeKeyResultContributionTypeValue(keyResult.contribution_type) === "direct",
+            );
+            const supportKeyResultsInBucket = departmentKeyResultsInBucket.filter(
+              (keyResult) => normalizeKeyResultContributionTypeValue(keyResult.contribution_type) === "support",
+            );
+            const trackedGoalsInBucket = goalsInBucket.filter(
+              (goal) => !["completed", "cancelled"].includes(goal.status ?? "Chưa đặt"),
+            );
+            const goalPerformanceInBucket = averageRounded(
+              trackedGoalsInBucket.map((goal) => goalProgressMap[goal.id] ?? 0),
+            );
+            const businessPerformanceInBucket = computePortfolioPerformance(
+              directKeyResultsInBucket,
+              goalContextKeyResultProgressMap,
+            );
+            const supportPerformanceInBucket = averageRounded(
+              supportKeyResultsInBucket.map((keyResult) => goalContextKeyResultProgressMap[keyResult.id] ?? 0),
+            );
 
-    const statusOptions = [
-      ...new Set(rawData.goals.map((goal) => (goal.status ? String(goal.status) : "Chưa đặt"))),
-    ];
-    const quarterOptions = [...new Set(rawData.goals.map((goal) => goal.quarter).filter((value): value is number => typeof value === "number"))];
-    const yearOptions = [...new Set(rawData.goals.map((goal) => goal.year).filter((value): value is number => typeof value === "number"))];
-    const memberOptions = memberPerformance.map((member) => ({ id: member.id, name: member.name }));
+            return {
+              key: bucketKey,
+              label: goalsInBucket[0] ? getPeriodLabel(goalsInBucket[0]) : "Không xác định kỳ",
+              overallPerformance: averageRounded([
+                goalPerformanceInBucket,
+                businessPerformanceInBucket,
+                supportPerformanceInBucket,
+              ]),
+              businessPerformance: businessPerformanceInBucket,
+              supportPerformance: supportPerformanceInBucket,
+              goalCount: goalsInBucket.length,
+              directKrCount: directKeyResultsInBucket.length,
+              supportKrCount: supportKeyResultsInBucket.length,
+            } satisfies DepartmentTrendPoint;
+          })
+        : [];
 
-    const executionHealth: "on_track" | "at_risk" | "off_track" =
-      departmentProgress >= 80
-        ? "on_track"
-        : departmentProgress >= 50
-          ? "at_risk"
-          : "off_track";
+    const goalProgressChartItems: DepartmentGoalChartItem[] = (trackedGoalItems.length > 0 ? trackedGoalItems : goalItems)
+      .slice(0, 6)
+      .map((goal) => ({
+        id: goal.id,
+        name: goal.name,
+        progress: goal.progress,
+        health: goal.health,
+        typeLabel: goal.typeLabel,
+        ownersSummary: goal.ownersSummary,
+      }));
+
+    const krStructureSegments = [
+      {
+        key: "direct_on_track",
+        label: "KR trực tiếp đạt tiến độ",
+        count: directKeyResultItems.filter((item) => !isNeedsAttention(item.health)).length,
+        note: `${directKeyResultItems.length} KR trực tiếp trong phạm vi`,
+      },
+      {
+        key: "support_on_track",
+        label: "KR hỗ trợ đạt tiến độ",
+        count: supportKeyResultItems.filter((item) => !isNeedsAttention(item.health)).length,
+        note: `${supportKeyResultItems.length} KR hỗ trợ trong phạm vi`,
+      },
+      {
+        key: "needs_attention",
+        label: "KR chậm hoặc rủi ro",
+        count:
+          directKeyResultItems.filter((item) => isNeedsAttention(item.health)).length +
+          supportKeyResultItems.filter((item) => isNeedsAttention(item.health)).length,
+        note: "Bao gồm KR trực tiếp và KR hỗ trợ đang dưới ngưỡng an toàn",
+      },
+    ] satisfies DepartmentKrStructureSegment[];
+
+    const ownerOptions = Object.values(
+      primaryGoals.reduce<Record<string, { id: string; name: string }>>((acc, goal) => {
+        (rawData.goalOwnersByGoalId[goal.id] ?? []).forEach((owner) => {
+          acc[owner.id] = {
+            id: owner.id,
+            name: owner.name,
+          };
+        });
+        return acc;
+      }, {}),
+    ).sort((a, b) => a.name.localeCompare(b.name, "vi"));
+
+    const memberOptions = rawData.memberIds
+      .map((memberId) => ({
+        id: memberId,
+        name: rawData.profilesById[memberId] ?? "Không rõ",
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, "vi"));
 
     return {
       summary: {
         departmentName: rawData.departmentName,
-        totalActiveGoals: activeGoalExecution.length,
-        totalActiveKeyResults: ownedKeyResults.length,
-        totalActiveTasks: departmentVisibleTasks.length,
-        departmentProgress,
-        executionHealth,
-        krAverageProgress,
-        taskCompletionRate,
-        overdueTasks: overdueTasks.length,
-        membersWithAssignedWork: memberPerformance.filter((member) => member.assignedTasks > 0).length,
-        membersAtRisk,
+        goalPerformance,
+        keyResultPerformance,
+        overallPerformance,
+        businessPerformance,
+        supportPerformance,
+        goalsAtRisk: trackedGoalItems.filter(
+          (goal) => isNeedsAttention(goal.health) || goal.directKrRiskCount > 0 || goal.supportKrRiskCount > 0,
+        ).length,
+        goalsOnTrack: trackedGoalItems.filter((goal) => ["on_track", "achieved"].includes(goal.health)).length,
+        totalGoals: goalItems.length,
+        trackedGoals: trackedGoalItems.length,
+        directKrCount: directKeyResultItems.length,
+        supportKrCount: supportKeyResultItems.length,
       },
-      goalExecution,
-      memberPerformance,
-      risks,
-      upcomingDeadlines,
-      recentActivities,
+      analytics: {
+        trend: trendPoints,
+        goalProgress: goalProgressChartItems,
+        krStructure: {
+          total: directKeyResultItems.length + supportKeyResultItems.length,
+          segments: krStructureSegments,
+        },
+      },
+      goals: goalItems,
+      directKeyResults: directKeyResultItems,
+      supportKeyResults: supportKeyResultItems,
+      risks: {
+        goals: goalItems
+          .filter((goal) => isNeedsAttention(goal.health) || goal.directKrRiskCount > 0 || goal.supportKrRiskCount > 0)
+          .slice(0, 4),
+        directKeyResults: directKeyResultItems.filter((keyResult) => isNeedsAttention(keyResult.health)).slice(0, 4),
+        supportKeyResults: supportKeyResultItems.filter((keyResult) => isNeedsAttention(keyResult.health)).slice(0, 4),
+        upcomingDeadlines: riskDeadlines,
+      },
+      memberContribution,
+      executionContext: {
+        overdueTasks: visibleDepartmentTasks.filter((task) => isTaskOverdue(task)).length,
+        blockedTasks: visibleDepartmentTasks.filter(
+          (task) => normalizeDashboardStatus(task.status) === "blocked",
+        ).length,
+        openTasks: visibleDepartmentTasks.filter(
+          (task) => !["done", "cancelled"].includes(normalizeDashboardStatus(task.status)),
+        ).length,
+        items: executionContextItems,
+      } satisfies DepartmentExecutionContext,
       filterOptions: {
-        statusOptions,
-        quarterOptions,
-        yearOptions,
+        statusOptions: [
+          ...new Set(primaryGoals.map((goal) => (goal.status ? String(goal.status) : "Chưa đặt"))),
+        ],
+        quarterOptions: sortUniqueNumbers(primaryGoals.map((goal) => goal.quarter), "asc"),
+        yearOptions: sortUniqueNumbers(primaryGoals.map((goal) => goal.year), "desc"),
+        ownerOptions,
         memberOptions,
       },
     };

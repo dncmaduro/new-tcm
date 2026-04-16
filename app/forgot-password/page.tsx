@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { FormEvent, useState } from "react";
 
 type ForgotPasswordResponse = {
@@ -153,14 +152,6 @@ export default function ForgotPasswordPage() {
             </div>
           ) : null}
         </section>
-
-        <Link
-          href="/"
-          className="mt-10 inline-flex items-center gap-2 text-lg font-medium tracking-[-0.01em] text-slate-700 transition hover:text-slate-900"
-        >
-          <span aria-hidden="true">←</span>
-          Quay lại đăng nhập
-        </Link>
 
         <p className="mt-24 text-sm text-slate-400">
           © 2024 TCM. Cổng thông tin doanh nghiệp bảo mật.

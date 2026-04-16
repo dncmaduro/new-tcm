@@ -23,8 +23,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatKeyResultMetric, formatKeyResultUnit } from "@/lib/constants/key-results";
-import { getComputedTaskProgress } from "@/lib/okr";
+import {
+  buildGoalOwnersByGoalId,
+  getGoalOwnerSearchText,
+  type GoalOwnerLinkRow,
+  type GoalOwnerProfile,
+  type GoalOwnerProfileRow,
+} from "@/lib/goal-owners";
+import { formatKeyResultMetric } from "@/lib/constants/key-results";
+import { buildGoalProgressMap, buildKeyResultProgressMap, getComputedTaskProgress } from "@/lib/okr";
 import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
 import {
@@ -36,7 +43,10 @@ import {
   getTimelineDurationDays,
   getTodayIndicatorOffsetPx,
   startOfScale,
+  TIMELINE_MAX_ZOOM,
+  TIMELINE_MIN_ZOOM,
   TIMELINE_ZOOM_STEP,
+  type TimelinePeriod,
   type TimelineScale,
 } from "@/lib/task-gantt";
 import {
@@ -53,6 +63,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_LEFT_PANEL_WIDTH = 420;
 const TASK_LEFT_PANEL_WIDTH = 360;
 
+const formatKeyResultProgressMetric = (current: number | null, target: number | null, unit: string | null) =>
+  `${formatKeyResultMetric(current, unit)} / ${formatKeyResultMetric(target, unit)}`;
+
 type TimelineStatus = "todo" | "in_progress" | "done" | "blocked" | "cancelled";
 type TaskViewMode = "gantt" | "list";
 type StructureMode = "goal" | "key_result" | "task";
@@ -63,6 +76,7 @@ type TaskRow = {
   key_result_id: string | null;
   assignee_id: string | null;
   profile_id: string | null;
+  is_recurring: boolean | null;
   type: string | null;
   status: string | null;
   progress: number | null;
@@ -78,6 +92,8 @@ type TaskRow = {
 type GoalLiteRow = {
   id: string;
   name: string;
+  type: string | null;
+  target: number | null;
   start_date: string | null;
   end_date: string | null;
 };
@@ -86,6 +102,8 @@ type KeyResultLiteRow = {
   id: string;
   goal_id: string | null;
   name: string;
+  type: string | null;
+  contribution_type: string | null;
   current: number | null;
   target: number | null;
   unit: string | null;
@@ -112,6 +130,7 @@ type TaskItem = {
   keyResultMetric: string;
   keyResult: KeyResultLiteRow | null;
   type: string | null;
+  isRecurring: boolean;
   assigneeId: string | null;
   assigneeName: string;
   assigneeShort: string;
@@ -124,29 +143,12 @@ type TaskItem = {
   endDate: string | null;
 };
 
-type GoalGroup = {
-  id: string;
-  name: string;
-  startDate: string | null;
-  endDate: string | null;
-  keyResults: KeyResultGroup[];
-};
-
-type KeyResultGroup = {
-  id: string;
-  name: string;
-  goalId: string;
-  metric: string;
-  startDate: string | null;
-  endDate: string | null;
-  tasks: TaskItem[];
-};
-
 type GoalTimelineItem = {
   id: string;
   name: string;
   startDate: string | null;
   endDate: string | null;
+  progress: number;
   keyResultCount: number;
   taskCount: number;
 };
@@ -159,6 +161,7 @@ type KeyResultTimelineItem = {
   metric: string;
   startDate: string | null;
   endDate: string | null;
+  progress: number;
   taskCount: number;
 };
 
@@ -230,6 +233,11 @@ const statusMetaMap: Record<
 };
 
 const STICKY_PANEL_SHADOW = "shadow-[10px_0_18px_-18px_rgba(15,23,42,0.35)]";
+const TIMELINE_WINDOW_OVERSCAN: Record<TimelineScale, number> = {
+  day: 14,
+  week: 8,
+  month: 4,
+};
 
 const toShortName = (name: string) => {
   const parts = name
@@ -276,6 +284,8 @@ const normalizeGoalLite = (value: unknown): GoalLiteRow | null => {
   return {
     id: String(record.id),
     name: String(record.name),
+    type: record.type ? String(record.type) : null,
+    target: typeof record.target === "number" ? record.target : Number(record.target ?? 0),
     start_date: record.start_date ? String(record.start_date) : null,
     end_date: record.end_date ? String(record.end_date) : null,
   };
@@ -305,6 +315,8 @@ const normalizeKeyResultLite = (value: unknown): KeyResultLiteRow | null => {
     id: String(record.id),
     goal_id: record.goal_id ? String(record.goal_id) : null,
     name: String(record.name),
+    type: record.type ? String(record.type) : null,
+    contribution_type: record.contribution_type ? String(record.contribution_type) : null,
     current: typeof record.current === "number" ? record.current : Number(record.current ?? 0),
     target: typeof record.target === "number" ? record.target : Number(record.target ?? 0),
     unit: record.unit ? String(record.unit) : null,
@@ -347,53 +359,11 @@ const getTaskTimelineAlignmentWarning = (task: TaskItem) =>
     parentLabel: "KR",
   });
 
-const buildGoalGroups = (sourceTasks: TaskItem[]) => {
-  const goalMap = new Map<string, GoalGroup>();
-
-  sourceTasks
-    .slice()
-    .sort((a, b) => {
-      const aTime = getTaskTimeline(a)?.end.getTime() ?? Number.MAX_SAFE_INTEGER;
-      const bTime = getTaskTimeline(b)?.end.getTime() ?? Number.MAX_SAFE_INTEGER;
-      return aTime - bTime;
-    })
-    .forEach((task) => {
-      const goalId = task.goalId ?? "no-goal";
-      if (!goalMap.has(goalId)) {
-        goalMap.set(goalId, {
-          id: goalId,
-          name: task.goalName,
-          startDate: task.keyResult?.goal?.start_date ?? null,
-          endDate: task.keyResult?.goal?.end_date ?? null,
-          keyResults: [],
-        });
-      }
-
-      const goal = goalMap.get(goalId)!;
-      let keyResult = goal.keyResults.find((item) => item.id === (task.keyResultId ?? "no-kr"));
-      if (!keyResult) {
-        keyResult = {
-          id: task.keyResultId ?? "no-kr",
-          name: task.keyResultName,
-          goalId,
-          metric: task.keyResultMetric,
-          startDate: task.keyResult?.start_date ?? null,
-          endDate: task.keyResult?.end_date ?? null,
-          tasks: [],
-        };
-        goal.keyResults.push(keyResult);
-      }
-      keyResult.tasks.push(task);
-    });
-
-  return Array.from(goalMap.values());
-};
-
 const buildTaskTooltip = (task: TaskItem) =>
   [
     task.name,
     `Mục tiêu: ${task.goalName}`,
-    `Kết quả then chốt: ${task.keyResultName}`,
+    `KR: ${task.keyResultName}`,
     `Người phụ trách: ${task.assigneeName}`,
     `Tiến độ: ${task.progress}%`,
     `Thời gian thực thi: ${formatTimelineRangeVi(task.startDate, task.endDate, {
@@ -427,6 +397,37 @@ function ProgressBar({ value }: { value: number }) {
     <div className="h-2 overflow-hidden rounded-full bg-slate-100">
       <div className="h-full rounded-full bg-blue-600" style={{ width: `${value}%` }} />
     </div>
+  );
+}
+
+function TimelineBarContent({
+  label,
+  progress,
+  width,
+}: {
+  label: string;
+  progress: number;
+  width: number;
+}) {
+  const normalizedProgress = clampProgress(progress);
+  const showLabel = width >= 96;
+  const showProgress = width >= 74;
+
+  return (
+    <>
+      <span
+        className="absolute inset-y-0 left-0 rounded-[inherit] bg-slate-500/55"
+        style={{ width: `${normalizedProgress}%` }}
+      />
+      <span className="relative z-[1] flex w-full items-center justify-between gap-3 text-slate-900">
+        {showLabel ? (
+          <span className="truncate text-sm font-semibold">{label}</span>
+        ) : (
+          <span className="sr-only">{label}</span>
+        )}
+        {showProgress ? <span className="shrink-0 text-xs font-semibold">{normalizedProgress}%</span> : null}
+      </span>
+    </>
   );
 }
 
@@ -482,6 +483,93 @@ function ToolbarButton({
   );
 }
 
+function TimelinePeriodHeader({
+  periods,
+  periodWidth,
+  timelineWidth,
+  visibleStartIndex,
+  visibleOffsetPx,
+  visibleWidthPx,
+  todayIndex,
+  todayIndicatorOffset,
+}: {
+  periods: TimelinePeriod[];
+  periodWidth: number;
+  timelineWidth: number;
+  visibleStartIndex: number;
+  visibleOffsetPx: number;
+  visibleWidthPx: number;
+  todayIndex: number;
+  todayIndicatorOffset: number | null;
+}) {
+  return (
+    <div className="relative" style={{ width: timelineWidth }}>
+      {visibleWidthPx > 0 ? (
+        <div className="absolute inset-y-0" style={{ left: visibleOffsetPx, width: visibleWidthPx }}>
+          <div className="grid h-full" style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}>
+            {periods.map((period, index) => (
+              <div
+                key={period.key}
+                className={`border-l border-slate-200 px-2 py-3 text-center ${
+                  visibleStartIndex + index === todayIndex ? "bg-blue-50/70" : ""
+                }`}
+              >
+                <p className="text-xs font-semibold text-slate-700">{period.label}</p>
+                <p className="mt-1 whitespace-nowrap text-[11px] text-slate-500">{period.subLabel}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {todayIndicatorOffset !== null ? (
+        <div
+          className="pointer-events-none absolute bottom-0 top-0 z-[1] w-px bg-blue-400/80"
+          style={{ left: todayIndicatorOffset }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function TimelinePeriodBackground({
+  rowKey,
+  periods,
+  periodWidth,
+  visibleStartIndex,
+  visibleOffsetPx,
+  visibleWidthPx,
+  todayIndex,
+}: {
+  rowKey: string;
+  periods: TimelinePeriod[];
+  periodWidth: number;
+  visibleStartIndex: number;
+  visibleOffsetPx: number;
+  visibleWidthPx: number;
+  todayIndex: number;
+}) {
+  if (visibleWidthPx <= 0) {
+    return null;
+  }
+
+  return (
+    <div className="absolute inset-0 overflow-hidden">
+      <div className="absolute inset-y-0" style={{ left: visibleOffsetPx, width: visibleWidthPx }}>
+        <div className="grid h-full" style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}>
+          {periods.map((period, index) => (
+            <div
+              key={`${rowKey}-${period.key}`}
+              className={`border-l border-slate-100 ${
+                visibleStartIndex + index === todayIndex ? "bg-blue-50/40" : ""
+              }`}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TaskTimelineBar({
   task,
   left,
@@ -496,8 +584,6 @@ function TaskTimelineBar({
   const [open, setOpen] = useState(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressHoverUntilRef = useRef(0);
-  const showLabel = width >= 130;
-  const showProgress = width >= 84;
   const durationLabel = formatTimelineDurationVi(task.startDate, task.endDate);
   const durationDays = getTimelineDurationDays(task.startDate, task.endDate);
 
@@ -553,24 +639,13 @@ function TaskTimelineBar({
               setOpen((prev) => !prev);
             }
           }}
-          className={`absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl px-3 text-left shadow-sm transition hover:brightness-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 ${statusMetaMap[task.status].barClassName} ${
+          className={`absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl border border-slate-300 bg-slate-200 px-3 text-left shadow-sm transition hover:bg-slate-300 hover:brightness-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 ${
             isClamped ? "ring-2 ring-white/70" : ""
           }`}
           style={{ left, width }}
           aria-label={buildTaskAccessibilityLabel(task)}
         >
-          <span
-            className={`absolute inset-y-0 left-0 ${statusMetaMap[task.status].fillClassName}`}
-            style={{ width: `${task.progress}%` }}
-          />
-          <span className="relative z-[1] flex w-full items-center justify-between gap-3">
-            {showLabel ? (
-              <span className="truncate text-sm font-semibold">{task.name}</span>
-            ) : (
-              <span className="sr-only">{task.name}</span>
-            )}
-            {showProgress ? <span className="text-xs font-semibold">{task.progress}%</span> : null}
-          </span>
+          <TimelineBarContent label={task.name} progress={task.progress} width={width} />
         </button>
       </PopoverTrigger>
       <PopoverContent
@@ -657,6 +732,9 @@ function TasksPageContent() {
   const workspaceAccess = useWorkspaceAccess();
 
   const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [goals, setGoals] = useState<GoalLiteRow[]>([]);
+  const [keyResults, setKeyResults] = useState<KeyResultLiteRow[]>([]);
+  const [goalOwnersByGoalId, setGoalOwnersByGoalId] = useState<Record<string, GoalOwnerProfile[]>>({});
   const [isLoadingTasks, setIsLoadingTasks] = useState(true);
   const [taskLoadError, setTaskLoadError] = useState<string | null>(null);
   const [goalFilters, setGoalFilters] = useState<Array<{ id: string; name: string }>>([]);
@@ -684,8 +762,10 @@ function TasksPageContent() {
   const [savingTaskId, setSavingTaskId] = useState<string | null>(null);
   const [savingAssigneeTaskId, setSavingAssigneeTaskId] = useState<string | null>(null);
   const timelineScrollRef = useRef<HTMLDivElement | null>(null);
+  const timelineViewportFrameRef = useRef<number | null>(null);
   const pendingViewportRatioRef = useRef<number | null>(null);
-  const hasAutoScrolledToTodayRef = useRef(false);
+  const lastAutoFocusSignatureRef = useRef<string | null>(null);
+  const [timelineViewport, setTimelineViewport] = useState({ scrollLeft: 0, clientWidth: 0 });
 
   const showPermissionDebug = searchParams.get("debugPermission") === "1";
   const canCreateTask = workspaceAccess.canManage && !workspaceAccess.error;
@@ -714,14 +794,16 @@ function TasksPageContent() {
   useEffect(() => {
     let isActive = true;
 
-    const loadTasks = async () => {
+    const loadTimelineData = async () => {
       setIsLoadingTasks(true);
       setTaskLoadError(null);
 
       try {
         const [
-          { data, error },
+          { data: taskRowsData, error: tasksError },
           { data: profilesData, error: profilesError },
+          { data: goalsData, error: goalsError },
+          { data: keyResultsData, error: keyResultsError },
         ] = await Promise.all([
           supabase
             .from("tasks")
@@ -731,6 +813,7 @@ function TasksPageContent() {
               key_result_id,
               assignee_id,
               profile_id,
+              is_recurring,
               type,
               status,
               progress,
@@ -769,22 +852,105 @@ function TasksPageContent() {
             `)
             .order("created_at", { ascending: false }),
           supabase.from("profiles").select("id,name,email").order("name", { ascending: true }),
+          supabase
+            .from("goals")
+            .select("id,name,type,target,start_date,end_date")
+            .order("name", { ascending: true }),
+          supabase
+            .from("key_results")
+            .select(`
+              id,
+              goal_id,
+              name,
+              type,
+              contribution_type,
+              current,
+              target,
+              unit,
+              start_value,
+              weight,
+              start_date,
+              end_date,
+              goal:goals!key_results_goal_id_fkey(
+                id,
+                name,
+                start_date,
+                end_date
+              )
+            `)
+            .order("name", { ascending: true }),
         ]);
 
         if (!isActive) {
           return;
         }
 
-        if (error || profilesError) {
-          setTaskLoadError(error?.message || profilesError?.message || "Không tải được danh sách công việc.");
+        if (tasksError || profilesError || goalsError || keyResultsError) {
+          setTaskLoadError(
+            tasksError?.message ||
+              profilesError?.message ||
+              goalsError?.message ||
+              keyResultsError?.message ||
+              "Không tải được dữ liệu timeline.",
+          );
           setTasks([]);
+          setGoals([]);
+          setKeyResults([]);
+          setGoalOwnersByGoalId({});
           setGoalFilters([]);
           setKeyResultFilters([]);
           setAssigneeFilters([]);
           return;
         }
 
-        const mappedTasks = ((data ?? []) as Array<Record<string, unknown>>).map((rawRow) => {
+        const mappedProfiles = ((profilesData ?? []) as ProfileLiteRow[]).map((profile) => ({
+          id: String(profile.id),
+          name: profile.name?.trim() || profile.email?.trim() || "Không rõ",
+          email: profile.email ? String(profile.email) : null,
+        })) satisfies GoalOwnerProfileRow[];
+
+        const mappedGoals = ((goalsData ?? []) as Array<Record<string, unknown>>)
+          .map((rawGoal) => normalizeGoalLite(rawGoal))
+          .filter((goal): goal is GoalLiteRow => Boolean(goal));
+
+        const mappedKeyResults = ((keyResultsData ?? []) as Array<Record<string, unknown>>)
+          .map((rawKeyResult) => normalizeKeyResultLite(rawKeyResult))
+          .filter((keyResult): keyResult is KeyResultLiteRow => Boolean(keyResult));
+
+        const goalIds = mappedGoals.map((goal) => goal.id);
+        const { data: goalOwnerRowsData, error: goalOwnersError } =
+          goalIds.length > 0
+            ? await supabase.from("goal_owners").select("goal_id,profile_id").in("goal_id", goalIds)
+            : { data: [], error: null };
+
+        if (!isActive) {
+          return;
+        }
+
+        if (goalOwnersError) {
+          setTaskLoadError(goalOwnersError.message || "Không tải được owners của mục tiêu.");
+          setTasks([]);
+          setGoals([]);
+          setKeyResults([]);
+          setGoalOwnersByGoalId({});
+          setGoalFilters([]);
+          setKeyResultFilters([]);
+          setAssigneeFilters([]);
+          return;
+        }
+
+        const normalizedGoalOwnerRows = ((goalOwnerRowsData ?? []) as GoalOwnerLinkRow[]).map((row) => ({
+          goal_id: row.goal_id ? String(row.goal_id) : null,
+          profile_id: row.profile_id ? String(row.profile_id) : null,
+        }));
+        const nextGoalOwnersByGoalId = buildGoalOwnersByGoalId(normalizedGoalOwnerRows, mappedProfiles);
+        mappedGoals.forEach((goal) => {
+          if (!nextGoalOwnersByGoalId[goal.id]) {
+            nextGoalOwnersByGoalId[goal.id] = [];
+          }
+        });
+
+        const mappedTasks = ((taskRowsData ?? []) as Array<Record<string, unknown>>).map((rawRow) => {
           const row = rawRow as TaskRow;
           const keyResult = normalizeKeyResultLite(
             Array.isArray(rawRow.key_result) ? rawRow.key_result[0] ?? null : rawRow.key_result,
@@ -797,10 +963,7 @@ function TasksPageContent() {
           const goalName = keyResult?.goal?.name ?? "Chưa có mục tiêu";
           const keyResultName = keyResult?.name ?? (row.key_result_id ? "KR không khả dụng" : "Chưa gắn key result");
           const keyResultMetric = keyResult
-            ? `${formatKeyResultMetric(keyResult.start_value, keyResult.unit)} → ${formatKeyResultMetric(
-                keyResult.current,
-                keyResult.unit,
-              )} → ${formatKeyResultMetric(keyResult.target, keyResult.unit)} ${formatKeyResultUnit(keyResult.unit)}`
+            ? formatKeyResultProgressMetric(keyResult.current, keyResult.target, keyResult.unit)
             : "Chưa có số liệu KR";
           const assigneeName = effectiveAssignee?.name?.trim() || effectiveAssignee?.email?.trim() || "Chưa gán";
           const effectiveAssigneeId = row.assignee_id
@@ -819,6 +982,7 @@ function TasksPageContent() {
             keyResultMetric,
             keyResult,
             type: row.type ? String(row.type) : null,
+            isRecurring: Boolean(row.is_recurring),
             assigneeId: effectiveAssigneeId,
             assigneeName,
             assigneeShort: toShortName(assigneeName),
@@ -837,35 +1001,26 @@ function TasksPageContent() {
         });
 
         setTasks(mappedTasks);
+        setGoals(mappedGoals);
+        setKeyResults(mappedKeyResults);
+        setGoalOwnersByGoalId(nextGoalOwnersByGoalId);
         setGoalFilters(
-          Array.from(
-            new Map(
-              mappedTasks
-                .filter((task) => task.goalId)
-                .map((task) => [task.goalId as string, { id: task.goalId as string, name: task.goalName }]),
-            ).values(),
-          ),
+          mappedGoals.map((goal) => ({
+            id: goal.id,
+            name: goal.name,
+          })),
         );
         setKeyResultFilters(
-          Array.from(
-            new Map(
-              mappedTasks
-                .filter((task) => task.keyResultId && task.goalId)
-                .map((task) => [
-                  task.keyResultId as string,
-                  {
-                    id: task.keyResultId as string,
-                    name: task.keyResultName,
-                    goalId: task.goalId as string,
-                  },
-              ]),
-            ).values(),
-          ),
+          mappedKeyResults.map((keyResult) => ({
+            id: keyResult.id,
+            name: keyResult.name,
+            goalId: keyResult.goal?.id ?? (keyResult.goal_id ? String(keyResult.goal_id) : ""),
+          })),
         );
         setAssigneeFilters(
-          ((profilesData ?? []) as ProfileLiteRow[]).map((profile) => ({
-            id: String(profile.id),
-            name: profile.name?.trim() || profile.email?.trim() || "Không rõ",
+          mappedProfiles.map((profile) => ({
+            id: profile.id,
+            name: profile.name,
           })),
         );
       } catch {
@@ -873,8 +1028,11 @@ function TasksPageContent() {
           return;
         }
 
-        setTaskLoadError("Có lỗi khi tải dữ liệu công việc.");
+        setTaskLoadError("Có lỗi khi tải dữ liệu timeline.");
         setTasks([]);
+        setGoals([]);
+        setKeyResults([]);
+        setGoalOwnersByGoalId({});
         setGoalFilters([]);
         setKeyResultFilters([]);
         setAssigneeFilters([]);
@@ -885,12 +1043,54 @@ function TasksPageContent() {
       }
     };
 
-    void loadTasks();
+    void loadTimelineData();
 
     return () => {
       isActive = false;
     };
   }, []);
+
+  const normalizedKeyword = searchKeyword.trim().toLowerCase();
+
+  const tasksByGoalId = useMemo(() => {
+    const next = new Map<string, TaskItem[]>();
+    tasks.forEach((task) => {
+      if (!task.goalId) {
+        return;
+      }
+      const existing = next.get(task.goalId) ?? [];
+      existing.push(task);
+      next.set(task.goalId, existing);
+    });
+    return next;
+  }, [tasks]);
+
+  const tasksByKeyResultId = useMemo(() => {
+    const next = new Map<string, TaskItem[]>();
+    tasks.forEach((task) => {
+      if (!task.keyResultId) {
+        return;
+      }
+      const existing = next.get(task.keyResultId) ?? [];
+      existing.push(task);
+      next.set(task.keyResultId, existing);
+    });
+    return next;
+  }, [tasks]);
+
+  const keyResultsByGoalId = useMemo(() => {
+    const next = new Map<string, KeyResultLiteRow[]>();
+    keyResults.forEach((keyResult) => {
+      const goalId = keyResult.goal?.id ?? (keyResult.goal_id ? String(keyResult.goal_id) : null);
+      if (!goalId) {
+        return;
+      }
+      const existing = next.get(goalId) ?? [];
+      existing.push(keyResult);
+      next.set(goalId, existing);
+    });
+    return next;
+  }, [keyResults]);
 
   const filteredTasks = useMemo(() => {
     return tasks.filter((task) => {
@@ -906,16 +1106,36 @@ function TasksPageContent() {
       if (assigneeFilter !== "all" && task.assigneeId !== assigneeFilter) {
         return false;
       }
-
-      const keyword = searchKeyword.trim().toLowerCase();
-      if (!keyword) {
+      if (!normalizedKeyword) {
         return true;
       }
 
       const haystack = `${task.name} ${task.goalName} ${task.keyResultName} ${task.assigneeName}`.toLowerCase();
-      return haystack.includes(keyword);
+      return haystack.includes(normalizedKeyword);
     });
-  }, [assigneeFilter, goalFilter, keyResultFilter, searchKeyword, statusFilter, tasks]);
+  }, [assigneeFilter, goalFilter, keyResultFilter, normalizedKeyword, statusFilter, tasks]);
+
+  const filteredTaskCountByGoalId = useMemo(() => {
+    const next = new Map<string, number>();
+    filteredTasks.forEach((task) => {
+      if (!task.goalId) {
+        return;
+      }
+      next.set(task.goalId, (next.get(task.goalId) ?? 0) + 1);
+    });
+    return next;
+  }, [filteredTasks]);
+
+  const filteredTaskCountByKeyResultId = useMemo(() => {
+    const next = new Map<string, number>();
+    filteredTasks.forEach((task) => {
+      if (!task.keyResultId) {
+        return;
+      }
+      next.set(task.keyResultId, (next.get(task.keyResultId) ?? 0) + 1);
+    });
+    return next;
+  }, [filteredTasks]);
 
   const filteredKeyResultFilters = useMemo(() => {
     if (goalFilter === "all") {
@@ -923,6 +1143,140 @@ function TasksPageContent() {
     }
     return keyResultFilters.filter((keyResult) => keyResult.goalId === goalFilter);
   }, [goalFilter, keyResultFilters]);
+
+  const keyResultProgressMap = useMemo(() => buildKeyResultProgressMap(keyResults), [keyResults]);
+  const goalProgressMap = useMemo(
+    () => buildGoalProgressMap(goals, keyResults, keyResultProgressMap),
+    [goals, keyResultProgressMap, keyResults],
+  );
+
+  const goalTimelineItems = useMemo<GoalTimelineItem[]>(
+    () =>
+      goals.map((goal) => ({
+        id: goal.id,
+        name: goal.name,
+        startDate: goal.start_date,
+        endDate: goal.end_date,
+        progress: goalProgressMap[goal.id] ?? 0,
+        keyResultCount: keyResultsByGoalId.get(goal.id)?.length ?? 0,
+        taskCount: filteredTaskCountByGoalId.get(goal.id) ?? 0,
+      })),
+    [filteredTaskCountByGoalId, goalProgressMap, goals, keyResultsByGoalId],
+  );
+
+  const keyResultTimelineItems = useMemo<KeyResultTimelineItem[]>(
+    () =>
+      keyResults.map((keyResult) => ({
+        id: keyResult.id,
+        goalId: keyResult.goal?.id ?? (keyResult.goal_id ? String(keyResult.goal_id) : "no-goal"),
+        goalName: keyResult.goal?.name ?? "Chưa có mục tiêu",
+        name: keyResult.name,
+        metric: formatKeyResultProgressMetric(keyResult.current, keyResult.target, keyResult.unit),
+        startDate: keyResult.start_date,
+        endDate: keyResult.end_date,
+        progress: keyResultProgressMap[keyResult.id] ?? 0,
+        taskCount: filteredTaskCountByKeyResultId.get(keyResult.id) ?? 0,
+      })),
+    [filteredTaskCountByKeyResultId, keyResultProgressMap, keyResults],
+  );
+
+  const filteredGoalTimelineItems = useMemo(
+    () =>
+      goalTimelineItems.filter((goal) => {
+        if (goalFilter !== "all" && goal.id !== goalFilter) {
+          return false;
+        }
+
+        const relatedKeyResults = keyResultsByGoalId.get(goal.id) ?? [];
+        if (keyResultFilter !== "all" && !relatedKeyResults.some((keyResult) => keyResult.id === keyResultFilter)) {
+          return false;
+        }
+
+        const relatedTasks = tasksByGoalId.get(goal.id) ?? [];
+        const goalOwners = goalOwnersByGoalId[goal.id] ?? [];
+
+        if (assigneeFilter !== "all") {
+          const hasMatchingOwner = goalOwners.some((owner) => owner.id === assigneeFilter);
+          const hasMatchingTaskAssignee = relatedTasks.some((task) => task.assigneeId === assigneeFilter);
+          if (!hasMatchingOwner && !hasMatchingTaskAssignee) {
+            return false;
+          }
+        }
+
+        if (statusFilter !== "all" && !relatedTasks.some((task) => task.status === statusFilter)) {
+          return false;
+        }
+
+        if (!normalizedKeyword) {
+          return true;
+        }
+
+        const haystack = [
+          goal.name,
+          getGoalOwnerSearchText(goalOwners),
+          relatedKeyResults.map((keyResult) => keyResult.name).join(" "),
+          relatedTasks.map((task) => `${task.name} ${task.keyResultName} ${task.assigneeName}`).join(" "),
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(normalizedKeyword);
+      }),
+    [
+      assigneeFilter,
+      goalFilter,
+      goalOwnersByGoalId,
+      goalTimelineItems,
+      keyResultFilter,
+      keyResultsByGoalId,
+      normalizedKeyword,
+      statusFilter,
+      tasksByGoalId,
+    ],
+  );
+
+  const filteredKeyResultTimelineItems = useMemo(
+    () =>
+      keyResultTimelineItems.filter((keyResult) => {
+        if (goalFilter !== "all" && keyResult.goalId !== goalFilter) {
+          return false;
+        }
+        if (keyResultFilter !== "all" && keyResult.id !== keyResultFilter) {
+          return false;
+        }
+
+        const relatedTasks = tasksByKeyResultId.get(keyResult.id) ?? [];
+        if (assigneeFilter !== "all" && !relatedTasks.some((task) => task.assigneeId === assigneeFilter)) {
+          return false;
+        }
+        if (statusFilter !== "all" && !relatedTasks.some((task) => task.status === statusFilter)) {
+          return false;
+        }
+        if (!normalizedKeyword) {
+          return true;
+        }
+
+        const haystack = [
+          keyResult.name,
+          keyResult.goalName,
+          keyResult.metric,
+          relatedTasks.map((task) => `${task.name} ${task.assigneeName}`).join(" "),
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(normalizedKeyword);
+      }),
+    [
+      assigneeFilter,
+      goalFilter,
+      keyResultFilter,
+      keyResultTimelineItems,
+      normalizedKeyword,
+      statusFilter,
+      tasksByKeyResultId,
+    ],
+  );
 
   const noTimelineTasks = useMemo(
     () => filteredTasks.filter((task) => !getTaskTimeline(task)),
@@ -934,50 +1288,21 @@ function TasksPageContent() {
     [filteredTasks],
   );
 
-  const groupedGoalsAll = useMemo(() => buildGoalGroups(filteredTasks), [filteredTasks]);
-  const goalTimelineItems = useMemo<GoalTimelineItem[]>(
-    () =>
-      groupedGoalsAll.map((goal) => ({
-        id: goal.id,
-        name: goal.name,
-        startDate: goal.startDate,
-        endDate: goal.endDate,
-        keyResultCount: goal.keyResults.length,
-        taskCount: goal.keyResults.reduce((total, keyResult) => total + keyResult.tasks.length, 0),
-      })),
-    [groupedGoalsAll],
-  );
-  const keyResultTimelineItems = useMemo<KeyResultTimelineItem[]>(
-    () =>
-      groupedGoalsAll.flatMap((goal) =>
-        goal.keyResults.map((keyResult) => ({
-          id: keyResult.id,
-          goalId: goal.id,
-          goalName: goal.name,
-          name: keyResult.name,
-          metric: keyResult.metric,
-          startDate: keyResult.startDate,
-          endDate: keyResult.endDate,
-          taskCount: keyResult.tasks.length,
-        })),
-      ),
-    [groupedGoalsAll],
-  );
   const visibleGoalTimelineItems = useMemo(
-    () => goalTimelineItems.filter((goal) => Boolean(getTimelineRange(goal.startDate, goal.endDate))),
-    [goalTimelineItems],
+    () => filteredGoalTimelineItems.filter((goal) => Boolean(getTimelineRange(goal.startDate, goal.endDate))),
+    [filteredGoalTimelineItems],
   );
   const noTimelineGoalItems = useMemo(
-    () => goalTimelineItems.filter((goal) => !getTimelineRange(goal.startDate, goal.endDate)),
-    [goalTimelineItems],
+    () => filteredGoalTimelineItems.filter((goal) => !getTimelineRange(goal.startDate, goal.endDate)),
+    [filteredGoalTimelineItems],
   );
   const visibleKeyResultTimelineItems = useMemo(
-    () => keyResultTimelineItems.filter((keyResult) => Boolean(getTimelineRange(keyResult.startDate, keyResult.endDate))),
-    [keyResultTimelineItems],
+    () => filteredKeyResultTimelineItems.filter((keyResult) => Boolean(getTimelineRange(keyResult.startDate, keyResult.endDate))),
+    [filteredKeyResultTimelineItems],
   );
   const noTimelineKeyResultItems = useMemo(
-    () => keyResultTimelineItems.filter((keyResult) => !getTimelineRange(keyResult.startDate, keyResult.endDate)),
-    [keyResultTimelineItems],
+    () => filteredKeyResultTimelineItems.filter((keyResult) => !getTimelineRange(keyResult.startDate, keyResult.endDate)),
+    [filteredKeyResultTimelineItems],
   );
   const timelineSourceItems = useMemo(() => {
     if (structureMode === "goal") {
@@ -988,9 +1313,36 @@ function TasksPageContent() {
     }
     return visibleTasks;
   }, [structureMode, visibleGoalTimelineItems, visibleKeyResultTimelineItems, visibleTasks]);
+  const leftPanelWidth = structureMode === "task" ? TASK_LEFT_PANEL_WIDTH : DEFAULT_LEFT_PANEL_WIDTH;
   const periods = useMemo(() => buildTimelinePeriods(timelineSourceItems, timeScale), [timeScale, timelineSourceItems]);
   const periodWidth = useMemo(() => getPeriodWidthForZoom(timeScale, zoomLevel), [timeScale, zoomLevel]);
   const timelineWidth = periods.length * periodWidth;
+  const timelineViewportWidth = Math.max(periodWidth * 12, timelineViewport.clientWidth - leftPanelWidth);
+  const visibleTimelineWindow = useMemo(() => {
+    if (periods.length === 0) {
+      return {
+        periods: [] as TimelinePeriod[],
+        startIndex: 0,
+        endIndex: 0,
+        offsetPx: 0,
+        widthPx: 0,
+      };
+    }
+
+    const overscan = TIMELINE_WINDOW_OVERSCAN[timeScale];
+    const visibleStartPx = Math.max(0, Math.min(timelineWidth, timelineViewport.scrollLeft));
+    const visibleEndPx = Math.min(timelineWidth, visibleStartPx + timelineViewportWidth);
+    const startIndex = Math.max(0, Math.floor(visibleStartPx / periodWidth) - overscan);
+    const endIndex = Math.min(periods.length, Math.ceil(visibleEndPx / periodWidth) + overscan);
+
+    return {
+      periods: periods.slice(startIndex, endIndex),
+      startIndex,
+      endIndex,
+      offsetPx: startIndex * periodWidth,
+      widthPx: Math.max(0, (endIndex - startIndex) * periodWidth),
+    };
+  }, [periodWidth, periods, timeScale, timelineViewport.scrollLeft, timelineViewportWidth, timelineWidth]);
   const firstPeriodStart = periods[0]?.start ?? startOfScale(new Date(), timeScale);
   const todayIndex = useMemo(() => {
     const today = new Date();
@@ -1097,7 +1449,60 @@ function TasksPageContent() {
       : structureMode === "key_result"
         ? noTimelineKeyResultItems.length
         : noTimelineTasks.length;
-  const leftPanelWidth = structureMode === "task" ? TASK_LEFT_PANEL_WIDTH : DEFAULT_LEFT_PANEL_WIDTH;
+  const currentFilteredItemCount =
+    structureMode === "goal"
+      ? filteredGoalTimelineItems.length
+      : structureMode === "key_result"
+        ? filteredKeyResultTimelineItems.length
+        : filteredTasks.length;
+  const currentTotalItemCount =
+    structureMode === "goal" ? goals.length : structureMode === "key_result" ? keyResults.length : tasks.length;
+  const autoFocusSignature = `${viewMode}:${structureMode}:${timeScale}:${statusFilter}:${goalFilter}:${keyResultFilter}:${assigneeFilter}:${normalizedKeyword}`;
+
+  const setTimelineViewportSnapshot = useCallback((scrollLeft?: number, clientWidth?: number) => {
+    const container = timelineScrollRef.current;
+    if (!container) {
+      return;
+    }
+
+    const nextViewport = {
+      scrollLeft: scrollLeft ?? container.scrollLeft,
+      clientWidth: clientWidth ?? container.clientWidth,
+    };
+
+    setTimelineViewport((prev) =>
+      prev.scrollLeft === nextViewport.scrollLeft && prev.clientWidth === nextViewport.clientWidth
+        ? prev
+        : nextViewport,
+    );
+  }, []);
+
+  const syncTimelineViewport = useCallback(() => {
+    timelineViewportFrameRef.current = null;
+    setTimelineViewportSnapshot();
+  }, [setTimelineViewportSnapshot]);
+
+  const scheduleTimelineViewportSync = useCallback(() => {
+    if (timelineViewportFrameRef.current !== null) {
+      return;
+    }
+
+    timelineViewportFrameRef.current = requestAnimationFrame(() => {
+      syncTimelineViewport();
+    });
+  }, [syncTimelineViewport]);
+
+  const handleTimelineScroll = useCallback(() => {
+    scheduleTimelineViewportSync();
+  }, [scheduleTimelineViewportSync]);
+
+  useEffect(() => {
+    return () => {
+      if (timelineViewportFrameRef.current !== null) {
+        cancelAnimationFrame(timelineViewportFrameRef.current);
+      }
+    };
+  }, []);
 
   const getItemBarLayout = useCallback(
     (startDate: string | null, endDate: string | null, minBarWidth?: number) =>
@@ -1119,7 +1524,8 @@ function TasksPageContent() {
       return null;
     }
 
-    const centeredOffset = Math.max(0, container.scrollLeft + container.clientWidth / 2 - leftPanelWidth);
+    const visibleTimelineWidth = Math.max(0, container.clientWidth - leftPanelWidth);
+    const centeredOffset = Math.max(0, container.scrollLeft + visibleTimelineWidth / 2);
     return centeredOffset / Math.max(1, timelineWidth);
   }, [leftPanelWidth, timelineWidth]);
 
@@ -1130,15 +1536,34 @@ function TasksPageContent() {
         return;
       }
 
-      const nextCenter = leftPanelWidth + timelineWidth * Math.min(1, Math.max(0, ratio));
-      container.scrollLeft = Math.max(0, nextCenter - container.clientWidth / 2);
+      const visibleTimelineWidth = Math.max(0, container.clientWidth - leftPanelWidth);
+      const targetScrollLeft =
+        timelineWidth * Math.min(1, Math.max(0, ratio)) - visibleTimelineWidth / 2;
+      const maxScrollLeft = Math.max(0, leftPanelWidth + timelineWidth - container.clientWidth);
+      const nextScrollLeft = Math.min(maxScrollLeft, Math.max(0, targetScrollLeft));
+      container.scrollLeft = nextScrollLeft;
+      setTimelineViewportSnapshot(nextScrollLeft, container.clientWidth);
+      scheduleTimelineViewportSync();
     },
-    [leftPanelWidth, timelineWidth],
+    [leftPanelWidth, scheduleTimelineViewportSync, setTimelineViewportSnapshot, timelineWidth],
   );
 
   const preserveTimelineViewport = useCallback(() => {
     pendingViewportRatioRef.current = captureViewportRatio();
   }, [captureViewportRatio]);
+
+  const applyTimelineZoom = useCallback(
+    (nextZoom: number) => {
+      const safeZoom = clampTimelineZoom(nextZoom);
+      if (safeZoom === zoomLevel) {
+        return;
+      }
+
+      preserveTimelineViewport();
+      setZoomLevel(safeZoom);
+    },
+    [preserveTimelineViewport, zoomLevel],
+  );
 
   const scrollTimelineToToday = useCallback(
     (behavior: ScrollBehavior = "smooth") => {
@@ -1147,14 +1572,37 @@ function TasksPageContent() {
         return;
       }
 
-      const targetScrollLeft = Math.max(0, leftPanelWidth + todayIndicatorOffset - container.clientWidth * 0.42);
-      container.scrollTo({
-        left: targetScrollLeft,
-        behavior,
-      });
+      const visibleTimelineWidth = Math.max(0, container.clientWidth - leftPanelWidth);
+      const maxScrollLeft = Math.max(0, leftPanelWidth + timelineWidth - container.clientWidth);
+      const targetScrollLeft = todayIndicatorOffset - visibleTimelineWidth * 0.42;
+      const nextScrollLeft = Math.min(maxScrollLeft, Math.max(0, targetScrollLeft));
+
+      if (behavior === "auto") {
+        container.scrollLeft = nextScrollLeft;
+        setTimelineViewportSnapshot(nextScrollLeft, container.clientWidth);
+      } else {
+        container.scrollTo({
+          left: nextScrollLeft,
+          behavior,
+        });
+      }
+
+      scheduleTimelineViewportSync();
     },
-    [leftPanelWidth, todayIndicatorOffset],
+    [leftPanelWidth, scheduleTimelineViewportSync, setTimelineViewportSnapshot, timelineWidth, todayIndicatorOffset],
   );
+
+  const handleZoomOut = useCallback(() => {
+    applyTimelineZoom(zoomLevel - TIMELINE_ZOOM_STEP);
+  }, [applyTimelineZoom, zoomLevel]);
+
+  const handleZoomIn = useCallback(() => {
+    applyTimelineZoom(zoomLevel + TIMELINE_ZOOM_STEP);
+  }, [applyTimelineZoom, zoomLevel]);
+
+  const handleZoomReset = useCallback(() => {
+    applyTimelineZoom(1);
+  }, [applyTimelineZoom]);
 
   const handleTimelineWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
     const container = timelineScrollRef.current;
@@ -1163,17 +1611,8 @@ function TasksPageContent() {
     }
 
     if (event.ctrlKey || event.metaKey) {
-      const nextZoom = clampTimelineZoom(
-        zoomLevel + (event.deltaY < 0 ? TIMELINE_ZOOM_STEP : -TIMELINE_ZOOM_STEP),
-      );
-
-      if (nextZoom === zoomLevel) {
-        return;
-      }
-
       event.preventDefault();
-      preserveTimelineViewport();
-      setZoomLevel(nextZoom);
+      applyTimelineZoom(zoomLevel + (event.deltaY < 0 ? TIMELINE_ZOOM_STEP : -TIMELINE_ZOOM_STEP));
       return;
     }
 
@@ -1183,17 +1622,19 @@ function TasksPageContent() {
 
     event.preventDefault();
     container.scrollLeft += event.deltaY;
-  }, [preserveTimelineViewport, zoomLevel]);
+    setTimelineViewportSnapshot(container.scrollLeft, container.clientWidth);
+    scheduleTimelineViewportSync();
+  }, [applyTimelineZoom, scheduleTimelineViewportSync, setTimelineViewportSnapshot, zoomLevel]);
 
   const updateStructureMode = useCallback(
     (nextMode: StructureMode) => {
       if (nextMode === structureMode) {
         return;
       }
-      preserveTimelineViewport();
+      pendingViewportRatioRef.current = null;
       setStructureMode(nextMode);
     },
-    [preserveTimelineViewport, structureMode],
+    [structureMode],
   );
 
   const updateTimeScale = useCallback(
@@ -1201,14 +1642,13 @@ function TasksPageContent() {
       if (nextScale === timeScale) {
         return;
       }
-      preserveTimelineViewport();
+      pendingViewportRatioRef.current = null;
       setTimeScale(nextScale);
     },
-    [preserveTimelineViewport, timeScale],
+    [timeScale],
   );
 
   const handleJumpToToday = useCallback(() => {
-    hasAutoScrolledToTodayRef.current = true;
     scrollTimelineToToday("smooth");
   }, [scrollTimelineToToday]);
 
@@ -1228,7 +1668,8 @@ function TasksPageContent() {
       return;
     }
 
-    const safeProgress = clampProgress(Number(quickEditState.progress));
+    const safeProgress =
+      task.type === "okr" ? getComputedTaskProgress({ type: task.type, status: task.rawStatus, progress: task.progress }) : clampProgress(Number(quickEditState.progress));
     const safeWeight = Number(quickEditState.weight);
     if (
       (quickEditState.startDate && !quickEditState.endDate) ||
@@ -1342,16 +1783,46 @@ function TasksPageContent() {
     return query ? `/tasks/new?${query}` : "/tasks/new";
   }, [goalFilter, keyResultFilter, rootDepartments]);
 
-  useEffect(() => {
-    if (viewMode === "gantt") {
-      hasAutoScrolledToTodayRef.current = false;
+  useLayoutEffect(() => {
+    if (viewMode !== "gantt") {
+      return;
     }
-  }, [viewMode]);
+
+    scheduleTimelineViewportSync();
+  }, [leftPanelWidth, scheduleTimelineViewportSync, structureMode, timeScale, timelineWidth, viewMode, zoomLevel]);
+
+  useEffect(() => {
+    if (viewMode !== "gantt") {
+      return;
+    }
+
+    const container = timelineScrollRef.current;
+    if (!container) {
+      return;
+    }
+
+    syncTimelineViewport();
+
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      scheduleTimelineViewportSync();
+    });
+    observer.observe(container);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [scheduleTimelineViewportSync, structureMode, syncTimelineViewport, timeScale, viewMode, zoomLevel]);
 
   useLayoutEffect(() => {
     if (viewMode !== "gantt" || !timelineScrollRef.current) {
       return;
     }
+
+    const shouldAutoFocus = lastAutoFocusSignatureRef.current !== autoFocusSignature;
 
     if (pendingViewportRatioRef.current !== null) {
       restoreViewportRatio(pendingViewportRatioRef.current);
@@ -1359,11 +1830,11 @@ function TasksPageContent() {
       return;
     }
 
-    if (!hasAutoScrolledToTodayRef.current && todayIndicatorOffset !== null) {
+    if (shouldAutoFocus && todayIndicatorOffset !== null) {
       scrollTimelineToToday("auto");
-      hasAutoScrolledToTodayRef.current = true;
+      lastAutoFocusSignatureRef.current = autoFocusSignature;
     }
-  }, [restoreViewportRatio, scrollTimelineToToday, todayIndicatorOffset, viewMode]);
+  }, [autoFocusSignature, restoreViewportRatio, scrollTimelineToToday, todayIndicatorOffset, viewMode]);
 
   return (
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
@@ -1385,7 +1856,8 @@ function TasksPageContent() {
                   Timeline thực thi
                 </h1>
                 <p className="mt-1 text-sm text-slate-500">
-                  {currentModeMeta.subtitle} · {filteredTasks.length} / {tasks.length} công việc theo bộ lọc
+                  {currentModeMeta.subtitle} · {currentFilteredItemCount} / {currentTotalItemCount}{" "}
+                  {currentModeMeta.pluralLabel} theo bộ lọc
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-3">
@@ -1541,6 +2013,20 @@ function TasksPageContent() {
                           Tháng
                         </ScaleButton>
                       </div>
+                      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-1 pl-3">
+                        <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                          Zoom ngang
+                        </span>
+                        <ToolbarButton onClick={handleZoomOut} disabled={zoomLevel <= TIMELINE_MIN_ZOOM}>
+                          -
+                        </ToolbarButton>
+                        <ToolbarButton onClick={handleZoomReset} active={zoomLevel === 1}>
+                          {Math.round(zoomLevel * 100)}%
+                        </ToolbarButton>
+                        <ToolbarButton onClick={handleZoomIn} disabled={zoomLevel >= TIMELINE_MAX_ZOOM}>
+                          +
+                        </ToolbarButton>
+                      </div>
                       <ToolbarButton
                         onClick={handleJumpToToday}
                         active={todayIndicatorOffset !== null}
@@ -1549,7 +2035,7 @@ function TasksPageContent() {
                         Hôm nay
                       </ToolbarButton>
                       <p className="text-sm text-slate-500">
-                        Giữ Ctrl/Cmd + lăn chuột để zoom. Giữ Shift + lăn chuột để cuộn ngang trên timeline.
+                        Dùng nút +/- hoặc giữ Ctrl/Cmd + lăn chuột để zoom. Giữ Shift + lăn chuột để cuộn ngang trên timeline.
                       </p>
                     </>
                   ) : null}
@@ -1592,26 +2078,27 @@ function TasksPageContent() {
               </div>
             ) : null}
 
-            {!isLoadingTasks && filteredTasks.length === 0 ? (
+            {!isLoadingTasks && currentFilteredItemCount === 0 ? (
               <section className="rounded-2xl border border-slate-200 bg-white px-6 py-12 text-center">
                 <p className="text-base font-semibold text-slate-900">
-                  Chưa có công việc nào để hiển thị trên trục thời gian.
+                  Không có {currentModeMeta.pluralLabel} nào khớp bộ lọc hiện tại.
                 </p>
                 <Link
                   href="/goals"
                   className="mt-5 inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
                 >
-                  Đi tới mục tiêu để tạo công việc
+                  Đi tới mục tiêu
                 </Link>
               </section>
             ) : null}
 
-            {!isLoadingTasks && filteredTasks.length > 0 ? (
+            {!isLoadingTasks && currentFilteredItemCount > 0 ? (
               viewMode === "gantt" ? (
               structureMode === "goal" ? (
               <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
                 <div
                   ref={timelineScrollRef}
+                  onScroll={handleTimelineScroll}
                   onWheel={handleTimelineWheel}
                   className="overflow-x-auto overflow-y-hidden rounded-2xl overscroll-x-contain scroll-smooth [scrollbar-gutter:stable]"
                 >
@@ -1622,27 +2109,17 @@ function TasksPageContent() {
                     >
                       <div className={`sticky left-0 z-30 border-r border-slate-200 bg-slate-50 px-5 py-4 ${STICKY_PANEL_SHADOW}`}>
                         <p className="text-sm font-semibold text-slate-900">Danh sách mục tiêu</p>
-                        <p className="mt-1 text-xs text-slate-500">Mỗi dòng là một mục tiêu với khung thời gian thực thi tổng.</p>
                       </div>
-                      <div className="relative grid" style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}>
-                        {periods.map((period, index) => (
-                          <div
-                            key={period.key}
-                            className={`border-l border-slate-200 px-2 py-3 text-center ${
-                              index === todayIndex ? "bg-blue-50/70" : ""
-                            }`}
-                          >
-                            <p className="text-xs font-semibold text-slate-700">{period.label}</p>
-                            <p className="mt-1 text-[11px] text-slate-500">{period.subLabel}</p>
-                          </div>
-                        ))}
-                        {todayIndicatorOffset !== null ? (
-                          <div
-                            className="pointer-events-none absolute bottom-0 top-0 z-[1] w-px bg-blue-400/80"
-                            style={{ left: todayIndicatorOffset }}
-                          />
-                        ) : null}
-                      </div>
+                      <TimelinePeriodHeader
+                        periods={visibleTimelineWindow.periods}
+                        periodWidth={periodWidth}
+                        timelineWidth={timelineWidth}
+                        visibleStartIndex={visibleTimelineWindow.startIndex}
+                        visibleOffsetPx={visibleTimelineWindow.offsetPx}
+                        visibleWidthPx={visibleTimelineWindow.widthPx}
+                        todayIndex={todayIndex}
+                        todayIndicatorOffset={todayIndicatorOffset}
+                      />
                     </div>
 
                     {visibleGoalTimelineItems.map((goal) => {
@@ -1682,17 +2159,15 @@ function TasksPageContent() {
                             </div>
                           </div>
                           <div className="relative min-h-[86px] bg-white">
-                            <div
-                              className="absolute inset-0 grid"
-                              style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}
-                            >
-                              {periods.map((period, index) => (
-                                <div
-                                  key={`${goal.id}-${period.key}`}
-                                  className={`border-l border-slate-100 ${index === todayIndex ? "bg-blue-50/40" : ""}`}
-                                />
-                              ))}
-                            </div>
+                            <TimelinePeriodBackground
+                              rowKey={goal.id}
+                              periods={visibleTimelineWindow.periods}
+                              periodWidth={periodWidth}
+                              visibleStartIndex={visibleTimelineWindow.startIndex}
+                              visibleOffsetPx={visibleTimelineWindow.offsetPx}
+                              visibleWidthPx={visibleTimelineWindow.widthPx}
+                              todayIndex={todayIndex}
+                            />
                             {todayIndicatorOffset !== null ? (
                               <div
                                 className="pointer-events-none absolute inset-y-0 z-[1] w-px bg-blue-400/75"
@@ -1701,13 +2176,13 @@ function TasksPageContent() {
                             ) : null}
                             <Link
                               href={goal.id !== "no-goal" ? `/goals/${goal.id}` : "/goals"}
-                              title={`${goal.name}\n${formatTimelineRangeVi(goal.startDate, goal.endDate, {
+                              title={`${goal.name}\nTiến độ: ${goal.progress}%\n${formatTimelineRangeVi(goal.startDate, goal.endDate, {
                                 fallback: "Chưa đặt khung thời gian",
                               })}`}
-                              className="absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl bg-blue-600 px-3 text-left text-white shadow-sm transition hover:bg-blue-700"
+                              className="absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl border border-slate-300 bg-slate-200 px-3 text-left shadow-sm transition hover:bg-slate-300"
                               style={{ left: barLayout.left, width: barLayout.width }}
                             >
-                              <span className="truncate text-sm font-semibold">{goal.name}</span>
+                              <TimelineBarContent label={goal.name} progress={goal.progress} width={barLayout.width} />
                             </Link>
                           </div>
                         </div>
@@ -1720,6 +2195,7 @@ function TasksPageContent() {
               <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
                 <div
                   ref={timelineScrollRef}
+                  onScroll={handleTimelineScroll}
                   onWheel={handleTimelineWheel}
                   className="overflow-x-auto overflow-y-hidden rounded-2xl overscroll-x-contain scroll-smooth [scrollbar-gutter:stable]"
                 >
@@ -1732,25 +2208,16 @@ function TasksPageContent() {
                         <p className="text-sm font-semibold text-slate-900">Danh sách key result</p>
                         <p className="mt-1 text-xs text-slate-500">Mỗi dòng là một KR, vẫn giữ mục tiêu làm ngữ cảnh đi kèm.</p>
                       </div>
-                      <div className="relative grid" style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}>
-                        {periods.map((period, index) => (
-                          <div
-                            key={period.key}
-                            className={`border-l border-slate-200 px-2 py-3 text-center ${
-                              index === todayIndex ? "bg-blue-50/70" : ""
-                            }`}
-                          >
-                            <p className="text-xs font-semibold text-slate-700">{period.label}</p>
-                            <p className="mt-1 text-[11px] text-slate-500">{period.subLabel}</p>
-                          </div>
-                        ))}
-                        {todayIndicatorOffset !== null ? (
-                          <div
-                            className="pointer-events-none absolute bottom-0 top-0 z-[1] w-px bg-blue-400/80"
-                            style={{ left: todayIndicatorOffset }}
-                          />
-                        ) : null}
-                      </div>
+                      <TimelinePeriodHeader
+                        periods={visibleTimelineWindow.periods}
+                        periodWidth={periodWidth}
+                        timelineWidth={timelineWidth}
+                        visibleStartIndex={visibleTimelineWindow.startIndex}
+                        visibleOffsetPx={visibleTimelineWindow.offsetPx}
+                        visibleWidthPx={visibleTimelineWindow.widthPx}
+                        todayIndex={todayIndex}
+                        todayIndicatorOffset={todayIndicatorOffset}
+                      />
                     </div>
 
                     {visibleKeyResultTimelineItems.map((keyResult) => {
@@ -1768,10 +2235,11 @@ function TasksPageContent() {
                           <div className={`sticky left-0 z-20 border-r border-slate-200 bg-white px-5 py-4 ${STICKY_PANEL_SHADOW}`}>
                             <div className="flex items-start justify-between gap-3">
                               <div>
-                                <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">Key Result</p>
-                                <p className="mt-1 text-sm font-semibold text-slate-900">{keyResult.name}</p>
+                                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                                  <p className="text-sm font-semibold text-slate-900">{keyResult.name}</p>
+                                  <p className="text-xs text-slate-500">{keyResult.metric}</p>
+                                </div>
                                 <p className="mt-1 text-xs text-slate-500">{keyResult.goalName}</p>
-                                <p className="mt-1 text-xs text-slate-500">{keyResult.metric}</p>
                                 <p className="mt-1 text-[11px] text-slate-400">
                                   {keyResult.taskCount} công việc ·{" "}
                                   {formatTimelineRangeVi(keyResult.startDate, keyResult.endDate, {
@@ -1790,17 +2258,15 @@ function TasksPageContent() {
                             </div>
                           </div>
                           <div className="relative min-h-[86px] bg-white">
-                            <div
-                              className="absolute inset-0 grid"
-                              style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}
-                            >
-                              {periods.map((period, index) => (
-                                <div
-                                  key={`${keyResult.id}-${period.key}`}
-                                  className={`border-l border-slate-100 ${index === todayIndex ? "bg-blue-50/40" : ""}`}
-                                />
-                              ))}
-                            </div>
+                            <TimelinePeriodBackground
+                              rowKey={keyResult.id}
+                              periods={visibleTimelineWindow.periods}
+                              periodWidth={periodWidth}
+                              visibleStartIndex={visibleTimelineWindow.startIndex}
+                              visibleOffsetPx={visibleTimelineWindow.offsetPx}
+                              visibleWidthPx={visibleTimelineWindow.widthPx}
+                              todayIndex={todayIndex}
+                            />
                             {todayIndicatorOffset !== null ? (
                               <div
                                 className="pointer-events-none absolute inset-y-0 z-[1] w-px bg-blue-400/75"
@@ -1813,13 +2279,17 @@ function TasksPageContent() {
                                   ? `/tasks/new?goalId=${keyResult.goalId}&keyResultId=${keyResult.id}`
                                   : "/tasks"
                               }
-                              title={`${keyResult.name}\n${formatTimelineRangeVi(keyResult.startDate, keyResult.endDate, {
+                              title={`${keyResult.name}\nTiến độ: ${keyResult.progress}%\n${formatTimelineRangeVi(keyResult.startDate, keyResult.endDate, {
                                 fallback: "KR chưa có mốc thời gian",
                               })}`}
-                              className="absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl bg-slate-900 px-3 text-left text-white shadow-sm transition hover:bg-slate-800"
+                              className="absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl border border-slate-300 bg-slate-200 px-3 text-left shadow-sm transition hover:bg-slate-300"
                               style={{ left: barLayout.left, width: barLayout.width }}
                             >
-                              <span className="truncate text-sm font-semibold">{keyResult.name}</span>
+                              <TimelineBarContent
+                                label={keyResult.name}
+                                progress={keyResult.progress}
+                                width={barLayout.width}
+                              />
                             </Link>
                           </div>
                         </div>
@@ -1832,6 +2302,7 @@ function TasksPageContent() {
               <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
                 <div
                   ref={timelineScrollRef}
+                  onScroll={handleTimelineScroll}
                   onWheel={handleTimelineWheel}
                   className="overflow-x-auto overflow-y-hidden rounded-2xl overscroll-x-contain scroll-smooth [scrollbar-gutter:stable]"
                 >
@@ -1849,25 +2320,16 @@ function TasksPageContent() {
                           Mỗi dòng là một công việc với mốc thực thi riêng.
                         </p>
                       </div>
-                      <div className="relative grid" style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}>
-                        {periods.map((period, index) => (
-                          <div
-                            key={period.key}
-                            className={`border-l border-slate-200 px-2 py-3 text-center ${
-                              index === todayIndex ? "bg-blue-50/70" : ""
-                            }`}
-                          >
-                            <p className="text-xs font-semibold text-slate-700">{period.label}</p>
-                            <p className="mt-1 text-[11px] text-slate-500">{period.subLabel}</p>
-                          </div>
-                        ))}
-                        {todayIndicatorOffset !== null ? (
-                          <div
-                            className="pointer-events-none absolute bottom-0 top-0 z-[1] w-px bg-blue-400/80"
-                            style={{ left: todayIndicatorOffset }}
-                          />
-                        ) : null}
-                      </div>
+                      <TimelinePeriodHeader
+                        periods={visibleTimelineWindow.periods}
+                        periodWidth={periodWidth}
+                        timelineWidth={timelineWidth}
+                        visibleStartIndex={visibleTimelineWindow.startIndex}
+                        visibleOffsetPx={visibleTimelineWindow.offsetPx}
+                        visibleWidthPx={visibleTimelineWindow.widthPx}
+                        todayIndex={todayIndex}
+                        todayIndicatorOffset={todayIndicatorOffset}
+                      />
                     </div>
 
                     {visibleTasks.map((task) => {
@@ -1909,6 +2371,7 @@ function TasksPageContent() {
                                   {task.type === "okr" ? "Công việc OKR" : "Công việc KPI"}
                                   {" · "}
                                   {task.assigneeName}
+                                  {task.isRecurring ? " · Lặp lại" : ""}
                                 </p>
                                 <div className="mt-2 flex flex-wrap items-center gap-2">
                                   <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">
@@ -1941,13 +2404,14 @@ function TasksPageContent() {
                                       min={0}
                                       max={100}
                                       value={quickEditState.progress}
+                                      disabled={task.type === "okr"}
                                       onChange={(event) =>
                                         setQuickEditState((prev) => ({
                                           ...prev,
                                           progress: event.target.value,
                                         }))
                                       }
-                                      className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                      className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                                     />
                                   </label>
                                   <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
@@ -2002,9 +2466,11 @@ function TasksPageContent() {
                                   </label>
                                 </div>
                                 <p className="mt-2 text-[11px] text-slate-500">
-                                  {task.keyResultId
-                                    ? "Giá trị ban đầu được autofill từ KR nếu task chưa có ngày. Khi lưu, thay đổi chỉ áp dụng cho công việc này."
-                                    : "Task này chưa gắn Key Result. Bạn vẫn có thể đặt mốc thời gian riêng cho công việc."}
+                                  {task.type === "okr"
+                                    ? "Task OKR lấy progress theo trạng thái hiện tại. Quick edit ở đây chỉ cập nhật trọng số và timeline."
+                                    : task.keyResultId
+                                      ? "Giá trị ban đầu được autofill từ KR nếu task chưa có ngày. Khi lưu, thay đổi chỉ áp dụng cho công việc này."
+                                      : "Task này chưa gắn Key Result. Bạn vẫn có thể đặt mốc thời gian riêng cho công việc."}
                                 </p>
                                 {quickEditAlignmentWarning ? (
                                   <p className="mt-1 text-[11px] text-amber-600">{quickEditAlignmentWarning}</p>
@@ -2031,17 +2497,15 @@ function TasksPageContent() {
                           </div>
 
                           <div className="relative min-h-[92px] bg-white">
-                            <div
-                              className="absolute inset-0 grid"
-                              style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}
-                            >
-                              {periods.map((period, index) => (
-                                <div
-                                  key={`${task.id}-${period.key}`}
-                                  className={`border-l border-slate-100 ${index === todayIndex ? "bg-blue-50/40" : ""}`}
-                                />
-                              ))}
-                            </div>
+                            <TimelinePeriodBackground
+                              rowKey={task.id}
+                              periods={visibleTimelineWindow.periods}
+                              periodWidth={periodWidth}
+                              visibleStartIndex={visibleTimelineWindow.startIndex}
+                              visibleOffsetPx={visibleTimelineWindow.offsetPx}
+                              visibleWidthPx={visibleTimelineWindow.widthPx}
+                              todayIndex={todayIndex}
+                            />
                             {todayIndicatorOffset !== null ? (
                               <div
                                 className="pointer-events-none absolute inset-y-0 z-[1] w-px bg-blue-400/75"
@@ -2082,7 +2546,7 @@ function TasksPageContent() {
                         </tr>
                       </thead>
                       <tbody>
-                        {goalTimelineItems.map((goal) => (
+                        {filteredGoalTimelineItems.map((goal) => (
                           <tr key={goal.id} className="border-b border-slate-100 align-top">
                             <td className="px-5 py-4">
                               <p className="text-sm font-semibold text-slate-900">{goal.name}</p>
@@ -2126,7 +2590,7 @@ function TasksPageContent() {
                         </tr>
                       </thead>
                       <tbody>
-                        {keyResultTimelineItems.map((keyResult) => (
+                        {filteredKeyResultTimelineItems.map((keyResult) => (
                           <tr key={keyResult.id} className="border-b border-slate-100 align-top">
                             <td className="px-5 py-4">
                               <p className="text-sm font-semibold text-slate-900">{keyResult.name}</p>
@@ -2162,7 +2626,7 @@ function TasksPageContent() {
                       <thead>
                         <tr className="border-b border-slate-200 text-[11px] uppercase tracking-[0.08em] text-slate-400">
                           <th className="px-5 py-3 font-semibold">Công việc</th>
-                          <th className="px-4 py-3 font-semibold">Kết quả then chốt</th>
+                          <th className="px-4 py-3 font-semibold">KR</th>
                           <th className="px-4 py-3 font-semibold">Mục tiêu</th>
                           <th className="px-4 py-3 font-semibold">Người phụ trách</th>
                           <th className="px-4 py-3 font-semibold">Trạng thái</th>
@@ -2201,6 +2665,7 @@ function TasksPageContent() {
                                   </Link>
                                   <p className="mt-1 text-xs text-slate-500">
                                     {task.type?.toUpperCase() ?? "KPI"} · {task.progress}%
+                                    {task.isRecurring ? " · Lặp lại" : ""}
                                   </p>
                                 </td>
                                 <td className="px-4 py-4">
@@ -2270,13 +2735,14 @@ function TasksPageContent() {
                                           min={0}
                                           max={100}
                                           value={quickEditState.progress}
+                                          disabled={task.type === "okr"}
                                           onChange={(event) =>
                                             setQuickEditState((prev) => ({
                                               ...prev,
                                               progress: event.target.value,
                                             }))
                                           }
-                                          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                                         />
                                       </label>
                                       <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
@@ -2348,9 +2814,11 @@ function TasksPageContent() {
                                       </div>
                                     </div>
                                     <p className="mt-2 text-[11px] text-slate-500">
-                                      {task.keyResultId
-                                        ? "Giá trị ban đầu được autofill từ KR nếu task chưa có ngày. Khi lưu, thay đổi chỉ áp dụng cho công việc này."
-                                        : "Task này chưa gắn Key Result. Bạn vẫn có thể đặt mốc thời gian riêng cho công việc."}
+                                      {task.type === "okr"
+                                        ? "Task OKR lấy progress theo trạng thái hiện tại. Quick edit ở đây chỉ cập nhật trọng số và timeline."
+                                        : task.keyResultId
+                                          ? "Giá trị ban đầu được autofill từ KR nếu task chưa có ngày. Khi lưu, thay đổi chỉ áp dụng cho công việc này."
+                                          : "Task này chưa gắn Key Result. Bạn vẫn có thể đặt mốc thời gian riêng cho công việc."}
                                     </p>
                                     {quickEditAlignmentWarning ? (
                                       <p className="mt-1 text-[11px] text-amber-600">{quickEditAlignmentWarning}</p>

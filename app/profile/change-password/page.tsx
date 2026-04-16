@@ -91,12 +91,6 @@ export default function ChangePasswordPage() {
                 <h1 className="mt-1 text-3xl font-semibold tracking-[-0.02em] text-slate-900">Đổi mật khẩu</h1>
               </div>
 
-              <Link
-                href="/profile"
-                className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-              >
-                Quay lại hồ sơ
-              </Link>
             </div>
           </header>
 

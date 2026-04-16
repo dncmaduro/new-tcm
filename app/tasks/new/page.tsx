@@ -6,6 +6,7 @@ import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { ClearableNumberInput } from "@/components/ui/clearable-number-input";
 import { supabase } from "@/lib/supabase";
+import { getKeyResultWeightHelp, isKeyResultWeightApplied } from "@/lib/constants/goals";
 import {
   getTaskProgressByType,
   getTaskProgressHint,
@@ -15,7 +16,9 @@ import {
   TaskTypeValue,
 } from "@/lib/constants/tasks";
 import {
+  formatKeyResultContributionTypeLabel,
   formatKeyResultMetric,
+  formatKeyResultTypeLabel,
   formatKeyResultUnit,
   getKeyResultProgressHint,
 } from "@/lib/constants/key-results";
@@ -54,7 +57,10 @@ type KeyResultOption = {
   id: string;
   goalId: string | null;
   goalName: string;
+  goalType: string | null;
   name: string;
+  type: string | null;
+  contributionType: string | null;
   progress: number;
   startValue: number;
   target: number;
@@ -90,6 +96,9 @@ type TaskFormState = {
   progress: number;
   status: TaskStatusValue;
   note: string;
+  isRecurring: boolean;
+  hypothesis: string;
+  result: string;
   weight: number;
   startDate: string;
   endDate: string;
@@ -105,6 +114,9 @@ const defaultForm: TaskFormState = {
   progress: 0,
   status: TASK_STATUSES[0].value,
   note: "",
+  isRecurring: false,
+  hypothesis: "",
+  result: "",
   weight: 1,
   startDate: "",
   endDate: "",
@@ -179,7 +191,6 @@ function NewTaskPageContent() {
         const [
           { data: goalsData, error: goalsError },
           { data: keyResultsData, error: keyResultsError },
-          { data: taskRows, error: taskRowsError },
           { data: allDepartmentsData },
           { data: profilesData, error: profilesError },
         ] =
@@ -194,6 +205,8 @@ function NewTaskPageContent() {
                 id,
                 goal_id,
                 name,
+                type,
+                contribution_type,
                 start_value,
                 target,
                 current,
@@ -205,13 +218,13 @@ function NewTaskPageContent() {
                 goal:goals!key_results_goal_id_fkey(
                   id,
                   name,
+                  type,
                   department_id,
                   start_date,
                   end_date
                 )
               `)
               .order("created_at", { ascending: false }),
-            supabase.from("tasks").select("id,key_result_id,type,status,progress,weight"),
             supabase.from("departments").select("id,name"),
             supabase.from("profiles").select("id,name,email").order("name", { ascending: true }),
           ]);
@@ -236,34 +249,16 @@ function NewTaskPageContent() {
             endDate: goal.end_date ? String(goal.end_date) : null,
           };
         });
-        const taskProgressByKeyResultId = buildKeyResultProgressMap(
-          ((keyResultsData ?? []) as Array<{ id: string; goal_id: string | null }>).map((keyResult) => ({
-            id: String(keyResult.id),
-            goal_id: keyResult.goal_id ? String(keyResult.goal_id) : null,
-          })),
-          ((taskRows ?? []) as Array<{
-            key_result_id: string | null;
-            type: string | null;
-            status: string | null;
-            progress: number | null;
-            weight: number | null;
-          }>).map((task) => ({
-            key_result_id: task.key_result_id ? String(task.key_result_id) : null,
-            type: task.type ? String(task.type) : null,
-            status: task.status ? String(task.status) : null,
-            progress: task.progress,
-            weight: task.weight,
-          })),
-        );
-
-        const mappedKeyResults: KeyResultOption[] = ((keyResultsData ?? []) as Array<Record<string, unknown>>).map((keyResult) => {
+        const baseKeyResults = ((keyResultsData ?? []) as Array<Record<string, unknown>>).map((keyResult) => {
           const goalRow = Array.isArray(keyResult.goal) ? keyResult.goal[0] ?? null : keyResult.goal ?? null;
           return {
             id: String(keyResult.id),
             goalId: keyResult.goal_id ? String(keyResult.goal_id) : null,
             goalName: goalRow?.name ? String(goalRow.name) : "Chưa có mục tiêu",
+            goalType: goalRow?.type ? String(goalRow.type) : null,
             name: String(keyResult.name),
-            progress: taskProgressByKeyResultId[String(keyResult.id)] ?? 0,
+            type: keyResult.type ? String(keyResult.type) : null,
+            contributionType: keyResult.contribution_type ? String(keyResult.contribution_type) : null,
             startValue:
               typeof keyResult.start_value === "number"
                 ? keyResult.start_value
@@ -276,6 +271,20 @@ function NewTaskPageContent() {
             endDate: keyResult.end_date ? String(keyResult.end_date) : null,
           };
         });
+
+        const keyResultProgressById = buildKeyResultProgressMap(
+          baseKeyResults.map((keyResult) => ({
+            id: keyResult.id,
+            goal_id: keyResult.goalId,
+            start_value: keyResult.startValue,
+            current: keyResult.current,
+            target: keyResult.target,
+          })),
+        );
+        const mappedKeyResults: KeyResultOption[] = baseKeyResults.map((keyResult) => ({
+          ...keyResult,
+          progress: keyResultProgressById[keyResult.id] ?? 0,
+        }));
         setKeyResultOptions(mappedKeyResults);
 
         setGoalOptions(mappedGoals);
@@ -296,9 +305,6 @@ function NewTaskPageContent() {
         }
         if (keyResultsError) {
           loadErrorMessages.push("Không tải được danh sách key result.");
-        }
-        if (taskRowsError) {
-          loadErrorMessages.push("Không tải được tiến độ task để tính progress cho key result.");
         }
         if (profilesError) {
           loadErrorMessages.push(
@@ -333,10 +339,13 @@ function NewTaskPageContent() {
           ...prev,
           goalId: preselectedGoalId,
           keyResultId: preselectedGoalKeyResult?.id ?? "",
-          profileId: mappedProfiles[0]?.id ?? "",
-          startDate: preselectedGoalKeyResult?.startDate ?? "",
-          endDate: preselectedGoalKeyResult?.endDate ?? "",
-        }));
+        profileId: mappedProfiles[0]?.id ?? "",
+        startDate: preselectedGoalKeyResult?.startDate ?? "",
+        endDate: preselectedGoalKeyResult?.endDate ?? "",
+        isRecurring: false,
+        hypothesis: "",
+        result: "",
+      }));
       } catch {
         if (isActive) {
           setGoalOptions([]);
@@ -442,6 +451,7 @@ function NewTaskPageContent() {
     try {
       const payload = {
         key_result_id: form.keyResultId.trim(),
+        assignee_id: form.profileId,
         profile_id: form.profileId,
         creator_profile_id: creatorProfileId,
         type: form.type,
@@ -450,6 +460,9 @@ function NewTaskPageContent() {
         progress: getTaskProgressByType(form.type, form.status, form.progress),
         status: form.status,
         note: form.note.trim() || null,
+        is_recurring: form.isRecurring,
+        hypothesis: form.hypothesis.trim() || null,
+        result: form.result.trim() || null,
         weight: Math.round(form.weight),
         start_date: form.startDate.trim() || null,
         end_date: form.endDate.trim() || null,
@@ -494,14 +507,6 @@ function NewTaskPageContent() {
                 </Link>
                 <span className="px-2">›</span>
                 <span className="font-semibold text-slate-700">Tạo công việc mới</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Link
-                  href="/tasks"
-                  className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Quay lại
-                </Link>
               </div>
             </div>
           </header>
@@ -571,9 +576,9 @@ function NewTaskPageContent() {
                     <div className="space-y-1.5">
                       <label className="text-sm font-semibold text-slate-700">Mục tiêu</label>
                       <Select
-                        value={form.goalId || "__no_goal__"}
+                        value={form.goalId || undefined}
                         onValueChange={(value) => {
-                          const nextGoalId = value === "__no_goal__" ? "" : value;
+                          const nextGoalId = value;
                           const nextGoalKeyResults = keyResultOptions.filter((keyResult) => keyResult.goalId === nextGoalId);
                           setForm((prev) => ({
                             ...prev,
@@ -606,7 +611,6 @@ function NewTaskPageContent() {
                           <SelectValue placeholder="Chọn mục tiêu" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="__no_goal__">Chọn theo key result</SelectItem>
                           {goalOptions.map((goal) => (
                             <SelectItem key={goal.id} value={goal.id}>
                               {goal.name}
@@ -674,6 +678,9 @@ function NewTaskPageContent() {
                         <div>
                           <p className="text-sm font-semibold text-slate-900">{selectedKeyResult.name}</p>
                           <p className="mt-1 text-xs text-slate-600">
+                            {formatKeyResultTypeLabel(selectedKeyResult.type)} /{" "}
+                            {formatKeyResultContributionTypeLabel(selectedKeyResult.contributionType)}
+                            {" · "}
                             Start {formatKeyResultMetric(selectedKeyResult.startValue, selectedKeyResult.unit)}
                             {" · "}
                             Tiến độ {selectedKeyResult.progress}% · {formatKeyResultMetric(selectedKeyResult.current, selectedKeyResult.unit)}
@@ -696,11 +703,22 @@ function NewTaskPageContent() {
                           </p>
                         </div>
                         <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-blue-700">
-                          Trọng số KR {Math.round(Number(selectedKeyResult.weight ?? 1))}%
+                          {isKeyResultWeightApplied(
+                            selectedKeyResult.goalType,
+                            selectedKeyResult.contributionType,
+                          )
+                            ? `Trọng số KR ${Math.round(Number(selectedKeyResult.weight ?? 1))}%`
+                            : "Trọng số KR không áp dụng"}
                         </span>
                       </div>
                       <p className="mt-3 text-[11px] text-slate-500">
                         {getKeyResultProgressHint(selectedKeyResult.unit)}
+                      </p>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {getKeyResultWeightHelp(
+                          selectedKeyResult.goalType,
+                          selectedKeyResult.contributionType,
+                        )}
                       </p>
                     </div>
                   ) : null}
@@ -909,7 +927,7 @@ function NewTaskPageContent() {
                       <div className="flex h-11 items-center rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700">
                         {form.type === "okr"
                           ? `${TASK_STATUSES.find((item) => item.value === form.status)?.label ?? "Cần làm"} = ${getTaskProgressByType(form.type, form.status, form.progress)}%`
-                          : "Nhập trực tiếp theo % hoàn thành, sau đó KR sẽ lấy trung bình có trọng số từ các task"}
+                          : "Nhập trực tiếp theo % hoàn thành của task. Giá trị này chỉ phản ánh execution progress và không tự cập nhật current của KR."}
                       </div>
                     </div>
                   </div>
@@ -926,17 +944,19 @@ function NewTaskPageContent() {
                     />
                   </div>
 
-                  <div className="space-y-1.5">
-                    <label htmlFor="task-note" className="text-sm font-semibold text-slate-700">Ghi chú</label>
-                    <textarea
-                      id="task-note"
-                      rows={3}
-                      value={form.note}
-                      onChange={(event) => setForm((prev) => ({ ...prev, note: event.target.value }))}
-                      className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                      placeholder="Ghi chú nội bộ"
-                    />
-                  </div>
+                  {!form.description.trim() ? (
+                    <div className="space-y-1.5">
+                      <label htmlFor="task-note" className="text-sm font-semibold text-slate-700">Ghi chú</label>
+                      <textarea
+                        id="task-note"
+                        rows={3}
+                        value={form.note}
+                        onChange={(event) => setForm((prev) => ({ ...prev, note: event.target.value }))}
+                        className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        placeholder="Ghi chú nội bộ"
+                      />
+                    </div>
+                  ) : null}
 
                   <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
                     <Link

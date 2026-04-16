@@ -14,16 +14,30 @@ import {
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { GOAL_STATUSES, GOAL_TYPES } from "@/lib/constants/goals";
-import { TASK_STATUSES } from "@/lib/constants/tasks";
-import { buildGoalProgressMap, buildKeyResultProgressMap, getComputedTaskProgress } from "@/lib/okr";
+import {
+  GOAL_STATUSES,
+  GOAL_TYPES,
+  formatGoalTypeLabel,
+  getGoalProgressHelp,
+  normalizeGoalTypeValue,
+} from "@/lib/constants/goals";
+import {
+  buildGoalProgressMap,
+  buildKeyResultProgressMap,
+} from "@/lib/okr";
+import {
+  formatKeyResultMetric,
+  formatKeyResultUnit,
+} from "@/lib/constants/key-results";
+import {
+  formatGoalOwnersSummary,
+  getGoalOwnerSearchText,
+  loadGoalOwnersByGoalIds,
+  type GoalOwnerProfile,
+} from "@/lib/goal-owners";
 import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
-import {
-  formatTimelineRangeVi,
-  getTimelineMissingReason,
-  getTimelineOutsideParentWarning,
-} from "@/lib/timeline";
+import { formatTimelineRangeVi } from "@/lib/timeline";
 
 type Mode = "canvas" | "list";
 const GOALS_LIST_PAGE_SIZE = 10;
@@ -32,6 +46,8 @@ type GoalKeyResultPreview = {
   id: string;
   name: string;
   progress: number;
+  contributionType: string | null;
+  supportTargetSummary: string | null;
 };
 
 type GoalNode = {
@@ -46,18 +62,18 @@ type GoalNode = {
   quy: string;
   quarter: number | null;
   year: number | null;
-  ownerName: string;
-  ownerAvatar: string | null;
+  owners: GoalOwnerProfile[];
+  ownersSummary: string;
   statusLabel: string;
   moTa: string;
   progress: number;
   status: string;
+  target: number | null;
+  unit: string | null;
   createdAt: string | null;
-  parentGoalId: string | null;
   keyResultCount: number;
   taskCount: number;
   keyResultsPreview: GoalKeyResultPreview[];
-  ownerId: string | null;
   startDate: string | null;
   endDate: string | null;
   healthStatus: "on_track" | "at_risk" | "off_track";
@@ -71,6 +87,45 @@ type GoalEdge = {
   to: string;
 };
 
+type GoalCanvasKeyResultNode = {
+  id: string;
+  goalId: string;
+  keyResultId: string;
+  name: string;
+  progress: number;
+  contributionType: string | null;
+  supportTargetSummary: string | null;
+  x: number;
+  y: number;
+};
+
+type CanvasNodePosition = {
+  x: number;
+  y: number;
+};
+
+type CanvasBounds = {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+};
+
+type CanvasEdgeFrame = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type CanvasDragTarget =
+  | { type: "goal"; id: string }
+  | { type: "key_result"; id: string; goalId: string; keyResultId: string };
+
+type CanvasFocusTarget =
+  | { type: "goal"; goalId: string }
+  | { type: "key_result"; goalId: string; keyResultId: string };
+
 type GoalRow = {
   id: string;
   name: string;
@@ -81,8 +136,8 @@ type GoalRow = {
   quarter: number | null;
   year: number | null;
   note: string | null;
-  parent_goal_id: string | null;
-  owner_id: string | null;
+  target: number | null;
+  unit: string | null;
   created_at: string | null;
   start_date: string | null;
   end_date: string | null;
@@ -92,58 +147,24 @@ type KeyResultRow = {
   id: string;
   goal_id: string;
   name: string;
+  contribution_type: string | null;
+  start_value: number | null;
+  current: number | null;
+  target: number | null;
+  unit: string | null;
   weight: number | null;
   start_date: string | null;
   end_date: string | null;
+};
+
+type KeyResultSupportLinkRow = {
+  support_key_result_id: string | null;
+  target_key_result_id: string | null;
 };
 
 type GoalDepartmentParticipationRow = {
   goal_id: string | null;
   department_id: string | null;
-};
-
-type GoalTaskRow = {
-  id: string;
-  name: string;
-  type: string | null;
-  status: string | null;
-  progress: number | null;
-  weight: number | null;
-  profile_id: string | null;
-  start_date: string | null;
-  end_date: string | null;
-  key_result_id: string | null;
-  key_result?: { id: string; name: string; goal_id: string | null; goal?: { id: string; name: string } | null } | null;
-};
-
-type GoalTaskItem = {
-  id: string;
-  tieuDe: string;
-  loai: string;
-  trangThai: string;
-  nguoiPhuTrach: string;
-  tienDo: number;
-  startDate: string | null;
-  endDate: string | null;
-};
-
-type GoalKeyResultPanelItem = {
-  id: string;
-  name: string;
-  progress: number;
-  current: number;
-  target: number;
-  unit: string | null;
-  startDate: string | null;
-  endDate: string | null;
-  tasks: GoalTaskItem[];
-};
-
-type GoalOwnerProfileRow = {
-  id: string;
-  name: string | null;
-  avatar: string | null;
-  email: string | null;
 };
 
 type ActivityLogAction =
@@ -191,23 +212,18 @@ type GoalCreatePermissionDebug = {
 
 const CARD_WIDTH = 320;
 const CARD_HEIGHT = 286;
+const KR_CARD_WIDTH = 216;
+const KR_CARD_HEIGHT = 112;
+const KR_CARD_GAP = 36;
+const GOAL_TO_KR_GAP = 128;
 const WORLD_WIDTH = 3200;
 const WORLD_HEIGHT = 2200;
 const WORLD_INITIAL_SCALE = 0.86;
 const WORLD_MIN_SCALE = 0.2;
 const WORLD_MAX_SCALE = 1.4;
-
-const typeLabelMap = GOAL_TYPES.reduce<Record<string, string>>((acc, item) => {
-  acc[item.value] = item.label;
-  return acc;
-}, {});
+const CANVAS_DRAG_THRESHOLD = 5;
 
 const statusLabelMap = GOAL_STATUSES.reduce<Record<string, string>>((acc, item) => {
-  acc[item.value] = item.label;
-  return acc;
-}, {});
-
-const taskStatusLabelMap = TASK_STATUSES.reduce<Record<string, string>>((acc, item) => {
   acc[item.value] = item.label;
   return acc;
 }, {});
@@ -230,7 +246,6 @@ const goalLogFieldLabelMap: Record<string, string> = {
   quarter: "Quý",
   year: "Năm",
   note: "Ghi chú",
-  parent_goal_id: "Mục tiêu cha",
   start_date: "Ngày bắt đầu",
   end_date: "Ngày kết thúc",
 };
@@ -396,29 +411,14 @@ const buildGoalGraph = (
   departmentsById: Record<string, string>,
   goalDepartmentNamesByGoalId: Record<string, string[]>,
   keyResultsByGoalId: Record<string, GoalKeyResultPreview[]>,
+  supportTargetIdsByKeyResultId: Record<string, string[]>,
   taskCountByGoalId: Record<string, number>,
   goalProgressById: Record<string, number>,
-  ownerProfilesById: Record<string, { name: string; avatar: string | null }>,
-): { nodes: GoalNode[]; edges: GoalEdge[] } => {
+  goalOwnersByGoalId: Record<string, GoalOwnerProfile[]>,
+): { nodes: GoalNode[]; edges: GoalEdge[]; keyResultNodePositions: Record<string, CanvasNodePosition> } => {
   if (!rows.length) {
-    return { nodes: [], edges: [] };
+    return { nodes: [], edges: [], keyResultNodePositions: {} };
   }
-
-  const rowById = rows.reduce<Record<string, GoalRow>>((acc, row) => {
-    acc[row.id] = row;
-    return acc;
-  }, {});
-
-  const childIdsByParent = rows.reduce<Record<string, string[]>>((acc, row) => {
-    if (!row.parent_goal_id || !rowById[row.parent_goal_id]) {
-      return acc;
-    }
-    if (!acc[row.parent_goal_id]) {
-      acc[row.parent_goal_id] = [];
-    }
-    acc[row.parent_goal_id].push(row.id);
-    return acc;
-  }, {});
 
   const sortRows = (items: GoalRow[]) =>
     [...items].sort((a, b) => {
@@ -430,87 +430,45 @@ const buildGoalGraph = (
       return a.name.localeCompare(b.name, "vi");
     });
 
-  const roots = sortRows(
-    rows.filter((row) => !row.parent_goal_id || !rowById[row.parent_goal_id]),
-  );
-
-  const levelById: Record<string, number> = {};
-  const queue = roots.map((row) => row.id);
-  roots.forEach((row) => {
-    levelById[row.id] = 0;
-  });
-
-  while (queue.length) {
-    const currentId = queue.shift() as string;
-    const children = (childIdsByParent[currentId] ?? [])
-      .map((id) => rowById[id])
-      .filter(Boolean);
-    const sortedChildren = sortRows(children);
-
-    sortedChildren.forEach((child) => {
-      if (levelById[child.id] !== undefined) {
-        return;
-      }
-      levelById[child.id] = (levelById[currentId] ?? 0) + 1;
-      queue.push(child.id);
-    });
-  }
-
-  rows.forEach((row) => {
-    if (levelById[row.id] === undefined) {
-      levelById[row.id] = 0;
-    }
-  });
-
-  const rowsByLevel = rows.reduce<Record<number, GoalRow[]>>((acc, row) => {
-    const level = levelById[row.id] ?? 0;
-    if (!acc[level]) {
-      acc[level] = [];
-    }
-    acc[level].push(row);
-    return acc;
-  }, {});
-
-  const horizontalGap = CARD_WIDTH + 120;
-  const topPadding = 180;
-  const levelGap = CARD_HEIGHT + 190;
+  const sortedRows = sortRows(rows);
+  const topPadding = 140;
+  const sidePadding = 96;
+  const horizontalGap = 144;
+  const verticalGap = 136;
 
   const positionedNodes: GoalNode[] = [];
-  const levels = Object.keys(rowsByLevel)
-    .map(Number)
-    .sort((a, b) => a - b);
-
-  levels.forEach((level) => {
-    const levelRows = sortRows(rowsByLevel[level]);
-    const totalWidth = levelRows.length * CARD_WIDTH + (levelRows.length - 1) * 120;
-    const startX = Math.max(24, (WORLD_WIDTH - totalWidth) / 2);
-    const y = Math.min(
-      WORLD_HEIGHT - CARD_HEIGHT - 24,
-      Math.max(24, topPadding + level * levelGap),
+  const layoutItems = sortedRows.map((row) => {
+    const statusLabel = row.status ? statusLabelMap[row.status] ?? row.status : "Nháp";
+    const normalizedGoalType = normalizeGoalTypeValue(row.type);
+    const typeLabel = formatGoalTypeLabel(normalizedGoalType);
+    const progress = goalProgressById[row.id] ?? 0;
+    const goalOwners = goalOwnersByGoalId[row.id] ?? [];
+    const participatingDepartmentNames = goalDepartmentNamesByGoalId[row.id] ?? [];
+    const primaryDepartmentName = row.department_id
+      ? departmentsById[row.department_id] ?? "Chưa có phòng ban"
+      : participatingDepartmentNames[0] ?? "Chưa có phòng ban";
+    const mergedDepartmentNames = Array.from(
+      new Set([primaryDepartmentName, ...participatingDepartmentNames].filter(Boolean)),
     );
+    const healthStatus = getGoalHealthStatus({
+      endDate: row.end_date ?? null,
+      hasKeyResults: (keyResultsByGoalId[row.id]?.length ?? 0) > 0,
+      progress,
+    });
+    const keyResultCount = keyResultsByGoalId[row.id]?.length ?? 0;
+    const keyResultFootprintWidth =
+      keyResultCount > 0
+        ? keyResultCount * KR_CARD_WIDTH + (keyResultCount - 1) * KR_CARD_GAP
+        : 0;
+    const footprintWidth = Math.max(CARD_WIDTH, keyResultFootprintWidth);
+    const footprintHeight =
+      CARD_HEIGHT + (keyResultCount > 0 ? GOAL_TO_KR_GAP + KR_CARD_HEIGHT : 0);
 
-    levelRows.forEach((row, index) => {
-      const statusLabel = row.status ? statusLabelMap[row.status] ?? row.status : "Nháp";
-      const typeLabel = row.type ? typeLabelMap[row.type] ?? row.type.toUpperCase() : "KPI";
-      const progress = goalProgressById[row.id] ?? 0;
-      const ownerProfile = row.owner_id ? ownerProfilesById[row.owner_id] ?? null : null;
-      const participatingDepartmentNames = goalDepartmentNamesByGoalId[row.id] ?? [];
-      const primaryDepartmentName = row.department_id
-        ? departmentsById[row.department_id] ?? "Chưa có phòng ban"
-        : participatingDepartmentNames[0] ?? "Chưa có phòng ban";
-      const mergedDepartmentNames = Array.from(
-        new Set([primaryDepartmentName, ...participatingDepartmentNames].filter(Boolean)),
-      );
-      const healthStatus = getGoalHealthStatus({
-        endDate: row.end_date ?? null,
-        hasKeyResults: (keyResultsByGoalId[row.id]?.length ?? 0) > 0,
-        progress,
-      });
-
-      positionedNodes.push({
+    return {
+      node: {
         id: row.id,
         nhom: typeLabel,
-        loai: row.type ?? "stats",
+        loai: normalizedGoalType,
         tieuDe: row.name,
         phongBan: primaryDepartmentName,
         teamSummary:
@@ -522,39 +480,135 @@ const buildGoalGraph = (
         quy: formatQuarterYear(row.quarter, row.year),
         quarter: row.quarter ?? null,
         year: row.year ?? null,
-        ownerName: ownerProfile?.name ?? "Chưa gán owner",
-        ownerAvatar: ownerProfile?.avatar ?? null,
+        owners: goalOwners,
+        ownersSummary: formatGoalOwnersSummary(goalOwners, { limit: 2 }),
         statusLabel,
         moTa: row.description || row.note || "Chưa có mô tả",
         progress,
         status: row.status ?? "draft",
+        target:
+          row.target === null || row.target === undefined
+            ? null
+            : typeof row.target === "number"
+              ? row.target
+              : Number(row.target),
+        unit: row.unit ? String(row.unit) : null,
         createdAt: row.created_at ?? null,
-        parentGoalId: row.parent_goal_id,
-        keyResultCount: keyResultsByGoalId[row.id]?.length ?? 0,
+        keyResultCount,
         taskCount: taskCountByGoalId[row.id] ?? 0,
-        keyResultsPreview: (keyResultsByGoalId[row.id] ?? []).slice(0, 3),
-        ownerId: row.owner_id ? String(row.owner_id) : null,
+        keyResultsPreview: keyResultsByGoalId[row.id] ?? [],
         startDate: row.start_date ?? null,
         endDate: row.end_date ?? null,
         healthStatus,
-        x: Math.min(
-          WORLD_WIDTH - CARD_WIDTH - 24,
-          Math.max(24, startX + index * horizontalGap),
-        ),
-        y,
         mau: getColorByStatus(row.status),
-      });
-    });
+      },
+      footprintWidth,
+      footprintHeight,
+    };
   });
 
-  const edges: GoalEdge[] = rows
-    .filter((row) => row.parent_goal_id && rowById[row.parent_goal_id])
-    .map((row) => ({
-      from: row.parent_goal_id as string,
-      to: row.id,
-    }));
+  const maxRowWidth = WORLD_WIDTH - sidePadding * 2;
+  const layoutRows: Array<typeof layoutItems> = [];
+  let currentRow: typeof layoutItems = [];
+  let currentRowWidth = 0;
 
-  return { nodes: positionedNodes, edges };
+  layoutItems.forEach((item) => {
+    const nextRowWidth =
+      currentRow.length === 0 ? item.footprintWidth : currentRowWidth + horizontalGap + item.footprintWidth;
+
+    if (currentRow.length > 0 && nextRowWidth > maxRowWidth) {
+      layoutRows.push(currentRow);
+      currentRow = [item];
+      currentRowWidth = item.footprintWidth;
+      return;
+    }
+
+    currentRow.push(item);
+    currentRowWidth = nextRowWidth;
+  });
+
+  if (currentRow.length > 0) {
+    layoutRows.push(currentRow);
+  }
+
+  let cursorY = topPadding;
+
+  layoutRows.forEach((rowItems) => {
+    const rowWidth = rowItems.reduce(
+      (sum, item, index) => sum + item.footprintWidth + (index === 0 ? 0 : horizontalGap),
+      0,
+    );
+    const rowHeight = rowItems.reduce((maxHeight, item) => Math.max(maxHeight, item.footprintHeight), CARD_HEIGHT);
+    let cursorX = Math.max(sidePadding, (WORLD_WIDTH - rowWidth) / 2);
+
+    rowItems.forEach((item) => {
+      const goalX = cursorX + (item.footprintWidth - CARD_WIDTH) / 2;
+
+      positionedNodes.push({
+        ...item.node,
+        x: Math.min(WORLD_WIDTH - CARD_WIDTH - sidePadding, Math.max(sidePadding, goalX)),
+        y: Math.min(WORLD_HEIGHT - CARD_HEIGHT - sidePadding, Math.max(sidePadding, cursorY)),
+      });
+
+      cursorX += item.footprintWidth + horizontalGap;
+    });
+
+    cursorY += rowHeight + verticalGap;
+  });
+
+  const keyResultNodePositions = positionedNodes.reduce<Record<string, CanvasNodePosition>>((acc, goal) => {
+    if (goal.keyResultsPreview.length === 0) {
+      return acc;
+    }
+
+    const totalWidth =
+      goal.keyResultsPreview.length * KR_CARD_WIDTH +
+      (goal.keyResultsPreview.length - 1) * KR_CARD_GAP;
+    const startX = goal.x + CARD_WIDTH / 2 - totalWidth / 2;
+    const y = goal.y + CARD_HEIGHT + GOAL_TO_KR_GAP;
+
+    goal.keyResultsPreview.forEach((keyResult, index) => {
+      acc[`kr:${goal.id}:${keyResult.id}`] = {
+        x: startX + index * (KR_CARD_WIDTH + KR_CARD_GAP),
+        y,
+      };
+    });
+
+    return acc;
+  }, {});
+
+  const keyResultNodeIdByKeyResultId = positionedNodes.reduce<Record<string, string>>((acc, goal) => {
+    goal.keyResultsPreview.forEach((keyResult) => {
+      acc[keyResult.id] = `kr:${goal.id}:${keyResult.id}`;
+    });
+    return acc;
+  }, {});
+
+  return {
+    nodes: positionedNodes,
+    edges: positionedNodes.flatMap((goal) =>
+      goal.keyResultsPreview.flatMap((keyResult) => {
+        const keyResultNodeId = `kr:${goal.id}:${keyResult.id}`;
+        if (keyResult.contributionType === "support") {
+          return (supportTargetIdsByKeyResultId[keyResult.id] ?? [])
+            .map((targetKeyResultId) => keyResultNodeIdByKeyResultId[targetKeyResultId] ?? null)
+            .filter((value): value is string => Boolean(value))
+            .map((targetNodeId) => ({
+              from: targetNodeId,
+              to: keyResultNodeId,
+            }));
+        }
+
+        return [
+          {
+            from: goal.id,
+            to: keyResultNodeId,
+          },
+        ];
+      }),
+    ),
+    keyResultNodePositions,
+  };
 };
 
 const badgeMap: Record<GoalNode["mau"], string> = {
@@ -568,6 +622,57 @@ const healthBadgeMap: Record<GoalNode["healthStatus"], string> = {
   on_track: "bg-emerald-50 text-emerald-700",
   at_risk: "bg-amber-50 text-amber-700",
   off_track: "bg-rose-50 text-rose-700",
+};
+
+const getCanvasConnectorPath = (fromNode: CanvasEdgeFrame, toNode: CanvasEdgeFrame) => {
+  const fromCenterX = fromNode.x + fromNode.width / 2;
+  const fromCenterY = fromNode.y + fromNode.height / 2;
+  const toCenterX = toNode.x + toNode.width / 2;
+  const toCenterY = toNode.y + toNode.height / 2;
+
+  let startX = fromCenterX;
+  let startY = fromNode.y + fromNode.height;
+  let endX = toCenterX;
+  let endY = toNode.y;
+
+  if (toNode.y >= fromNode.y + fromNode.height + 12) {
+    startX = fromCenterX;
+    startY = fromNode.y + fromNode.height;
+    endX = toCenterX;
+    endY = toNode.y;
+  } else if (fromNode.y >= toNode.y + toNode.height + 12) {
+    startX = fromCenterX;
+    startY = fromNode.y;
+    endX = toCenterX;
+    endY = toNode.y + toNode.height;
+  } else if (toCenterX >= fromCenterX) {
+    startX = fromNode.x + fromNode.width;
+    startY = fromCenterY;
+    endX = toNode.x;
+    endY = toCenterY;
+  } else {
+    startX = fromNode.x;
+    startY = fromCenterY;
+    endX = toNode.x + toNode.width;
+    endY = toCenterY;
+  }
+
+  const deltaX = endX - startX;
+  const deltaY = endY - startY;
+
+  if (Math.abs(deltaY) >= Math.abs(deltaX)) {
+    const directionY = deltaY === 0 ? 1 : Math.sign(deltaY);
+    const controlOffset = Math.max(36, Math.min(104, Math.abs(deltaY) * 0.45));
+    return `M ${startX} ${startY} C ${startX} ${startY + directionY * controlOffset}, ${endX} ${
+      endY - directionY * controlOffset
+    }, ${endX} ${endY}`;
+  }
+
+  const directionX = deltaX === 0 ? 1 : Math.sign(deltaX);
+  const controlOffset = Math.max(36, Math.min(120, Math.abs(deltaX) * 0.45));
+  return `M ${startX} ${startY} C ${startX + directionX * controlOffset} ${startY}, ${
+    endX - directionX * controlOffset
+  } ${endY}, ${endX} ${endY}`;
 };
 
 function ProgressBar({ value }: { value: number }) {
@@ -586,15 +691,16 @@ function GoalsPageContent() {
 
   const [nodes, setNodes] = useState<GoalNode[]>([]);
   const [edges, setEdges] = useState<GoalEdge[]>([]);
-  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [goalNodePositions, setGoalNodePositions] = useState<Record<string, CanvasNodePosition>>({});
+  const [keyResultNodePositions, setKeyResultNodePositions] = useState<
+    Record<string, CanvasNodePosition>
+  >({});
+  const [draggingTarget, setDraggingTarget] = useState<CanvasDragTarget | null>(null);
   const [canvasScale, setCanvasScale] = useState(WORLD_INITIAL_SCALE);
   const [viewportOffset, setViewportOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [isLoadingGoals, setIsLoadingGoals] = useState(true);
   const [goalsError, setGoalsError] = useState<string | null>(null);
-  const [selectedGoalKeyResults, setSelectedGoalKeyResults] = useState<GoalKeyResultPanelItem[]>([]);
-  const [isLoadingSelectedGoalTasks, setIsLoadingSelectedGoalTasks] = useState(false);
-  const [selectedGoalTasksError, setSelectedGoalTasksError] = useState<string | null>(null);
   const [goalLogs, setGoalLogs] = useState<ActivityLogItem[]>([]);
   const [isGoalLogsOpen, setIsGoalLogsOpen] = useState(false);
   const [isLoadingGoalLogs, setIsLoadingGoalLogs] = useState(false);
@@ -610,9 +716,24 @@ function GoalsPageContent() {
   const [goalsListPage, setGoalsListPage] = useState(1);
 
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const canvasScaleRef = useRef(WORLD_INITIAL_SCALE);
+  const viewportOffsetRef = useRef({ x: 0, y: 0 });
+  const goalNodePositionsRef = useRef<Record<string, CanvasNodePosition>>({});
+  const keyResultNodePositionsRef = useRef<Record<string, CanvasNodePosition>>({});
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   const panStartRef = useRef({ pointerX: 0, pointerY: 0, originX: 0, originY: 0 });
   const autoCenteredCanvasKeyRef = useRef<string>("");
+  const dragPointerStartRef = useRef({ x: 0, y: 0 });
+  const dragMovedRef = useRef(false);
+  const suppressCanvasClickRef = useRef(false);
+  const dragCaptureElementRef = useRef<HTMLElement | null>(null);
+  const interactionCanvasRectRef = useRef<DOMRect | null>(null);
+  const scheduledCanvasFrameRef = useRef<number | null>(null);
+  const pendingGoalPositionRef = useRef<{ id: string; position: CanvasNodePosition } | null>(null);
+  const pendingKeyResultPositionRef = useRef<{ id: string; position: CanvasNodePosition } | null>(
+    null,
+  );
+  const pendingViewportOffsetRef = useRef<{ x: number; y: number } | null>(null);
 
   const mode: Mode = searchParams.get("mode") === "list" ? "list" : "canvas";
   const showPermissionDebug = searchParams.get("debugPermission") === "1";
@@ -659,7 +780,8 @@ function GoalsPageContent() {
     const keyword = keywordFilter.trim().toLowerCase();
     return nodes.filter((goal) => {
       if (keyword) {
-        const haystack = `${goal.tieuDe} ${goal.moTa} ${goal.teamNames.join(" ")}`.toLowerCase();
+        const haystack =
+          `${goal.tieuDe} ${goal.moTa} ${goal.teamNames.join(" ")} ${getGoalOwnerSearchText(goal.owners)}`.toLowerCase();
         if (!haystack.includes(keyword)) {
           return false;
         }
@@ -698,7 +820,7 @@ function GoalsPageContent() {
     return filteredNodes.slice(start, start + GOALS_LIST_PAGE_SIZE);
   }, [filteredNodes, safeGoalsListPage]);
 
-  const displayedNodes = mode === "list" ? filteredNodes : nodes;
+  const displayedNodes = filteredNodes;
   const validGoalIds = useMemo(() => new Set(displayedNodes.map((node) => node.id)), [displayedNodes]);
   const selectedIdParam = searchParams.get("goal");
   const selectedId =
@@ -713,6 +835,105 @@ function GoalsPageContent() {
   );
 
   useEffect(() => {
+    canvasScaleRef.current = canvasScale;
+  }, [canvasScale]);
+
+  useEffect(() => {
+    viewportOffsetRef.current = viewportOffset;
+  }, [viewportOffset]);
+
+  useEffect(() => {
+    goalNodePositionsRef.current = goalNodePositions;
+  }, [goalNodePositions]);
+
+  useEffect(() => {
+    keyResultNodePositionsRef.current = keyResultNodePositions;
+  }, [keyResultNodePositions]);
+
+  const flushCanvasInteraction = useCallback(() => {
+    scheduledCanvasFrameRef.current = null;
+
+    const nextGoalPosition = pendingGoalPositionRef.current;
+    if (nextGoalPosition) {
+      pendingGoalPositionRef.current = null;
+      setGoalNodePositions((prev) => {
+        const current = prev[nextGoalPosition.id];
+        if (current?.x === nextGoalPosition.position.x && current?.y === nextGoalPosition.position.y) {
+          return prev;
+        }
+
+        const next = {
+          ...prev,
+          [nextGoalPosition.id]: nextGoalPosition.position,
+        };
+        goalNodePositionsRef.current = next;
+        return next;
+      });
+    }
+
+    const nextKeyResultPosition = pendingKeyResultPositionRef.current;
+    if (nextKeyResultPosition) {
+      pendingKeyResultPositionRef.current = null;
+      setKeyResultNodePositions((prev) => {
+        const current = prev[nextKeyResultPosition.id];
+        if (
+          current?.x === nextKeyResultPosition.position.x &&
+          current?.y === nextKeyResultPosition.position.y
+        ) {
+          return prev;
+        }
+
+        const next = {
+          ...prev,
+          [nextKeyResultPosition.id]: nextKeyResultPosition.position,
+        };
+        keyResultNodePositionsRef.current = next;
+        return next;
+      });
+    }
+
+    const nextViewportOffset = pendingViewportOffsetRef.current;
+    if (nextViewportOffset) {
+      pendingViewportOffsetRef.current = null;
+      setViewportOffset((prev) => {
+        if (prev.x === nextViewportOffset.x && prev.y === nextViewportOffset.y) {
+          return prev;
+        }
+
+        viewportOffsetRef.current = nextViewportOffset;
+        return nextViewportOffset;
+      });
+    }
+  }, []);
+
+  const scheduleCanvasInteractionFlush = useCallback(() => {
+    if (scheduledCanvasFrameRef.current !== null) {
+      return;
+    }
+
+    scheduledCanvasFrameRef.current = requestAnimationFrame(() => {
+      flushCanvasInteraction();
+    });
+  }, [flushCanvasInteraction]);
+
+  const flushPendingCanvasInteraction = useCallback(() => {
+    if (scheduledCanvasFrameRef.current === null) {
+      return;
+    }
+
+    cancelAnimationFrame(scheduledCanvasFrameRef.current);
+    flushCanvasInteraction();
+  }, [flushCanvasInteraction]);
+
+  useEffect(() => {
+    return () => {
+      if (scheduledCanvasFrameRef.current !== null) {
+        cancelAnimationFrame(scheduledCanvasFrameRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const frameId = requestAnimationFrame(() => {
       setGoalsListPage(1);
     });
@@ -722,18 +943,119 @@ function GoalsPageContent() {
     };
   }, [keywordFilter, departmentFilter, typeFilter, statusFilter, quarterFilter, yearFilter, mode]);
 
-  const nodeMap = useMemo(
+  const canvasGoalNodes = useMemo(
     () =>
-      nodes.reduce<Record<string, GoalNode>>((acc, node) => {
+      displayedNodes.map((node) => {
+        const position = goalNodePositions[node.id];
+        if (!position) {
+          return node;
+        }
+
+        return {
+          ...node,
+          x: position.x,
+          y: position.y,
+        };
+      }),
+    [displayedNodes, goalNodePositions],
+  );
+
+  const goalNodeMap = useMemo(
+    () =>
+      canvasGoalNodes.reduce<Record<string, GoalNode>>((acc, node) => {
         acc[node.id] = node;
         return acc;
       }, {}),
-    [nodes],
+    [canvasGoalNodes],
   );
 
+  const canvasKeyResultNodes = useMemo<GoalCanvasKeyResultNode[]>(
+    () =>
+      canvasGoalNodes.flatMap((goal) => {
+        if (goal.keyResultsPreview.length === 0) {
+          return [];
+        }
+
+        const totalWidth =
+          goal.keyResultsPreview.length * KR_CARD_WIDTH +
+          (goal.keyResultsPreview.length - 1) * KR_CARD_GAP;
+        return goal.keyResultsPreview.map((keyResult, index) => ({
+          id: `kr:${goal.id}:${keyResult.id}`,
+          goalId: goal.id,
+          keyResultId: keyResult.id,
+          name: keyResult.name,
+          progress: keyResult.progress,
+          contributionType: keyResult.contributionType,
+          supportTargetSummary: keyResult.supportTargetSummary,
+          x:
+            keyResultNodePositions[`kr:${goal.id}:${keyResult.id}`]?.x ??
+            goal.x + CARD_WIDTH / 2 - totalWidth / 2 + index * (KR_CARD_WIDTH + KR_CARD_GAP),
+          y:
+            keyResultNodePositions[`kr:${goal.id}:${keyResult.id}`]?.y ??
+            goal.y + CARD_HEIGHT + GOAL_TO_KR_GAP,
+        }));
+      }),
+    [canvasGoalNodes, keyResultNodePositions],
+  );
+
+  const canvasKeyResultNodeMap = useMemo(
+    () =>
+      canvasKeyResultNodes.reduce<Record<string, GoalCanvasKeyResultNode>>((acc, node) => {
+        acc[node.id] = node;
+        return acc;
+      }, {}),
+    [canvasKeyResultNodes],
+  );
+
+  const canvasKeyResultNodesByGoalId = useMemo(
+    () =>
+      canvasKeyResultNodes.reduce<Record<string, GoalCanvasKeyResultNode[]>>((acc, node) => {
+        if (!acc[node.goalId]) {
+          acc[node.goalId] = [];
+        }
+        acc[node.goalId].push(node);
+        return acc;
+      }, {}),
+    [canvasKeyResultNodes],
+  );
+
+  const canvasBounds = useMemo(() => {
+    const allBounds = [
+      ...canvasGoalNodes.map((node) => ({
+        minX: node.x,
+        minY: node.y,
+        maxX: node.x + CARD_WIDTH,
+        maxY: node.y + CARD_HEIGHT,
+      })),
+      ...canvasKeyResultNodes.map((node) => ({
+        minX: node.x,
+        minY: node.y,
+        maxX: node.x + KR_CARD_WIDTH,
+        maxY: node.y + KR_CARD_HEIGHT,
+      })),
+    ];
+
+    if (allBounds.length === 0) {
+      return null;
+    }
+
+    return {
+      minX: Math.min(...allBounds.map((item) => item.minX)),
+      minY: Math.min(...allBounds.map((item) => item.minY)),
+      maxX: Math.max(...allBounds.map((item) => item.maxX)),
+      maxY: Math.max(...allBounds.map((item) => item.maxY)),
+    };
+  }, [canvasGoalNodes, canvasKeyResultNodes]);
+
   const nodeIdentityKey = useMemo(
-    () => nodes.map((node) => node.id).sort((a, b) => a.localeCompare(b)).join("|"),
-    [nodes],
+    () =>
+      displayedNodes
+        .map((node) =>
+          `${node.id}:${node.keyResultsPreview.map((keyResult) => keyResult.id).join(",")}`,
+        )
+        .sort((a, b) => a.localeCompare(b))
+        .join("|"),
+    [displayedNodes],
   );
 
   useEffect(() => {
@@ -749,18 +1071,24 @@ function GoalsPageContent() {
         { data: goalDepartmentsData, error: goalDepartmentsLoadError },
         { data: keyResultsData, error: keyResultsLoadError },
         { data: tasksData, error: tasksLoadError },
+        { data: supportLinksData, error: supportLinksLoadError },
       ] =
         await Promise.all([
           supabase
             .from("goals")
             .select(
-              "id,name,description,type,department_id,status,quarter,year,note,parent_goal_id,owner_id,start_date,end_date,created_at",
+              "id,name,description,type,department_id,status,quarter,year,note,target,unit,start_date,end_date,created_at",
             )
             .order("created_at", { ascending: true }),
           supabase.from("departments").select("id,name"),
           supabase.from("goal_departments").select("goal_id,department_id"),
-          supabase.from("key_results").select("id,goal_id,name,weight,start_date,end_date"),
+          supabase
+            .from("key_results")
+            .select("id,goal_id,name,contribution_type,start_value,current,target,unit,weight,start_date,end_date"),
           supabase.from("tasks").select("id,key_result_id,type,status,progress,weight"),
+          supabase
+            .from("key_result_support_links")
+            .select("support_key_result_id,target_key_result_id"),
         ]);
 
       if (!isActive) {
@@ -771,6 +1099,10 @@ function GoalsPageContent() {
         setGoalsError("Không tải được danh sách mục tiêu từ hệ thống.");
         setNodes([]);
         setEdges([]);
+        goalNodePositionsRef.current = {};
+        setGoalNodePositions({});
+        keyResultNodePositionsRef.current = {};
+        setKeyResultNodePositions({});
         setIsLoadingGoals(false);
         return;
       }
@@ -779,6 +1111,10 @@ function GoalsPageContent() {
         setGoalsError("Không tải được danh sách phòng ban.");
         setNodes([]);
         setEdges([]);
+        goalNodePositionsRef.current = {};
+        setGoalNodePositions({});
+        keyResultNodePositionsRef.current = {};
+        setKeyResultNodePositions({});
         setIsLoadingGoals(false);
         return;
       }
@@ -786,6 +1122,10 @@ function GoalsPageContent() {
         setGoalsError("Không tải được cấu trúc phòng ban tham gia mục tiêu.");
         setNodes([]);
         setEdges([]);
+        goalNodePositionsRef.current = {};
+        setGoalNodePositions({});
+        keyResultNodePositionsRef.current = {};
+        setKeyResultNodePositions({});
         setIsLoadingGoals(false);
         return;
       }
@@ -794,13 +1134,32 @@ function GoalsPageContent() {
         setGoalsError("Không tải được danh sách key result.");
         setNodes([]);
         setEdges([]);
+        goalNodePositionsRef.current = {};
+        setGoalNodePositions({});
+        keyResultNodePositionsRef.current = {};
+        setKeyResultNodePositions({});
         setIsLoadingGoals(false);
         return;
       }
       if (tasksLoadError) {
-        setGoalsError("Không tải được dữ liệu task để tính tiến độ mục tiêu.");
+        setGoalsError("Không tải được dữ liệu task để hiển thị số lượng công việc.");
         setNodes([]);
         setEdges([]);
+        goalNodePositionsRef.current = {};
+        setGoalNodePositions({});
+        keyResultNodePositionsRef.current = {};
+        setKeyResultNodePositions({});
+        setIsLoadingGoals(false);
+        return;
+      }
+      if (supportLinksLoadError) {
+        setGoalsError("Không tải được dữ liệu liên kết hỗ trợ giữa các KR.");
+        setNodes([]);
+        setEdges([]);
+        goalNodePositionsRef.current = {};
+        setGoalNodePositions({});
+        keyResultNodePositionsRef.current = {};
+        setKeyResultNodePositions({});
         setIsLoadingGoals(false);
         return;
       }
@@ -830,59 +1189,119 @@ function GoalsPageContent() {
         }
         return acc;
       }, {});
-      const ownerIds = [
-        ...new Set(
-          ((goalsData ?? []) as GoalRow[])
-            .map((goal) => goal.owner_id)
-            .filter((ownerId): ownerId is string => Boolean(ownerId)),
-        ),
-      ];
-      let ownerProfilesById: Record<string, { name: string; avatar: string | null }> = {};
+      let goalOwnersByGoalId: Record<string, GoalOwnerProfile[]> = {};
 
-      if (ownerIds.length > 0) {
-        const { data: ownerProfilesData } = await supabase
-          .from("profiles")
-          .select("id,name,avatar,email")
-          .in("id", ownerIds);
-
-        if (!isActive) {
-          return;
-        }
-
-        ownerProfilesById = ((ownerProfilesData ?? []) as GoalOwnerProfileRow[]).reduce<
-          Record<string, { name: string; avatar: string | null }>
-        >((acc, profile) => {
-          acc[String(profile.id)] = {
-            name: profile.name?.trim() || profile.email?.trim() || "Chưa gán owner",
-            avatar: profile.avatar ? String(profile.avatar) : null,
-          };
-          return acc;
-        }, {});
+      try {
+        goalOwnersByGoalId = await loadGoalOwnersByGoalIds(
+          ((goalsData ?? []) as GoalRow[]).map((goal) => String(goal.id)),
+        );
+      } catch {
+        setGoalsError("Không tải được danh sách owners của mục tiêu.");
+        setNodes([]);
+        setEdges([]);
+        goalNodePositionsRef.current = {};
+        setGoalNodePositions({});
+        keyResultNodePositionsRef.current = {};
+        setKeyResultNodePositions({});
+        setIsLoadingGoals(false);
+        return;
       }
-
-      const keyResultsByGoalId = ((keyResultsData ?? []) as unknown as KeyResultRow[]).reduce<
-        Record<string, GoalKeyResultPreview[]>
-      >((acc, keyResult) => {
-        const goalId = String(keyResult.goal_id);
-        if (!acc[goalId]) {
-          acc[goalId] = [];
-        }
-        acc[goalId].push({
-          id: String(keyResult.id),
-          name: String(keyResult.name),
-          progress: 0,
-        });
-        return acc;
-      }, {});
 
       const typedKeyResults = ((keyResultsData ?? []) as unknown as KeyResultRow[]).map((keyResult) => ({
         id: String(keyResult.id),
         goal_id: String(keyResult.goal_id),
         name: String(keyResult.name),
+        contribution_type: keyResult.contribution_type ? String(keyResult.contribution_type) : null,
+        start_value:
+          keyResult.start_value === null || keyResult.start_value === undefined
+            ? null
+            : typeof keyResult.start_value === "number"
+              ? keyResult.start_value
+              : Number(keyResult.start_value),
+        current:
+          keyResult.current === null || keyResult.current === undefined
+            ? null
+            : typeof keyResult.current === "number"
+              ? keyResult.current
+              : Number(keyResult.current),
+        target:
+          keyResult.target === null || keyResult.target === undefined
+            ? null
+            : typeof keyResult.target === "number"
+              ? keyResult.target
+              : Number(keyResult.target),
+        unit: keyResult.unit ? String(keyResult.unit) : null,
         weight: typeof keyResult.weight === "number" ? keyResult.weight : Number(keyResult.weight ?? 1),
         start_date: keyResult.start_date ? String(keyResult.start_date) : null,
         end_date: keyResult.end_date ? String(keyResult.end_date) : null,
       }));
+      const typedSupportLinks = ((supportLinksData ?? []) as KeyResultSupportLinkRow[]).map((link) => ({
+        supportKeyResultId: link.support_key_result_id ? String(link.support_key_result_id) : null,
+        targetKeyResultId: link.target_key_result_id ? String(link.target_key_result_id) : null,
+      }));
+      const keyResultNameById = typedKeyResults.reduce<Record<string, string>>((acc, keyResult) => {
+        acc[keyResult.id] = keyResult.name;
+        return acc;
+      }, {});
+      const supportTargetIdsByKeyResultId = typedSupportLinks.reduce<Record<string, string[]>>((acc, link) => {
+        if (!link.supportKeyResultId || !link.targetKeyResultId) {
+          return acc;
+        }
+
+        if (!acc[link.supportKeyResultId]) {
+          acc[link.supportKeyResultId] = [];
+        }
+
+        if (!acc[link.supportKeyResultId].includes(link.targetKeyResultId)) {
+          acc[link.supportKeyResultId].push(link.targetKeyResultId);
+        }
+
+        return acc;
+      }, {});
+      const supportTargetNamesByKeyResultId = typedSupportLinks.reduce<Record<string, string[]>>((acc, link) => {
+        if (!link.supportKeyResultId || !link.targetKeyResultId) {
+          return acc;
+        }
+
+        const targetName = keyResultNameById[link.targetKeyResultId];
+        if (!targetName) {
+          return acc;
+        }
+
+        if (!acc[link.supportKeyResultId]) {
+          acc[link.supportKeyResultId] = [];
+        }
+
+        if (!acc[link.supportKeyResultId].includes(targetName)) {
+          acc[link.supportKeyResultId].push(targetName);
+        }
+
+        return acc;
+      }, {});
+      const keyResultsByGoalId = typedKeyResults.reduce<Record<string, GoalKeyResultPreview[]>>((acc, keyResult) => {
+        const goalId = keyResult.goal_id;
+        const supportTargetNames = supportTargetNamesByKeyResultId[keyResult.id] ?? [];
+        const supportTargetSummary =
+          keyResult.contribution_type === "support"
+            ? supportTargetNames.length > 0
+              ? supportTargetNames.length === 1
+                ? supportTargetNames[0]
+                : `${supportTargetNames[0]} +${supportTargetNames.length - 1}`
+              : "Chưa có"
+            : null;
+
+        if (!acc[goalId]) {
+          acc[goalId] = [];
+        }
+        acc[goalId].push({
+          id: keyResult.id,
+          name: keyResult.name,
+          progress: 0,
+          contributionType: keyResult.contribution_type,
+          supportTargetSummary,
+        });
+        return acc;
+      }, {});
       const goalIdByKeyResultId = typedKeyResults.reduce<Record<string, string>>((acc, keyResult) => {
         acc[keyResult.id] = keyResult.goal_id;
         return acc;
@@ -898,22 +1317,7 @@ function GoalsPageContent() {
         acc[goalId] = (acc[goalId] ?? 0) + 1;
         return acc;
       }, {});
-      const keyResultProgressMap = buildKeyResultProgressMap(
-        typedKeyResults,
-        ((tasksData ?? []) as Array<{
-          key_result_id: string | null;
-          type: string | null;
-          status: string | null;
-          progress: number | null;
-          weight: number | null;
-        }>).map((task) => ({
-          key_result_id: task.key_result_id ? String(task.key_result_id) : null,
-          type: task.type ? String(task.type) : null,
-          status: task.status ? String(task.status) : null,
-          progress: task.progress,
-          weight: task.weight,
-        })),
-      );
+      const keyResultProgressMap = buildKeyResultProgressMap(typedKeyResults);
       typedKeyResults.forEach((keyResult) => {
         const goalId = keyResult.goal_id;
         if (!keyResultsByGoalId[goalId]) {
@@ -925,7 +1329,16 @@ function GoalsPageContent() {
         }
       });
       const goalProgressById = buildGoalProgressMap(
-        ((goalsData as GoalRow[]) ?? []).map((goal) => String(goal.id)),
+        ((goalsData as GoalRow[]) ?? []).map((goal) => ({
+          id: String(goal.id),
+          type: goal.type ? String(goal.type) : null,
+          target:
+            goal.target === null || goal.target === undefined
+              ? null
+              : typeof goal.target === "number"
+                ? goal.target
+                : Number(goal.target),
+        })),
         typedKeyResults,
         keyResultProgressMap,
       );
@@ -934,12 +1347,17 @@ function GoalsPageContent() {
         departmentsById,
         goalDepartmentNamesByGoalId,
         keyResultsByGoalId,
+        supportTargetIdsByKeyResultId,
         taskCountByGoalId,
         goalProgressById,
-        ownerProfilesById,
+        goalOwnersByGoalId,
       );
       setNodes(graph.nodes);
       setEdges(graph.edges);
+      goalNodePositionsRef.current = {};
+      setGoalNodePositions({});
+      keyResultNodePositionsRef.current = graph.keyResultNodePositions;
+      setKeyResultNodePositions(graph.keyResultNodePositions);
       setIsLoadingGoals(false);
     };
 
@@ -949,171 +1367,6 @@ function GoalsPageContent() {
       isActive = false;
     };
   }, []);
-
-  useEffect(() => {
-    if (!selectedGoal?.id || !isDetailOpen) {
-      const frameId = requestAnimationFrame(() => {
-        setSelectedGoalKeyResults([]);
-        setSelectedGoalTasksError(null);
-        setIsLoadingSelectedGoalTasks(false);
-      });
-
-      return () => {
-        cancelAnimationFrame(frameId);
-      };
-    }
-
-    let isActive = true;
-
-    const loadSelectedGoalTasks = async () => {
-      setIsLoadingSelectedGoalTasks(true);
-      setSelectedGoalTasksError(null);
-
-      const { data: keyResultsData, error: keyResultsError } = await supabase
-        .from("key_results")
-        .select("id,name,current,target,unit,start_date,end_date")
-        .eq("goal_id", selectedGoal.id)
-        .order("created_at", { ascending: true });
-
-      if (!isActive) {
-        return;
-      }
-
-      if (keyResultsError) {
-        setSelectedGoalKeyResults([]);
-        setSelectedGoalTasksError("Không tải được phân bổ công việc.");
-        setIsLoadingSelectedGoalTasks(false);
-        return;
-      }
-
-      const goalKeyResults = (keyResultsData ?? []) as Array<{
-        id: string;
-        name: string;
-        current: number | null;
-        target: number | null;
-        unit: string | null;
-        start_date: string | null;
-        end_date: string | null;
-      }>;
-      const keyResultIds = goalKeyResults.map((item) => String(item.id));
-      const { data: tasksData, error: tasksError } = keyResultIds.length > 0
-        ? await supabase
-            .from("tasks")
-            .select(`
-              id,
-              name,
-              type,
-              status,
-              progress,
-              weight,
-              profile_id,
-              start_date,
-              end_date,
-              key_result_id,
-              key_result:key_results!tasks_key_result_id_fkey(
-                id,
-                name,
-                goal_id,
-                goal:goals!key_results_goal_id_fkey(
-                  id,
-                  name
-                )
-              )
-            `)
-            .in("key_result_id", keyResultIds)
-            .order("created_at", { ascending: false })
-        : { data: [], error: null };
-
-      if (!isActive) {
-        return;
-      }
-
-      if (tasksError) {
-        setSelectedGoalKeyResults([]);
-        setSelectedGoalTasksError("Không tải được phân bổ công việc.");
-        setIsLoadingSelectedGoalTasks(false);
-        return;
-      }
-
-      const typedTasks = (tasksData ?? []) as unknown as GoalTaskRow[];
-      const profileIds = [...new Set(typedTasks.map((task) => task.profile_id).filter(Boolean))] as string[];
-      let profileNameById: Record<string, string> = {};
-
-      if (profileIds.length > 0) {
-        const { data: profilesData } = await supabase
-          .from("profiles")
-          .select("id,name")
-          .in("id", profileIds);
-
-        if (!isActive) {
-          return;
-        }
-
-        profileNameById = (profilesData ?? []).reduce<Record<string, string>>((acc, profile) => {
-          const profileId = String(profile.id);
-          acc[profileId] = profile.name ? String(profile.name) : "Chưa gán";
-          return acc;
-        }, {});
-      }
-
-      const mappedTasks: GoalTaskItem[] = typedTasks.map((task) => {
-        return {
-          id: task.id,
-          tieuDe: task.name,
-          loai: task.type === "okr" ? "OKR" : "KPI",
-          trangThai: task.status ? taskStatusLabelMap[task.status] ?? task.status : "Chưa cập nhật",
-          nguoiPhuTrach: task.profile_id ? profileNameById[task.profile_id] ?? "Chưa gán" : "Chưa gán",
-          tienDo: getComputedTaskProgress(task),
-          startDate: task.start_date ? String(task.start_date) : null,
-          endDate: task.end_date ? String(task.end_date) : null,
-        };
-      });
-      const progressMap = buildKeyResultProgressMap(
-        goalKeyResults.map((item) => ({ id: String(item.id), goal_id: selectedGoal.id })),
-        typedTasks.map((task) => ({
-          key_result_id: task.key_result_id ? String(task.key_result_id) : null,
-          type: task.type ? String(task.type) : null,
-          status: task.status ? String(task.status) : null,
-          progress: task.progress,
-          weight: task.weight,
-        })),
-      );
-      const tasksByKeyResultId = mappedTasks.reduce<Record<string, GoalTaskItem[]>>((acc, task) => {
-        const matchedTask = typedTasks.find((item) => item.id === task.id);
-        const keyResultId = matchedTask?.key_result_id ? String(matchedTask.key_result_id) : null;
-        if (!keyResultId) {
-          return acc;
-        }
-        if (!acc[keyResultId]) {
-          acc[keyResultId] = [];
-        }
-        acc[keyResultId].push(task);
-        return acc;
-      }, {});
-
-      setSelectedGoalKeyResults(
-        goalKeyResults.map((keyResult) => ({
-          id: String(keyResult.id),
-          name: String(keyResult.name),
-          progress: progressMap[String(keyResult.id)] ?? 0,
-          current: typeof keyResult.current === "number" ? keyResult.current : Number(keyResult.current ?? 0),
-          target: typeof keyResult.target === "number" ? keyResult.target : Number(keyResult.target ?? 0),
-          unit: keyResult.unit ? String(keyResult.unit) : null,
-          startDate: keyResult.start_date ? String(keyResult.start_date) : null,
-          endDate: keyResult.end_date ? String(keyResult.end_date) : null,
-          tasks: tasksByKeyResultId[String(keyResult.id)] ?? [],
-        })),
-      );
-      setSelectedGoalTasksError(null);
-      setIsLoadingSelectedGoalTasks(false);
-    };
-
-    void loadSelectedGoalTasks();
-
-    return () => {
-      isActive = false;
-    };
-  }, [isDetailOpen, selectedGoal?.id]);
 
   useEffect(() => {
     if (!selectedGoal?.id || !isGoalLogsOpen) {
@@ -1250,35 +1503,107 @@ function GoalsPageContent() {
     [],
   );
 
+  const focusCanvasBounds = useCallback(
+    (bounds: CanvasBounds, options?: { padding?: number }) => {
+      if (!canvasRef.current) {
+        return;
+      }
+
+      const rect = canvasRef.current.getBoundingClientRect();
+      const padding = options?.padding ?? 96;
+      const contentWidth = Math.max(1, bounds.maxX - bounds.minX);
+      const contentHeight = Math.max(1, bounds.maxY - bounds.minY);
+
+      const scaleByWidth = (rect.width - padding * 2) / contentWidth;
+      const scaleByHeight = (rect.height - padding * 2) / contentHeight;
+      const targetScale = clampScale(Math.min(scaleByWidth, scaleByHeight, WORLD_MAX_SCALE));
+
+      const contentCenterX = bounds.minX + contentWidth / 2;
+      const contentCenterY = bounds.minY + contentHeight / 2;
+      const targetViewport = {
+        x: rect.width / 2 - contentCenterX * targetScale,
+        y: rect.height / 2 - contentCenterY * targetScale,
+      };
+
+      canvasScaleRef.current = targetScale;
+      setCanvasScale(targetScale);
+      const nextViewportOffset = clampViewportToBounds(targetViewport, targetScale, rect);
+      viewportOffsetRef.current = nextViewportOffset;
+      setViewportOffset(nextViewportOffset);
+    },
+    [clampScale, clampViewportToBounds],
+  );
+
   const fitCanvasToNodes = useCallback(() => {
-    if (!canvasRef.current || nodes.length === 0) {
+    if (displayedNodes.length === 0 || !canvasBounds) {
       return;
     }
 
-    const rect = canvasRef.current.getBoundingClientRect();
-    const minNodeX = Math.min(...nodes.map((node) => node.x));
-    const minNodeY = Math.min(...nodes.map((node) => node.y));
-    const maxNodeX = Math.max(...nodes.map((node) => node.x + CARD_WIDTH));
-    const maxNodeY = Math.max(...nodes.map((node) => node.y + CARD_HEIGHT));
+    focusCanvasBounds(canvasBounds, { padding: 96 });
+  }, [canvasBounds, displayedNodes.length, focusCanvasBounds]);
 
-    const contentWidth = Math.max(1, maxNodeX - minNodeX);
-    const contentHeight = Math.max(1, maxNodeY - minNodeY);
-    const padding = 96;
+  const focusCanvasCluster = useCallback(
+    (target: CanvasFocusTarget) => {
+      if (mode !== "canvas") {
+        return;
+      }
 
-    const scaleByWidth = (rect.width - padding * 2) / contentWidth;
-    const scaleByHeight = (rect.height - padding * 2) / contentHeight;
-    const targetScale = clampScale(Math.min(scaleByWidth, scaleByHeight, WORLD_MAX_SCALE));
+      if (target.type === "goal") {
+        const goalNode = goalNodeMap[target.goalId];
+        if (!goalNode) {
+          return;
+        }
 
-    const contentCenterX = minNodeX + contentWidth / 2;
-    const contentCenterY = minNodeY + contentHeight / 2;
-    const targetViewport = {
-      x: rect.width / 2 - contentCenterX * targetScale,
-      y: rect.height / 2 - contentCenterY * targetScale,
-    };
+        const childNodes = canvasKeyResultNodesByGoalId[target.goalId] ?? [];
+        const clusterBounds = [
+          {
+            minX: goalNode.x,
+            minY: goalNode.y,
+            maxX: goalNode.x + CARD_WIDTH,
+            maxY: goalNode.y + CARD_HEIGHT,
+          },
+          ...childNodes.map((node) => ({
+            minX: node.x,
+            minY: node.y,
+            maxX: node.x + KR_CARD_WIDTH,
+            maxY: node.y + KR_CARD_HEIGHT,
+          })),
+        ].reduce<CanvasBounds>(
+          (acc, item) => ({
+            minX: Math.min(acc.minX, item.minX),
+            minY: Math.min(acc.minY, item.minY),
+            maxX: Math.max(acc.maxX, item.maxX),
+            maxY: Math.max(acc.maxY, item.maxY),
+          }),
+          {
+            minX: goalNode.x,
+            minY: goalNode.y,
+            maxX: goalNode.x + CARD_WIDTH,
+            maxY: goalNode.y + CARD_HEIGHT,
+          },
+        );
 
-    setCanvasScale(targetScale);
-    setViewportOffset(clampViewportToBounds(targetViewport, targetScale, rect));
-  }, [clampScale, clampViewportToBounds, nodes]);
+        focusCanvasBounds(clusterBounds, { padding: childNodes.length > 0 ? 88 : 72 });
+        return;
+      }
+
+      const keyResultNode = canvasKeyResultNodeMap[`kr:${target.goalId}:${target.keyResultId}`];
+      if (!keyResultNode) {
+        return;
+      }
+
+      focusCanvasBounds(
+        {
+          minX: keyResultNode.x,
+          minY: keyResultNode.y,
+          maxX: keyResultNode.x + KR_CARD_WIDTH,
+          maxY: keyResultNode.y + KR_CARD_HEIGHT,
+        },
+        { padding: 84 },
+      );
+    },
+    [canvasKeyResultNodeMap, canvasKeyResultNodesByGoalId, focusCanvasBounds, goalNodeMap, mode],
+  );
 
   const applyCanvasZoom = (nextScaleRaw: number, anchor?: { x: number; y: number }) => {
     if (!canvasRef.current) {
@@ -1290,15 +1615,20 @@ function GoalsPageContent() {
     const anchorY = anchor?.y ?? rect.height / 2;
     const nextScale = clampScale(nextScaleRaw);
 
-    const worldX = (anchorX - viewportOffset.x) / canvasScale;
-    const worldY = (anchorY - viewportOffset.y) / canvasScale;
+    const currentViewportOffset = viewportOffsetRef.current;
+    const currentCanvasScale = canvasScaleRef.current;
+    const worldX = (anchorX - currentViewportOffset.x) / currentCanvasScale;
+    const worldY = (anchorY - currentViewportOffset.y) / currentCanvasScale;
     const nextViewport = {
       x: anchorX - worldX * nextScale,
       y: anchorY - worldY * nextScale,
     };
 
+    canvasScaleRef.current = nextScale;
     setCanvasScale(nextScale);
-    setViewportOffset(clampViewportToBounds(nextViewport, nextScale, rect));
+    const clampedViewportOffset = clampViewportToBounds(nextViewport, nextScale, rect);
+    viewportOffsetRef.current = clampedViewportOffset;
+    setViewportOffset(clampedViewportOffset);
   };
 
   const updateUrlState = ({
@@ -1336,37 +1666,64 @@ function GoalsPageContent() {
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
   };
 
-  const onPointerDownCard = (event: PointerEvent<HTMLElement>, goalId: string) => {
+  const consumeSuppressedCanvasClick = () => {
+    if (!suppressCanvasClickRef.current) {
+      return false;
+    }
+
+    suppressCanvasClickRef.current = false;
+    return true;
+  };
+
+  const startDraggingCanvasCard = (
+    event: PointerEvent<HTMLElement>,
+    target: CanvasDragTarget,
+    position: CanvasNodePosition,
+  ) => {
     if (mode !== "canvas") {
       return;
     }
 
     event.stopPropagation();
 
-    const cardRect = event.currentTarget.getBoundingClientRect();
-    dragOffsetRef.current = {
-      x: event.clientX - cardRect.left,
-      y: event.clientY - cardRect.top,
-    };
+    const canvasRect = canvasRef.current?.getBoundingClientRect();
+    if (!canvasRect) {
+      return;
+    }
 
-    updateUrlState({ nextGoalId: goalId, nextDetailOpen: true });
-    setDraggingId(goalId);
-    if (canvasRef.current) {
-      canvasRef.current.setPointerCapture(event.pointerId);
+    interactionCanvasRectRef.current = canvasRect;
+    const currentViewportOffset = viewportOffsetRef.current;
+    const currentCanvasScale = canvasScaleRef.current;
+    dragOffsetRef.current = {
+      x: event.clientX - (canvasRect.left + currentViewportOffset.x + position.x * currentCanvasScale),
+      y: event.clientY - (canvasRect.top + currentViewportOffset.y + position.y * currentCanvasScale),
+    };
+    dragPointerStartRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+    };
+    dragMovedRef.current = false;
+    suppressCanvasClickRef.current = false;
+
+    setDraggingTarget(target);
+    dragCaptureElementRef.current = event.currentTarget;
+    if (!event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.setPointerCapture(event.pointerId);
     }
   };
 
   const onPointerDownCanvas = (event: PointerEvent<HTMLDivElement>) => {
-    if (mode !== "canvas" || draggingId) {
+    if (mode !== "canvas" || draggingTarget) {
       return;
     }
 
     panStartRef.current = {
       pointerX: event.clientX,
       pointerY: event.clientY,
-      originX: viewportOffset.x,
-      originY: viewportOffset.y,
+      originX: viewportOffsetRef.current.x,
+      originY: viewportOffsetRef.current.y,
     };
+    interactionCanvasRectRef.current = event.currentTarget.getBoundingClientRect();
     setIsPanning(true);
     event.currentTarget.setPointerCapture(event.pointerId);
   };
@@ -1376,21 +1733,49 @@ function GoalsPageContent() {
       return;
     }
 
-    const rect = canvasRef.current.getBoundingClientRect();
-    if (draggingId) {
-      const nextX =
-        (event.clientX - rect.left - dragOffsetRef.current.x - viewportOffset.x) / canvasScale;
-      const nextY =
-        (event.clientY - rect.top - dragOffsetRef.current.y - viewportOffset.y) / canvasScale;
-
-      const clampedX = Math.max(20, Math.min(nextX, WORLD_WIDTH - CARD_WIDTH - 20));
-      const clampedY = Math.max(20, Math.min(nextY, WORLD_HEIGHT - CARD_HEIGHT - 20));
-
-      setNodes((prev) =>
-        prev.map((node) =>
-          node.id === draggingId ? { ...node, x: clampedX, y: clampedY } : node,
-        ),
+    const rect = interactionCanvasRectRef.current ?? canvasRef.current.getBoundingClientRect();
+    if (draggingTarget) {
+      const movedDistance = Math.hypot(
+        event.clientX - dragPointerStartRef.current.x,
+        event.clientY - dragPointerStartRef.current.y,
       );
+      if (movedDistance >= CANVAS_DRAG_THRESHOLD) {
+        dragMovedRef.current = true;
+      }
+
+      const currentViewportOffset = viewportOffsetRef.current;
+      const currentCanvasScale = canvasScaleRef.current;
+      const nextX =
+        (event.clientX - rect.left - dragOffsetRef.current.x - currentViewportOffset.x) /
+        currentCanvasScale;
+      const nextY =
+        (event.clientY - rect.top - dragOffsetRef.current.y - currentViewportOffset.y) /
+        currentCanvasScale;
+      if (draggingTarget.type === "goal") {
+        const clampedX = Math.max(20, Math.min(nextX, WORLD_WIDTH - CARD_WIDTH - 20));
+        const clampedY = Math.max(20, Math.min(nextY, WORLD_HEIGHT - CARD_HEIGHT - 20));
+
+        pendingGoalPositionRef.current = {
+          id: draggingTarget.id,
+          position: {
+            x: clampedX,
+            y: clampedY,
+          },
+        };
+        scheduleCanvasInteractionFlush();
+        return;
+      }
+
+      const clampedX = Math.max(20, Math.min(nextX, WORLD_WIDTH - KR_CARD_WIDTH - 20));
+      const clampedY = Math.max(20, Math.min(nextY, WORLD_HEIGHT - KR_CARD_HEIGHT - 20));
+      pendingKeyResultPositionRef.current = {
+        id: draggingTarget.id,
+        position: {
+          x: clampedX,
+          y: clampedY,
+        },
+      };
+      scheduleCanvasInteractionFlush();
       return;
     }
 
@@ -1402,12 +1787,28 @@ function GoalsPageContent() {
     const deltaY = event.clientY - panStartRef.current.pointerY;
     const tentativeX = panStartRef.current.originX + deltaX;
     const tentativeY = panStartRef.current.originY + deltaY;
-    setViewportOffset(clampViewportToBounds({ x: tentativeX, y: tentativeY }, canvasScale, rect));
+    pendingViewportOffsetRef.current = clampViewportToBounds(
+      { x: tentativeX, y: tentativeY },
+      canvasScaleRef.current,
+      rect,
+    );
+    scheduleCanvasInteractionFlush();
   };
 
-  const onPointerUpCanvas = () => {
-    if (draggingId) {
-      setDraggingId(null);
+  const onPointerUpCanvas = (event: PointerEvent<HTMLDivElement>) => {
+    flushPendingCanvasInteraction();
+    if (dragCaptureElementRef.current?.hasPointerCapture(event.pointerId)) {
+      dragCaptureElementRef.current.releasePointerCapture(event.pointerId);
+    }
+    dragCaptureElementRef.current = null;
+    interactionCanvasRectRef.current = null;
+
+    if (draggingTarget) {
+      if (dragMovedRef.current) {
+        suppressCanvasClickRef.current = true;
+      }
+      setDraggingTarget(null);
+      dragMovedRef.current = false;
     }
 
     if (isPanning) {
@@ -1420,10 +1821,6 @@ function GoalsPageContent() {
       return;
     }
 
-    if (!event.ctrlKey && !event.metaKey) {
-      return;
-    }
-
     event.preventDefault();
     const rect = canvasRef.current.getBoundingClientRect();
     const pointer = {
@@ -1431,11 +1828,11 @@ function GoalsPageContent() {
       y: event.clientY - rect.top,
     };
     const factor = event.deltaY < 0 ? 1.08 : 0.92;
-    applyCanvasZoom(canvasScale * factor, pointer);
+    applyCanvasZoom(canvasScaleRef.current * factor, pointer);
   };
 
   useEffect(() => {
-    if (mode !== "canvas" || isLoadingGoals || nodes.length === 0 || !nodeIdentityKey) {
+    if (mode !== "canvas" || isLoadingGoals || displayedNodes.length === 0 || !nodeIdentityKey) {
       return;
     }
 
@@ -1451,10 +1848,17 @@ function GoalsPageContent() {
     return () => {
       cancelAnimationFrame(frameId);
     };
-  }, [fitCanvasToNodes, isLoadingGoals, mode, nodeIdentityKey, nodes.length]);
+  }, [displayedNodes.length, fitCanvasToNodes, isLoadingGoals, mode, nodeIdentityKey]);
 
   const handleSelectGoal = (goalId: string) => {
     updateUrlState({ nextGoalId: goalId, nextDetailOpen: true });
+    if (mode === "canvas") {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          focusCanvasCluster({ type: "goal", goalId });
+        });
+      });
+    }
     setActiveGoalMenuId(null);
   };
 
@@ -1464,44 +1868,17 @@ function GoalsPageContent() {
       return;
     }
 
-    const childIdsByParent = nodes.reduce<Record<string, string[]>>((acc, node) => {
-      if (!node.parentGoalId) {
-        return acc;
-      }
-      if (!acc[node.parentGoalId]) {
-        acc[node.parentGoalId] = [];
-      }
-      acc[node.parentGoalId].push(node.id);
-      return acc;
-    }, {});
-
-    const goalIdsToDelete: string[] = [];
-    const collectGoalIds = (currentGoalId: string) => {
-      (childIdsByParent[currentGoalId] ?? []).forEach((childGoalId) => {
-        collectGoalIds(childGoalId);
-      });
-      goalIdsToDelete.push(currentGoalId);
-    };
-
-    collectGoalIds(goalId);
-
-    const confirmed = window.confirm(
-      goalIdsToDelete.length > 1
-        ? `Xóa mục tiêu "${targetGoal.tieuDe}" và ${goalIdsToDelete.length - 1} mục tiêu con?`
-        : `Xóa mục tiêu "${targetGoal.tieuDe}"?`,
-    );
+    const confirmed = window.confirm(`Xóa mục tiêu "${targetGoal.tieuDe}"?`);
     if (!confirmed) {
       return;
     }
 
     setDeletingGoalId(goalId);
 
-    const goalIdsToDeleteSet = new Set(goalIdsToDelete);
-
     const { data: keyResultsData, error: keyResultsError } = await supabase
       .from("key_results")
       .select("id")
-      .in("goal_id", goalIdsToDelete);
+      .eq("goal_id", goalId);
 
     if (keyResultsError) {
       window.alert(keyResultsError.message || "Không thể tải danh sách key result để xóa mục tiêu.");
@@ -1512,6 +1889,34 @@ function GoalsPageContent() {
     const keyResultIds = (keyResultsData ?? []).map((item) => String(item.id));
 
     if (keyResultIds.length > 0) {
+      const { error: deleteOutboundSupportLinksError } = await supabase
+        .from("key_result_support_links")
+        .delete()
+        .in("support_key_result_id", keyResultIds);
+
+      if (deleteOutboundSupportLinksError) {
+        window.alert(
+          deleteOutboundSupportLinksError.message ||
+            "Không thể xóa các liên kết hỗ trợ outbound của mục tiêu.",
+        );
+        setDeletingGoalId(null);
+        return;
+      }
+
+      const { error: deleteInboundSupportLinksError } = await supabase
+        .from("key_result_support_links")
+        .delete()
+        .in("target_key_result_id", keyResultIds);
+
+      if (deleteInboundSupportLinksError) {
+        window.alert(
+          deleteInboundSupportLinksError.message ||
+            "Không thể xóa các liên kết hỗ trợ inbound của mục tiêu.",
+        );
+        setDeletingGoalId(null);
+        return;
+      }
+
       const { error: deleteTasksError } = await supabase
         .from("tasks")
         .delete()
@@ -1527,10 +1932,21 @@ function GoalsPageContent() {
     const { error: deleteGoalDepartmentsError } = await supabase
       .from("goal_departments")
       .delete()
-      .in("goal_id", goalIdsToDelete);
+      .eq("goal_id", goalId);
 
     if (deleteGoalDepartmentsError) {
       window.alert(deleteGoalDepartmentsError.message || "Không thể xóa phòng ban tham gia của mục tiêu.");
+      setDeletingGoalId(null);
+      return;
+    }
+
+    const { error: deleteGoalOwnersError } = await supabase
+      .from("goal_owners")
+      .delete()
+      .eq("goal_id", goalId);
+
+    if (deleteGoalOwnersError) {
+      window.alert(deleteGoalOwnersError.message || "Không thể xóa owners của mục tiêu.");
       setDeletingGoalId(null);
       return;
     }
@@ -1548,32 +1964,53 @@ function GoalsPageContent() {
       }
     }
 
-    for (const deletingId of goalIdsToDelete) {
-      const { error } = await supabase.from("goals").delete().eq("id", deletingId);
+    const { error } = await supabase.from("goals").delete().eq("id", goalId);
 
-      if (error) {
-        window.alert(error.message || "Không thể xóa mục tiêu.");
-        setDeletingGoalId(null);
-        return;
-      }
+    if (error) {
+      window.alert(error.message || "Không thể xóa mục tiêu.");
+      setDeletingGoalId(null);
+      return;
     }
 
-    setNodes((prev) => prev.filter((node) => !goalIdsToDeleteSet.has(node.id)));
-    setEdges((prev) => prev.filter((edge) => !goalIdsToDeleteSet.has(edge.from) && !goalIdsToDeleteSet.has(edge.to)));
+    setNodes((prev) => prev.filter((node) => node.id !== goalId));
+    setGoalNodePositions((prev) => {
+      if (!prev[goalId]) {
+        return prev;
+      }
+
+      const next = { ...prev };
+      delete next[goalId];
+      goalNodePositionsRef.current = next;
+      return next;
+    });
+    setKeyResultNodePositions((prev) => {
+      const nextEntries = Object.entries(prev).filter(([nodeId]) => !nodeId.startsWith(`kr:${goalId}:`));
+      if (nextEntries.length === Object.keys(prev).length) {
+        return prev;
+      }
+
+      const next = Object.fromEntries(nextEntries);
+      keyResultNodePositionsRef.current = next;
+      return next;
+    });
+    setEdges((prev) =>
+      prev.filter(
+        (edge) =>
+          edge.from !== goalId &&
+          edge.to !== goalId &&
+          !edge.from.startsWith(`kr:${goalId}:`) &&
+          !edge.to.startsWith(`kr:${goalId}:`),
+      ),
+    );
     setActiveGoalMenuId(null);
     setDeletingGoalId(null);
 
-    if (selectedId && goalIdsToDeleteSet.has(selectedId)) {
+    if (selectedId === goalId) {
       const nextParams = new URLSearchParams(searchParams.toString());
       nextParams.delete("goal");
       nextParams.set("detail", "closed");
       const next = nextParams.toString();
       router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
-      return;
-    }
-
-    if (selectedId === goalId) {
-      setDeletingGoalId(null);
       return;
     }
   };
@@ -1674,13 +2111,59 @@ function GoalsPageContent() {
                 ) : mode === "canvas" ? (
                   <div className="space-y-4 p-4 lg:p-7">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="text-sm text-slate-500">
-                      Giữ chuột để kéo không gian. Dùng Ctrl/Cmd + lăn chuột để zoom.
-                    </p>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <p className="text-sm text-slate-500">
+                        Click item để focus cụm. Kéo từng card Goal hoặc KR để di chuyển riêng. Lăn chuột để zoom.
+                      </p>
+                      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5">
+                        <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                          Quý
+                        </span>
+                        <Select value={quarterFilter} onValueChange={setQuarterFilter}>
+                          <SelectTrigger className="h-8 min-w-[110px] border-none bg-transparent px-2 py-0 text-sm shadow-none focus-visible:ring-0">
+                            <SelectValue placeholder="Tất cả quý" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">Tất cả quý</SelectItem>
+                            <SelectItem value="1">Q1</SelectItem>
+                            <SelectItem value="2">Q2</SelectItem>
+                            <SelectItem value="3">Q3</SelectItem>
+                            <SelectItem value="4">Q4</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                          Năm
+                        </span>
+                        <Select value={yearFilter} onValueChange={setYearFilter}>
+                          <SelectTrigger className="h-8 min-w-[110px] border-none bg-transparent px-2 py-0 text-sm shadow-none focus-visible:ring-0">
+                            <SelectValue placeholder="Tất cả năm" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">Tất cả năm</SelectItem>
+                            {yearFilterOptions.map((year) => (
+                              <SelectItem key={year} value={String(year)}>
+                                {year}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setQuarterFilter("all");
+                            setYearFilter("all");
+                          }}
+                          disabled={quarterFilter === "all" && yearFilter === "all"}
+                          className="h-8 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Xóa lọc
+                        </button>
+                      </div>
+                    </div>
                     <div className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1">
                       <button
                         type="button"
-                        onClick={() => applyCanvasZoom(canvasScale - 0.08)}
+                        onClick={() => applyCanvasZoom(canvasScaleRef.current - 0.08)}
                         className="h-7 w-7 rounded text-sm font-semibold text-slate-600 hover:bg-slate-100"
                       >
                         −
@@ -1688,6 +2171,7 @@ function GoalsPageContent() {
                       <button
                         type="button"
                         onClick={fitCanvasToNodes}
+                        disabled={filteredNodes.length === 0}
                         className="h-7 rounded px-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
                       >
                         Vừa khung
@@ -1697,60 +2181,82 @@ function GoalsPageContent() {
                       </span>
                       <button
                         type="button"
-                        onClick={() => applyCanvasZoom(canvasScale + 0.08)}
+                        onClick={() => applyCanvasZoom(canvasScaleRef.current + 0.08)}
                         className="h-7 w-7 rounded text-sm font-semibold text-slate-600 hover:bg-slate-100"
                       >
                         +
                       </button>
                     </div>
                   </div>
-                  <div
-                    ref={canvasRef}
-                    onPointerDown={onPointerDownCanvas}
-                    onPointerMove={onPointerMoveCanvas}
-                    onPointerUp={onPointerUpCanvas}
-                    onPointerCancel={onPointerUpCanvas}
-                    onWheel={onWheelCanvas}
-                    className={`relative h-[700px] overflow-hidden rounded-2xl border border-slate-200 bg-[#fbfcff] ${
-                      isPanning || draggingId ? "cursor-grabbing" : "cursor-grab"
-                    }`}
-                    style={{ touchAction: "none" }}
-                  >
+                  {filteredNodes.length === 0 ? (
+                    <div className="flex h-[700px] items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-600">
+                      Không có mục tiêu phù hợp với bộ lọc hiện tại.
+                    </div>
+                  ) : (
                     <div
-                      className="absolute left-0 top-0"
-                      style={{
-                        width: WORLD_WIDTH,
-                        height: WORLD_HEIGHT,
-                        transform: `translate(${viewportOffset.x}px, ${viewportOffset.y}px) scale(${canvasScale})`,
-                        transformOrigin: "0 0",
-                        backgroundImage:
-                          "radial-gradient(#dbe4f3 1.1px, transparent 1.1px)",
-                        backgroundSize: "36px 36px",
-                      }}
+                      ref={canvasRef}
+                      onPointerDown={onPointerDownCanvas}
+                      onPointerMove={onPointerMoveCanvas}
+                      onPointerUp={onPointerUpCanvas}
+                      onPointerCancel={onPointerUpCanvas}
+                      onWheel={onWheelCanvas}
+                      className={`relative h-[700px] overflow-hidden rounded-2xl border border-slate-200 bg-[#fbfcff] ${
+                        isPanning || draggingTarget ? "cursor-grabbing" : "cursor-grab"
+                      }`}
+                      style={{ touchAction: "none" }}
                     >
+                      <div
+                        className="absolute left-0 top-0 transform-gpu will-change-transform"
+                        style={{
+                          width: WORLD_WIDTH,
+                          height: WORLD_HEIGHT,
+                          transform: `translate(${viewportOffset.x}px, ${viewportOffset.y}px) scale(${canvasScale})`,
+                          transformOrigin: "0 0",
+                          backgroundImage:
+                            "radial-gradient(#dbe4f3 1.1px, transparent 1.1px)",
+                          backgroundSize: "36px 36px",
+                        }}
+                      >
                     <svg
                       className="pointer-events-none absolute inset-0"
                       style={{ width: WORLD_WIDTH, height: WORLD_HEIGHT }}
                     >
                       {edges.map((edge) => {
-                        const fromNode = nodeMap[edge.from];
-                        const toNode = nodeMap[edge.to];
+                        const fromGoalNode = goalNodeMap[edge.from];
+                        const fromKeyResultNode = canvasKeyResultNodeMap[edge.from];
+                        const toNode = canvasKeyResultNodeMap[edge.to];
+                        const fromNode = fromGoalNode
+                          ? {
+                              x: fromGoalNode.x,
+                              y: fromGoalNode.y,
+                              width: CARD_WIDTH,
+                              height: CARD_HEIGHT,
+                            }
+                          : fromKeyResultNode
+                            ? {
+                                x: fromKeyResultNode.x,
+                                y: fromKeyResultNode.y,
+                                width: KR_CARD_WIDTH,
+                                height: KR_CARD_HEIGHT,
+                              }
+                            : null;
                         if (!fromNode || !toNode) {
                           return null;
                         }
 
-                        const startX = fromNode.x + CARD_WIDTH / 2;
-                        const startY = fromNode.y + CARD_HEIGHT;
-                        const endX = toNode.x + CARD_WIDTH / 2;
-                        const endY = toNode.y;
-                        const midY = startY + (endY - startY) * 0.55;
+                        const connectorPath = getCanvasConnectorPath(fromNode, {
+                          x: toNode.x,
+                          y: toNode.y,
+                          width: KR_CARD_WIDTH,
+                          height: KR_CARD_HEIGHT,
+                        });
 
                         return (
                           <path
                             key={`${edge.from}-${edge.to}`}
-                            d={`M ${startX} ${startY} L ${startX} ${midY} L ${endX} ${midY} L ${endX} ${endY}`}
-                            stroke="#9fb6dc"
-                            strokeWidth="2.4"
+                            d={connectorPath}
+                            stroke="#8ea8d2"
+                            strokeWidth="2.8"
                             strokeLinecap="round"
                             strokeLinejoin="round"
                             fill="none"
@@ -1759,7 +2265,94 @@ function GoalsPageContent() {
                       })}
                     </svg>
 
-                    {nodes.map((goal) => (
+                    {canvasKeyResultNodes.map((keyResultNode) => (
+                      <div
+                        key={keyResultNode.id}
+                        style={{
+                          left: keyResultNode.x,
+                          top: keyResultNode.y,
+                          width: KR_CARD_WIDTH,
+                          minHeight: KR_CARD_HEIGHT,
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        onPointerDown={(event) =>
+                          startDraggingCanvasCard(
+                            event,
+                            {
+                              type: "key_result",
+                              id: keyResultNode.id,
+                              goalId: keyResultNode.goalId,
+                              keyResultId: keyResultNode.keyResultId,
+                            },
+                            {
+                              x: keyResultNode.x,
+                              y: keyResultNode.y,
+                            },
+                          )
+                        }
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (consumeSuppressedCanvasClick()) {
+                            return;
+                          }
+                          updateUrlState({ nextGoalId: keyResultNode.goalId, nextDetailOpen: true });
+                          focusCanvasCluster({
+                            type: "key_result",
+                            goalId: keyResultNode.goalId,
+                            keyResultId: keyResultNode.keyResultId,
+                          });
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            updateUrlState({ nextGoalId: keyResultNode.goalId, nextDetailOpen: true });
+                            focusCanvasCluster({
+                              type: "key_result",
+                              goalId: keyResultNode.goalId,
+                              keyResultId: keyResultNode.keyResultId,
+                            });
+                          }
+                        }}
+                        className="absolute cursor-grab rounded-2xl border border-slate-200 bg-white/96 p-3 text-left shadow-[0_12px_26px_-24px_rgba(15,23,42,0.9)] outline-none transition hover:border-blue-300 hover:bg-white focus-visible:ring-2 focus-visible:ring-blue-100"
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-[11px] font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                                {keyResultNode.contributionType === "support" ? "KR hỗ trợ" : "KR"}
+                              </p>
+                              <p className="mt-1 line-clamp-2 text-sm font-semibold text-slate-900">
+                                {keyResultNode.name}
+                              </p>
+                              {keyResultNode.contributionType === "support" ? (
+                                <p className="mt-1 line-clamp-2 text-[11px] text-amber-700">
+                                  Hỗ trợ cho: {keyResultNode.supportTargetSummary ?? "Chưa có"}
+                                </p>
+                              ) : null}
+                            </div>
+                            <span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">
+                              {keyResultNode.progress}%
+                            </span>
+                          </div>
+                          <div className="mt-3">
+                            <ProgressBar value={keyResultNode.progress} />
+                          </div>
+                        </div>
+                        <div className="mt-3 flex justify-end">
+                          <Link
+                            href={`/goals/${keyResultNode.goalId}/key-results/${keyResultNode.keyResultId}`}
+                            onClick={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            className="inline-flex h-7 items-center rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
+                          >
+                            Mở KR
+                          </Link>
+                        </div>
+                      </div>
+                    ))}
+
+                    {canvasGoalNodes.map((goal) => (
                       <div
                         key={goal.id}
                         className={`group absolute rounded-2xl border bg-white shadow-[0_14px_34px_-26px_rgba(15,23,42,0.6)] transition ${
@@ -1823,8 +2416,19 @@ function GoalsPageContent() {
 
                         <div
                           data-goal-card="1"
-                          onPointerDown={(event) => onPointerDownCard(event, goal.id)}
-                          onClick={() => handleSelectGoal(goal.id)}
+                          onPointerDown={(event) =>
+                            startDraggingCanvasCard(
+                              event,
+                              { type: "goal", id: goal.id },
+                              { x: goal.x, y: goal.y },
+                            )
+                          }
+                          onClick={() => {
+                            if (consumeSuppressedCanvasClick()) {
+                              return;
+                            }
+                            handleSelectGoal(goal.id);
+                          }}
                           className="h-full w-full p-4 text-left"
                           style={{ cursor: mode === "canvas" ? "grab" : "pointer" }}
                           role="button"
@@ -1860,6 +2464,9 @@ function GoalsPageContent() {
                           <p className="mt-4 line-clamp-2 text-[22px] font-semibold leading-tight tracking-[-0.02em] text-slate-900">
                             {goal.tieuDe}
                           </p>
+                          <p className="mt-2 line-clamp-1 text-xs font-medium text-slate-500">
+                            Owners · {goal.ownersSummary}
+                          </p>
 
                           <div className="mt-4 grid grid-cols-3 gap-2">
                             <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
@@ -1880,7 +2487,7 @@ function GoalsPageContent() {
                             <div className="mt-3 space-y-1">
                               <div className="flex items-center justify-between text-[11px] text-slate-500">
                                 <span>{goal.statusLabel}</span>
-                                <span>{goal.keyResultsPreview.length} KR nổi bật</span>
+                                <span>{goal.keyResultCount} KR</span>
                               </div>
                               <ProgressBar value={goal.progress} />
                             </div>
@@ -1902,7 +2509,8 @@ function GoalsPageContent() {
                       </div>
                     ))}
                     </div>
-                  </div>
+                    </div>
+                  )}
 
                   </div>
                 ) : (
@@ -2022,14 +2630,14 @@ function GoalsPageContent() {
                         </div>
                       </div>
                       <div className="overflow-x-auto">
-                        <table className="w-full min-w-[1260px] text-left">
+                        <table className="w-full min-w-[1220px] text-left">
                           <thead>
                             <tr className="text-[11px] tracking-[0.08em] text-slate-400 uppercase">
                               <th className="sticky left-0 z-20 w-[320px] min-w-[320px] bg-white px-5 py-3 font-semibold shadow-[1px_0_0_0_#e2e8f0]">
                                 Mục tiêu
                               </th>
-                              <th className="px-5 py-3 font-semibold">Mục tiêu cha</th>
                               <th className="px-5 py-3 font-semibold">Phòng ban</th>
+                              <th className="px-5 py-3 font-semibold">Owners</th>
                               <th className="px-5 py-3 font-semibold">Loại</th>
                               <th className="px-5 py-3 font-semibold">Trạng thái</th>
                               <th className="px-5 py-3 font-semibold">Kỳ</th>
@@ -2057,13 +2665,11 @@ function GoalsPageContent() {
                                     </p>
                                     <p className="mt-1 line-clamp-1 text-xs text-slate-500">{goal.moTa}</p>
                                   </td>
-                                  <td className="max-w-[240px] px-5 py-4 text-sm text-slate-600">
-                                    {goal.parentGoalId
-                                      ? nodeMap[goal.parentGoalId]?.tieuDe ?? "Không xác định"
-                                      : "Không có"}
-                                  </td>
                                   <td className="px-5 py-4 text-sm text-slate-600" title={goal.teamNames.join(", ")}>
                                     {goal.teamSummary}
+                                  </td>
+                                  <td className="px-5 py-4 text-sm text-slate-600" title={goal.owners.map((owner) => owner.name).join(", ")}>
+                                    {goal.ownersSummary}
                                   </td>
                                   <td className="px-5 py-4 text-sm text-slate-600">{goal.nhom}</td>
                                   <td className="px-5 py-4 text-sm text-slate-600">
@@ -2138,8 +2744,8 @@ function GoalsPageContent() {
             </section>
 
             {isDetailOpen && selectedGoal ? (
-              <aside className="h-full overflow-y-auto border-t border-slate-200 bg-white p-5 xl:border-l xl:border-t-0 xl:p-6">
-              <div className="mb-8 flex items-center justify-between">
+              <aside className="flex h-full min-h-0 flex-col border-t border-slate-200 bg-white xl:border-l xl:border-t-0">
+              <div className="flex items-center justify-between border-b border-slate-100 px-5 py-5 xl:px-6">
                 <h2 className="text-2xl font-semibold tracking-[-0.02em] text-slate-900">
                   Chi tiết mục tiêu
                 </h2>
@@ -2152,6 +2758,7 @@ function GoalsPageContent() {
                 </button>
               </div>
 
+              <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 xl:px-6 xl:py-6">
               <div className="space-y-6">
                 <div>
                   <p className="text-[11px] font-semibold tracking-[0.08em] text-blue-600 uppercase">
@@ -2175,26 +2782,41 @@ function GoalsPageContent() {
                     <p className="text-sm text-slate-400">Quý</p>
                     <p className="mt-2 text-base font-medium text-slate-800">{selectedGoal.quy}</p>
                   </div>
-                </div>
-
-                {selectedGoal.teamNames.length > 0 ? (
                   <div>
-                    <p className="text-sm text-slate-400">Danh sách phòng ban tham gia</p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {selectedGoal.teamNames.map((teamName, index) => (
-                        <span
-                          key={`${selectedGoal.id}-${teamName}`}
-                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                            index === 0 ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-700"
-                          }`}
-                        >
-                          {teamName}
-                          {index === 0 ? " · chính" : ""}
-                        </span>
-                      ))}
-                    </div>
+                    <p className="text-sm text-slate-400">Loại goal</p>
+                    <p className="mt-2 text-base font-medium text-slate-800">{selectedGoal.nhom}</p>
                   </div>
-                ) : null}
+                  <div>
+                    <p className="text-sm text-slate-400">Owners</p>
+                    {selectedGoal.owners.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {selectedGoal.owners.slice(0, 4).map((owner) => (
+                          <span
+                            key={owner.id}
+                            className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700"
+                          >
+                            {owner.name}
+                          </span>
+                        ))}
+                        {selectedGoal.owners.length > 4 ? (
+                          <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                            +{selectedGoal.owners.length - 4}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-base font-medium text-slate-800">Chưa có owners</p>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-sm text-slate-400">Target goal</p>
+                    <p className="mt-2 text-base font-medium text-slate-800">
+                      {selectedGoal.target !== null || selectedGoal.unit
+                        ? `${formatKeyResultMetric(selectedGoal.target, selectedGoal.unit)} · ${formatKeyResultUnit(selectedGoal.unit)}`
+                        : "Chưa đặt"}
+                    </p>
+                  </div>
+                </div>
 
                 <div>
                   <p className="text-sm text-slate-400">Trạng thái</p>
@@ -2221,7 +2843,7 @@ function GoalsPageContent() {
                     </div>
                     <ProgressBar value={selectedGoal.progress} />
                     <p className="mt-2 text-xs text-slate-500 italic">
-                      * Tự động tính từ progress của task theo từng key result.
+                      * {getGoalProgressHelp(selectedGoal.loai)}
                     </p>
                   </div>
                 ) : (
@@ -2243,129 +2865,29 @@ function GoalsPageContent() {
                   <p className="mt-2 text-sm leading-relaxed text-slate-700">{selectedGoal.moTa}</p>
                 </div>
 
-                <div className="rounded-2xl border border-slate-200 bg-slate-50">
-                  <div className="border-b border-slate-200 px-4 py-3">
-                    <h3 className="text-base font-semibold text-slate-900">
-                      Công việc theo Key Result
-                    </h3>
+                {selectedGoal.teamNames.length > 0 ? (
+                  <div>
+                    <p className="text-sm text-slate-400">Danh sách phòng ban tham gia</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {selectedGoal.teamNames.map((teamName, index) => (
+                        <span
+                          key={`${selectedGoal.id}-${teamName}`}
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                            index === 0 ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-700"
+                          }`}
+                        >
+                          {teamName}
+                          {index === 0 ? " · chính" : ""}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                  <div className="divide-y divide-slate-200">
-                    {isLoadingSelectedGoalTasks ? (
-                      <p className="px-4 py-5 text-sm text-slate-500">
-                        Đang tải công việc...
-                      </p>
-                    ) : selectedGoalTasksError ? (
-                      <p className="px-4 py-5 text-sm text-rose-600">
-                        {selectedGoalTasksError}
-                      </p>
-                    ) : selectedGoalKeyResults.length > 0 ? (
-                      selectedGoalKeyResults.map((keyResult) => (
-                        <div key={keyResult.id} className="space-y-3 px-4 py-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="text-sm font-semibold text-slate-900">{keyResult.name}</p>
-                              <p className="mt-1 text-xs text-slate-500">
-                                {keyResult.current}/{keyResult.target}
-                                {keyResult.unit ? ` · ${keyResult.unit}` : ""}
-                              </p>
-                              <p className="mt-1 text-xs text-slate-500">
-                                Khung thời gian của KR:{" "}
-                                {formatTimelineRangeVi(keyResult.startDate, keyResult.endDate, {
-                                  fallback: "KR chưa có mốc thời gian",
-                                })}
-                              </p>
-                              <p className="mt-1 text-[11px] text-slate-400">
-                                {getTimelineMissingReason(
-                                  keyResult.startDate,
-                                  keyResult.endDate,
-                                  "KR chưa có mốc thời gian",
-                                  "Mốc thời gian KR không hợp lệ",
-                                ) ?? "KR là khung kế hoạch cha; từng task bên dưới có lịch thực thi riêng."}
-                              </p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Link
-                                href={`/tasks/new?goalId=${selectedGoal.id}&keyResultId=${keyResult.id}`}
-                                className="inline-flex h-8 items-center rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white"
-                              >
-                                + Task
-                              </Link>
-                              <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">
-                                {keyResult.progress}%
-                              </span>
-                            </div>
-                          </div>
-                          <ProgressBar value={keyResult.progress} />
-                          {keyResult.tasks.length > 0 ? (
-                            <div className="space-y-2">
-                              {keyResult.tasks.map((task) => {
-                                const alignmentWarning = getTimelineOutsideParentWarning(
-                                  task.startDate,
-                                  task.endDate,
-                                  keyResult.startDate,
-                                  keyResult.endDate,
-                                  {
-                                    subjectLabel: "Thời gian công việc",
-                                    parentLabel: "KR",
-                                  },
-                                );
+                ) : null}
 
-                                return (
-                                  <div key={task.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
-                                    <div className="flex items-start justify-between gap-2">
-                                      <p className="text-sm font-medium text-slate-800">{task.tieuDe}</p>
-                                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
-                                        {task.loai}
-                                      </span>
-                                    </div>
-                                    <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
-                                      <span>{task.trangThai}</span>
-                                      <span>{task.nguoiPhuTrach}</span>
-                                    </div>
-                                    <p className="mt-2 text-xs font-medium text-slate-700">
-                                      Thời gian thực thi:{" "}
-                                      {formatTimelineRangeVi(task.startDate, task.endDate, {
-                                        fallback: "Công việc chưa có mốc thời gian",
-                                      })}
-                                    </p>
-                                    <p className="mt-1 text-[11px] text-slate-400">
-                                      {getTimelineMissingReason(
-                                        task.startDate,
-                                        task.endDate,
-                                        "Công việc chưa có mốc thời gian",
-                                        "Mốc thời gian công việc không hợp lệ",
-                                      ) ?? `Thuộc khung thời gian của KR: ${formatTimelineRangeVi(keyResult.startDate, keyResult.endDate, {
-                                        fallback: "KR chưa có mốc thời gian",
-                                      })}`}
-                                    </p>
-                                    {alignmentWarning ? (
-                                      <p className="mt-1 text-[11px] text-amber-600">{alignmentWarning}</p>
-                                    ) : null}
-                                    <div className="mt-2 space-y-1">
-                                      <div className="flex items-center justify-between text-[11px] text-slate-500">
-                                        <span>Tiến độ</span>
-                                        <span className="font-semibold">{task.tienDo}%</span>
-                                      </div>
-                                      <ProgressBar value={task.tienDo} />
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          ) : (
-                            <p className="text-xs text-slate-500">KR này chưa có task.</p>
-                          )}
-                        </div>
-                      ))
-                    ) : (
-                      <p className="px-4 py-5 text-sm text-slate-500">
-                        Chưa có dữ liệu KR để hiển thị công việc.
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="space-y-3 border-t border-slate-200 pt-5">
+              </div>
+              </div>
+              <div className="border-t border-slate-200 bg-white/95 px-5 py-4 shadow-[0_-8px_24px_-20px_rgba(15,23,42,0.35)] backdrop-blur xl:px-6">
+                <div className="space-y-3">
                   <Link
                     href={`/goals/${selectedGoal.id}/key-results/new`}
                     className="flex h-11 w-full items-center justify-center rounded-xl border border-slate-200 bg-white text-base font-semibold text-slate-700"

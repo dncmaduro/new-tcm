@@ -25,6 +25,15 @@ body {
   font-family: var(--font-app-sans), sans-serif;
 }
 
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 @keyframes panel-in {
   from {
     opacity: 0;

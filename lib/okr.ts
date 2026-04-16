@@ -1,3 +1,5 @@
+import { normalizeGoalTypeValue } from "@/lib/constants/goals";
+import { normalizeKeyResultContributionTypeValue } from "@/lib/constants/key-results";
 import { getTaskProgressByType, normalizeTaskStatus } from "@/lib/constants/tasks";
 
 type ProgressTaskLike = {
@@ -13,6 +15,9 @@ type ProgressKeyResultLike = {
   id: string;
   goal_id?: string | null;
   goalId?: string | null;
+  type?: string | null;
+  contribution_type?: string | null;
+  contributionType?: string | null;
   start_value?: number | null;
   startValue?: number | null;
   current?: number | null;
@@ -20,6 +25,12 @@ type ProgressKeyResultLike = {
   weight?: number | null;
   responsible_department_id?: string | null;
   responsibleDepartmentId?: string | null;
+};
+
+type ProgressGoalLike = {
+  id: string;
+  type?: string | null;
+  target?: number | null;
 };
 
 type GoalDepartmentParticipationLike = {
@@ -42,6 +53,91 @@ const normalizeProgress = (value: number | null | undefined) => {
 const normalizeWeight = (value: number | null | undefined) => {
   const safe = Number.isFinite(value) ? Number(value) : 0;
   return safe > 0 ? safe : 1;
+};
+
+const isDirectKeyResult = <TKeyResult extends ProgressKeyResultLike>(keyResult: TKeyResult) =>
+  normalizeKeyResultContributionTypeValue(
+    keyResult.contributionType ?? keyResult.contribution_type ?? null,
+  ) === "direct";
+
+const computeGoalKeyResultProgress = <TKeyResult extends ProgressKeyResultLike>({
+  goalType,
+  goalTarget,
+  keyResults,
+  keyResultProgressMap,
+}: {
+  goalType: "kpi" | "okr";
+  goalTarget?: number | null;
+  keyResults: TKeyResult[];
+  keyResultProgressMap: Record<string, number>;
+}) => {
+  const directKeyResults = keyResults.filter(isDirectKeyResult);
+
+  if (directKeyResults.length === 0) {
+    return 0;
+  }
+
+  if (goalType === "kpi") {
+    const safeGoalTarget = Number.isFinite(goalTarget) ? Number(goalTarget) : 0;
+
+    if (safeGoalTarget <= 0) {
+      return 0;
+    }
+
+    const totalDirectCurrent = directKeyResults.reduce((total, keyResult) => {
+      const safeCurrent = Number.isFinite(keyResult.current) ? Number(keyResult.current) : 0;
+      return total + safeCurrent;
+    }, 0);
+
+    return computeMetricProgress(totalDirectCurrent, 0, safeGoalTarget);
+  }
+
+  return computeWeightedProgress(
+    directKeyResults.map((keyResult) => ({
+      progress: keyResultProgressMap[keyResult.id] ?? 0,
+      weight: keyResult.weight ?? null,
+    })),
+  );
+};
+
+const computeDepartmentKeyResultProgress = <TKeyResult extends ProgressKeyResultLike>({
+  goalType,
+  keyResults,
+  keyResultProgressMap,
+}: {
+  goalType: "kpi" | "okr";
+  keyResults: TKeyResult[];
+  keyResultProgressMap: Record<string, number>;
+}) => {
+  const directKeyResults = keyResults.filter(isDirectKeyResult);
+
+  if (directKeyResults.length === 0) {
+    return 0;
+  }
+
+  if (goalType === "kpi") {
+    const totalCurrent = directKeyResults.reduce((sum, keyResult) => {
+      const safeCurrent = Number.isFinite(keyResult.current) ? Number(keyResult.current) : 0;
+      return sum + safeCurrent;
+    }, 0);
+    const totalTarget = directKeyResults.reduce((sum, keyResult) => {
+      const safeTarget = Number.isFinite(keyResult.target) ? Number(keyResult.target) : 0;
+      return sum + safeTarget;
+    }, 0);
+
+    if (totalTarget <= 0) {
+      return 0;
+    }
+
+    return computeMetricProgress(totalCurrent, 0, totalTarget);
+  }
+
+  return computeWeightedProgress(
+    directKeyResults.map((keyResult) => ({
+      progress: keyResultProgressMap[keyResult.id] ?? 0,
+      weight: keyResult.weight ?? null,
+    })),
+  );
 };
 
 export const getComputedTaskProgress = (task: ProgressTaskLike) =>
@@ -88,19 +184,9 @@ export const computeMetricProgress = (
   return normalizeProgress(((safeCurrent - safeStartValue) / denominator) * 100);
 };
 
-export const getKeyResultComputedProgress = <TKeyResult extends ProgressKeyResultLike, TTask extends ProgressTaskLike>(
+export const getKeyResultComputedProgress = <TKeyResult extends ProgressKeyResultLike>(
   keyResult: TKeyResult,
-  tasks: TTask[],
 ) => {
-  if (tasks.length > 0) {
-    return computeWeightedProgress(
-      tasks.map((task) => ({
-        progress: getComputedTaskProgress(task),
-        weight: task.weight ?? null,
-      })),
-    );
-  }
-
   return computeMetricProgress(
     keyResult.current,
     keyResult.startValue ?? keyResult.start_value,
@@ -108,40 +194,26 @@ export const getKeyResultComputedProgress = <TKeyResult extends ProgressKeyResul
   );
 };
 
-export const buildKeyResultProgressMap = <
-  TKeyResult extends ProgressKeyResultLike,
-  TTask extends ProgressTaskLike,
->(
+export const buildKeyResultProgressMap = <TKeyResult extends ProgressKeyResultLike>(
   keyResults: TKeyResult[],
-  tasks: TTask[],
+  tasks?: ProgressTaskLike[],
 ) => {
-  const tasksByKeyResultId = tasks.reduce<Record<string, TTask[]>>(
-    (acc, task) => {
-      const keyResultId = task.keyResultId ?? task.key_result_id ?? null;
-      if (!keyResultId) {
-        return acc;
-      }
-      if (!acc[keyResultId]) {
-        acc[keyResultId] = [];
-      }
-      acc[keyResultId].push(task);
-      return acc;
-    },
-    {},
-  );
-
+  void tasks;
   return keyResults.reduce<Record<string, number>>((acc, keyResult) => {
-    acc[keyResult.id] = getKeyResultComputedProgress(keyResult, tasksByKeyResultId[keyResult.id] ?? []);
+    acc[keyResult.id] = getKeyResultComputedProgress(keyResult);
     return acc;
   }, {});
 };
 
-export const buildGoalProgressMap = <TKeyResult extends ProgressKeyResultLike>(
-  goalIds: string[],
+export const buildGoalProgressMap = <
+  TGoal extends ProgressGoalLike,
+  TKeyResult extends ProgressKeyResultLike,
+>(
+  goals: TGoal[],
   keyResults: TKeyResult[],
   keyResultProgressMap: Record<string, number>,
 ) => {
-  const keyResultIdsByGoalId = keyResults.reduce<Record<string, string[]>>((acc, keyResult) => {
+  const keyResultsByGoalId = keyResults.reduce<Record<string, TKeyResult[]>>((acc, keyResult) => {
     const goalId = keyResult.goalId ?? keyResult.goal_id ?? null;
     if (!goalId) {
       return acc;
@@ -149,24 +221,18 @@ export const buildGoalProgressMap = <TKeyResult extends ProgressKeyResultLike>(
     if (!acc[goalId]) {
       acc[goalId] = [];
     }
-    acc[goalId].push(keyResult.id);
+    acc[goalId].push(keyResult);
     return acc;
   }, {});
 
-  return goalIds.reduce<Record<string, number>>((acc, goalId) => {
-    const progressValues = (keyResultIdsByGoalId[goalId] ?? []).map(
-      (keyResultId) => keyResultProgressMap[keyResultId] ?? 0,
-    );
-
-    if (progressValues.length === 0) {
-      acc[goalId] = 0;
-      return acc;
-    }
-
-    const average =
-      progressValues.reduce((total, current) => total + normalizeProgress(current), 0) /
-      progressValues.length;
-    acc[goalId] = normalizeProgress(average);
+  return goals.reduce<Record<string, number>>((acc, goal) => {
+    const goalType = normalizeGoalTypeValue(goal.type ?? null);
+    acc[goal.id] = computeGoalKeyResultProgress({
+      goalType,
+      goalTarget: goal.target ?? null,
+      keyResults: keyResultsByGoalId[goal.id] ?? [],
+      keyResultProgressMap,
+    });
     return acc;
   }, {});
 };
@@ -228,13 +294,20 @@ export const computeDepartmentPerformance = ({
 };
 
 export const buildDepartmentKeyResultProgressMap = <
+  TGoal extends ProgressGoalLike,
   TGoalDepartment extends GoalDepartmentParticipationLike,
   TKeyResult extends ProgressKeyResultLike,
 >(
+  goals: TGoal[],
   goalDepartments: TGoalDepartment[],
   keyResults: TKeyResult[],
   keyResultProgressMap: Record<string, number>,
 ) => {
+  const goalsById = goals.reduce<Record<string, TGoal>>((acc, goal) => {
+    acc[goal.id] = goal;
+    return acc;
+  }, {});
+
   return goalDepartments.reduce<Record<string, number>>((acc, goalDepartment) => {
     const goalId = goalDepartment.goalId ?? goalDepartment.goal_id ?? null;
     const departmentId = goalDepartment.departmentId ?? goalDepartment.department_id ?? null;
@@ -249,27 +322,29 @@ export const buildDepartmentKeyResultProgressMap = <
       return keyResultGoalId === goalId && responsibleDepartmentId === departmentId;
     });
 
-    acc[`${goalId}:${departmentId}`] = computeWeightedProgress(
-      ownedKeyResults.map((keyResult) => ({
-        progress: keyResultProgressMap[keyResult.id] ?? 0,
-        weight: keyResult.weight ?? null,
-      })),
-    );
+    acc[`${goalId}:${departmentId}`] = computeDepartmentKeyResultProgress({
+      goalType: normalizeGoalTypeValue(goalsById[goalId]?.type ?? null),
+      keyResults: ownedKeyResults,
+      keyResultProgressMap,
+    });
 
     return acc;
   }, {});
 };
 
 export const buildGoalDepartmentPerformanceMap = <
+  TGoal extends ProgressGoalLike,
   TGoalDepartment extends GoalDepartmentParticipationLike,
   TKeyResult extends ProgressKeyResultLike,
 >(
+  goals: TGoal[],
   goalDepartments: TGoalDepartment[],
   keyResults: TKeyResult[],
   keyResultProgressMap: Record<string, number>,
   goalProgressMap: Record<string, number>,
 ) => {
   const departmentKeyResultProgressMap = buildDepartmentKeyResultProgressMap(
+    goals,
     goalDepartments,
     keyResults,
     keyResultProgressMap,

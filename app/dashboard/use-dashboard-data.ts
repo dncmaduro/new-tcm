@@ -47,11 +47,13 @@ type UserRoleRow = {
 type GoalRow = {
   id: string;
   name: string;
+  type: string | null;
   status: string | null;
   quarter: number | null;
   year: number | null;
   department_id: string | null;
-  owner_id: string | null;
+  target: number | null;
+  unit: string | null;
   start_date: string | null;
   end_date: string | null;
 };
@@ -64,10 +66,16 @@ type GoalDepartmentRow = {
   kr_weight: number | null;
 };
 
+type GoalOwnerRow = {
+  goal_id: string | null;
+  profile_id: string | null;
+};
+
 type KeyResultRow = {
   id: string;
   goal_id: string | null;
   name: string;
+  contribution_type: string | null;
   current: number | null;
   target: number | null;
   unit: string | null;
@@ -251,7 +259,7 @@ const buildSummaryCards = ({
     value: String(activeGoalsThisQuarter),
     badge: "Quý này",
     badgeClass: "bg-violet-50 text-violet-600",
-    note: "Mục tiêu thuộc owner hoặc team hiện tại",
+    note: "Mục tiêu thuộc owners hoặc team hiện tại",
     iconClass: "bg-violet-50 text-violet-600",
   },
   {
@@ -365,7 +373,7 @@ export function useDashboardData() {
         const [
           { data: myTasksRows, error: myTasksError },
           { data: teamTasksRows },
-          { data: ownerGoalsRows },
+          { data: ownerGoalRows, error: ownerGoalRowsError },
           { data: departmentGoalsRows },
           { data: linkedGoalRows },
           { data: todayTimeRows },
@@ -406,17 +414,17 @@ export function useDashboardData() {
           teamProfileIds.length > 0
             ? supabase
                 .from("tasks")
-                .select("id,assignee_id,status,progress,weight,created_at,updated_at")
+                .select("id,assignee_id,type,status,progress,weight,created_at,updated_at")
                 .in("assignee_id", teamProfileIds)
             : Promise.resolve({ data: [] }),
           supabase
-            .from("goals")
-            .select("id,name,status,quarter,year,department_id,owner_id,start_date,end_date")
-            .eq("owner_id", profileId),
+            .from("goal_owners")
+            .select("goal_id,profile_id")
+            .eq("profile_id", profileId),
           departmentIds.length > 0
             ? supabase
                 .from("goals")
-                .select("id,name,status,quarter,year,department_id,owner_id,start_date,end_date")
+                .select("id,name,type,status,quarter,year,department_id,target,unit,start_date,end_date")
                 .in("department_id", departmentIds)
             : Promise.resolve({ data: [] }),
           departmentIds.length > 0
@@ -450,6 +458,9 @@ export function useDashboardData() {
         if (myTasksError) {
           throw new Error(myTasksError.message || "Không tải được công việc của bạn.");
         }
+        if (ownerGoalRowsError) {
+          throw new Error(ownerGoalRowsError.message || "Không tải được danh sách owners của mục tiêu.");
+        }
 
         const goalIdsFromLinks = [
           ...new Set(
@@ -457,22 +468,31 @@ export function useDashboardData() {
               .map((item) => item.goal_id)
               .filter((value): value is string => Boolean(value))
               .map((value) => String(value)),
+            ),
+        ];
+        const ownedGoalIds = [
+          ...new Set(
+            ((ownerGoalRows ?? []) as GoalOwnerRow[])
+              .map((item) => item.goal_id)
+              .filter((value): value is string => Boolean(value))
+              .map((value) => String(value)),
           ),
         ];
-        const existingGoalIds = new Set(
-          [
-            ...((ownerGoalsRows ?? []) as GoalRow[]),
-            ...((departmentGoalsRows ?? []) as GoalRow[]),
-          ].map((goal) => String(goal.id)),
+        const departmentGoalIds = new Set(
+          ((departmentGoalsRows ?? []) as GoalRow[]).map((goal) => String(goal.id)),
         );
-        const missingLinkedGoalIds = goalIdsFromLinks.filter((goalId) => !existingGoalIds.has(goalId));
+        const goalsToFetchById = [
+          ...new Set(
+            [...ownedGoalIds, ...goalIdsFromLinks].filter((goalId) => !departmentGoalIds.has(goalId)),
+          ),
+        ];
 
         const { data: linkedGoalsRows } =
-          missingLinkedGoalIds.length > 0
+          goalsToFetchById.length > 0
             ? await supabase
                 .from("goals")
-                .select("id,name,status,quarter,year,department_id,owner_id,start_date,end_date")
-                .in("id", missingLinkedGoalIds)
+                .select("id,name,type,status,quarter,year,department_id,target,unit,start_date,end_date")
+                .in("id", goalsToFetchById)
             : { data: [] };
 
         if (!isActive) {
@@ -480,7 +500,6 @@ export function useDashboardData() {
         }
 
         const allGoals = [
-          ...((ownerGoalsRows ?? []) as GoalRow[]),
           ...((departmentGoalsRows ?? []) as GoalRow[]),
           ...((linkedGoalsRows ?? []) as GoalRow[]),
         ].reduce<Record<string, GoalRow>>((acc, goal) => {
@@ -493,31 +512,13 @@ export function useDashboardData() {
         const relevantGoals = Object.values(allGoals);
         const relevantGoalIds = relevantGoals.map((goal) => goal.id);
 
-        const [{ data: keyResultsRows }, { data: goalTaskRows }] = await Promise.all([
+        const { data: keyResultsRows } =
           relevantGoalIds.length > 0
-            ? supabase
+            ? await supabase
                 .from("key_results")
-                .select("id,goal_id,name,current,target,unit,start_value,weight,responsible_department_id")
+                .select("id,goal_id,name,contribution_type,current,target,unit,start_value,weight,responsible_department_id")
                 .in("goal_id", relevantGoalIds)
-            : Promise.resolve({ data: [] }),
-          relevantGoalIds.length > 0
-            ? (async () => {
-                const { data: goalKeyResults } = await supabase
-                  .from("key_results")
-                  .select("id")
-                  .in("goal_id", relevantGoalIds);
-
-                const keyResultIds = ((goalKeyResults ?? []) as Array<{ id: string }>).map((item) => String(item.id));
-                if (!keyResultIds.length) {
-                  return { data: [] };
-                }
-                return supabase
-                  .from("tasks")
-                  .select("key_result_id,type,status,progress,weight")
-                  .in("key_result_id", keyResultIds);
-              })()
-            : Promise.resolve({ data: [] }),
-        ]);
+            : { data: [] };
 
         if (!isActive) {
           return;
@@ -595,8 +596,16 @@ export function useDashboardData() {
           goals: relevantGoals.map((goal) => ({
             id: String(goal.id),
             name: String(goal.name),
+            type: goal.type ?? null,
             status: goal.status ?? null,
             department_id: goal.department_id ? String(goal.department_id) : null,
+            target:
+              goal.target === null || goal.target === undefined
+                ? null
+                : typeof goal.target === "number"
+                  ? goal.target
+                  : Number(goal.target),
+            unit: goal.unit ? String(goal.unit) : null,
           })),
           goalDepartments: ((linkedGoalRows ?? []) as GoalDepartmentRow[]).map((item) => ({
             goal_id: item.goal_id ? String(item.goal_id) : null,
@@ -606,19 +615,12 @@ export function useDashboardData() {
           keyResults: ((keyResultsRows ?? []) as KeyResultRow[]).map((item) => ({
             id: String(item.id),
             goal_id: item.goal_id ? String(item.goal_id) : null,
-          })),
-          tasks: ((goalTaskRows ?? []) as Array<{
-            key_result_id: string | null;
-            type: string | null;
-            status: string | null;
-            progress: number | null;
-            weight: number | null;
-          }>).map((task) => ({
-            key_result_id: task.key_result_id ? String(task.key_result_id) : null,
-            type: task.type ? String(task.type) : null,
-            status: task.status ? String(task.status) : null,
-            progress: task.progress,
-            weight: task.weight,
+            contribution_type: item.contribution_type ? String(item.contribution_type) : null,
+            start_value:
+              typeof item.start_value === "number" ? item.start_value : Number(item.start_value ?? 0),
+            current: typeof item.current === "number" ? item.current : Number(item.current ?? 0),
+            target: typeof item.target === "number" ? item.target : Number(item.target ?? 0),
+            weight: typeof item.weight === "number" ? item.weight : Number(item.weight ?? 1),
           })),
           departmentNamesById: departmentsById,
         })
@@ -627,6 +629,7 @@ export function useDashboardData() {
 
         const teamPerformanceByProfile = ((teamTasksRows ?? []) as Array<{
           assignee_id: string | null;
+          type: string | null;
           status: string | null;
           progress: number | null;
         }>).reduce<
@@ -646,7 +649,7 @@ export function useDashboardData() {
           }
           acc[assigneeId].tasks += 1;
           acc[assigneeId].progressSum += toDashboardTaskProgress({
-            type: "kpi",
+            type: task.type,
             status: task.status,
             progress: task.progress,
           });

@@ -22,20 +22,33 @@ const writeStoredCollapsed = (isCollapsed: boolean) => {
 
 type WorkspaceSidebarStore = {
   isCollapsed: boolean;
+  hasHydrated: boolean;
+  hydrateFromStorage: () => void;
   setCollapsed: (isCollapsed: boolean) => void;
   toggleCollapsed: () => void;
 };
 
-export const useWorkspaceSidebarStore = create<WorkspaceSidebarStore>((set) => ({
-  isCollapsed: readStoredCollapsed(),
+export const useWorkspaceSidebarStore = create<WorkspaceSidebarStore>((set, get) => ({
+  isCollapsed: false,
+  hasHydrated: false,
+  hydrateFromStorage: () => {
+    if (get().hasHydrated) {
+      return;
+    }
+
+    set({
+      isCollapsed: readStoredCollapsed(),
+      hasHydrated: true,
+    });
+  },
   setCollapsed: (isCollapsed) => {
     writeStoredCollapsed(isCollapsed);
-    set({ isCollapsed });
+    set({ isCollapsed, hasHydrated: true });
   },
   toggleCollapsed: () =>
     set((state) => {
       const nextValue = !state.isCollapsed;
       writeStoredCollapsed(nextValue);
-      return { isCollapsed: nextValue };
+      return { isCollapsed: nextValue, hasHydrated: true };
     }),
 }));

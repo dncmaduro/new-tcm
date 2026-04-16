@@ -743,10 +743,6 @@ function DepartmentsPageContent() {
       return;
     }
 
-    if (!event.ctrlKey && !event.metaKey) {
-      return;
-    }
-
     event.preventDefault();
     const rect = treeCanvasRef.current.getBoundingClientRect();
     const pointer = {
@@ -840,7 +836,7 @@ function DepartmentsPageContent() {
                     <div className="rounded-2xl border border-slate-200 bg-white p-5">
                       <div className="mb-3 flex items-center justify-between">
                         <p className="text-sm text-slate-500">
-                          Giữ chuột để kéo sơ đồ. Dùng Ctrl/Cmd + lăn chuột để zoom.
+                          Giữ chuột để kéo sơ đồ. Lăn chuột để zoom.
                         </p>
                         <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-1">
                           <button

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useState } from "react";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import {
@@ -145,11 +144,6 @@ export default function DashboardPage() {
               <DashboardRecentActivity items={filteredActivities} loading={isLoading} error={error} />
             </section>
 
-            <div className="text-sm text-slate-500 lg:hidden">
-              <Link href="/" className="font-semibold text-blue-600 hover:text-blue-700">
-                ← Quay lại đăng nhập
-              </Link>
-            </div>
           </main>
         </div>
       </div>
