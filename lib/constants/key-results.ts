@@ -6,6 +6,11 @@ export const KEY_RESULT_UNITS = [
 
 export type KeyResultUnitValue = (typeof KEY_RESULT_UNITS)[number]["value"];
 
+export const KPI_KEY_RESULT_UNITS = [
+  { value: "count", label: "Số lượng" },
+  { value: "currency", label: "Doanh thu" },
+] as const satisfies ReadonlyArray<{ value: KeyResultUnitValue; label: string }>;
+
 export const KEY_RESULT_TYPES = [
   { value: "kpi", label: "KPI" },
   { value: "okr", label: "OKR" },
@@ -42,6 +47,20 @@ export const normalizeKeyResultTypeValue = (
   value: string | null | undefined,
 ): KeyResultTypeValue => (value === "okr" ? "okr" : "kpi");
 
+export const getAllowedKeyResultUnitsByType = (type: string | null | undefined) =>
+  normalizeKeyResultTypeValue(type) === "okr" ? KEY_RESULT_UNITS.filter((item) => item.value === "percent") : KPI_KEY_RESULT_UNITS;
+
+export const normalizeKeyResultUnitForType = (
+  type: string | null | undefined,
+  unit: string | null | undefined,
+): KeyResultUnitValue => {
+  if (normalizeKeyResultTypeValue(type) === "okr") {
+    return "percent";
+  }
+
+  return KPI_KEY_RESULT_UNITS.some((item) => item.value === unit) ? (unit as KeyResultUnitValue) : "count";
+};
+
 export const normalizeKeyResultContributionTypeValue = (
   value: string | null | undefined,
 ): KeyResultContributionTypeValue => (value === "support" ? "support" : "direct");
@@ -65,6 +84,11 @@ export const formatKeyResultUnit = (unit: string | null) => {
   }
   return keyResultUnitLabelMap[unit] ?? unit;
 };
+
+export const usesPercentSupportAllocation = (unit: string | null | undefined) => unit === "percent";
+
+export const getSupportAllocationFieldLabel = (unit: string | null | undefined) =>
+  usesPercentSupportAllocation(unit) ? "Phần trăm phân bổ" : "Lượng phân bổ";
 
 export const formatKeyResultMetric = (value: number | null, unit: string | null) => {
   const safe = Number.isFinite(value) ? Number(value) : 0;

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ChangeEvent, useEffect, useState } from "react";
 import Cropper, { Area } from "react-easy-crop";
+import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { supabase } from "@/lib/supabase";
 
@@ -483,69 +484,58 @@ export default function ProfilePage() {
         <WorkspaceSidebar active="profile" />
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <header className="sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-7">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm text-slate-500">
-                  <Link href="/dashboard" className="hover:text-slate-700">
-                    Bảng điều khiển
-                  </Link>
-                  <span className="px-2">›</span>
-                  <span className="font-semibold text-slate-700">Hồ sơ cá nhân</span>
-                </p>
-                <h1 className="mt-1 text-3xl font-semibold tracking-[-0.02em] text-slate-900">Hồ sơ cá nhân</h1>
-              </div>
+          <WorkspacePageHeader
+            title="Hồ sơ cá nhân"
+            items={[{ label: "Hồ sơ cá nhân" }]}
+          />
 
-              <div className="flex items-center gap-2">
-                <Link
-                  href="/profile/change-password"
-                  className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Đổi mật khẩu
-                </Link>
-                {isEditing ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setError(null);
-                        setNotice(null);
-                        setForm(initialForm);
-                        setIsEditing(false);
-                      }}
-                      disabled={isSaving}
-                      className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      Hủy
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSaveProfile}
-                      disabled={isSaving || isLoading}
-                      className="inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                    >
-                      {isSaving ? "Đang lưu..." : "Lưu thay đổi"}
-                    </button>
-                  </>
-                ) : (
+          <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-7">
+            <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+              <Link
+                href="/profile/change-password"
+                className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Đổi mật khẩu
+              </Link>
+              {isEditing ? (
+                <>
                   <button
                     type="button"
                     onClick={() => {
                       setError(null);
                       setNotice(null);
-                      setIsEditing(true);
+                      setForm(initialForm);
+                      setIsEditing(false);
                     }}
-                    disabled={isLoading}
+                    disabled={isSaving}
+                    className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveProfile}
+                    disabled={isSaving || isLoading}
                     className="inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
                   >
-                    Chỉnh sửa
+                    {isSaving ? "Đang lưu..." : "Lưu thay đổi"}
                   </button>
-                )}
-              </div>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError(null);
+                    setNotice(null);
+                    setIsEditing(true);
+                  }}
+                  disabled={isLoading}
+                  className="inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                >
+                  Chỉnh sửa
+                </button>
+              )}
             </div>
-          </header>
-
-          <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-7">
             {isLoading ? (
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
                 Đang tải hồ sơ cá nhân...

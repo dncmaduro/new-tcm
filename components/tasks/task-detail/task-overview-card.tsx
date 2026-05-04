@@ -1,11 +1,32 @@
 "use client";
 
-import { ClearableNumberInput } from "@/components/ui/clearable-number-input";
+import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { TASK_TYPES, type TaskTypeValue } from "@/lib/constants/tasks";
+import {
+  formatKeyResultMetric,
+  formatKeyResultUnit,
+  getAllowedKeyResultUnitsByType,
+  normalizeKeyResultUnitForType,
+  type KeyResultUnitValue,
+} from "@/lib/constants/key-results";
+import {
+  getTaskPriorityOptionLabel,
+  TASK_PRIORITIES,
+  TASK_TYPES,
+  type TaskPriority,
+  type TaskTypeValue,
+} from "@/lib/constants/tasks";
 import { StatItem } from "./stat-item";
 import type { TaskFormState } from "./types";
-import { getTaskCycleLabel, getTaskTypeLabel } from "./utils";
+import {
+  formatTaskPriorityPoints,
+  getTaskCycleLabel,
+  getTaskEarnedPoints,
+  getTaskPriorityBadgeClassName,
+  getTaskPriorityLabel,
+  getTaskPriorityScore,
+  getTaskTypeLabel,
+} from "./utils";
 
 type TaskOverviewCardProps = {
   form: TaskFormState;
@@ -13,9 +34,12 @@ type TaskOverviewCardProps = {
   creatorName: string;
   timelineLabel: string;
   isEditing: boolean;
+  showTaskPoints: boolean;
   onNameChange: (value: string) => void;
   onTypeChange: (value: TaskTypeValue) => void;
-  onWeightChange: (value: number) => void;
+  onPriorityChange: (value: TaskPriority) => void;
+  onUnitChange: (value: KeyResultUnitValue) => void;
+  onTargetChange: (value: string) => void;
   onRecurringChange: (value: boolean) => void;
 };
 
@@ -25,11 +49,17 @@ export function TaskOverviewCard({
   creatorName,
   timelineLabel,
   isEditing,
+  showTaskPoints,
   onNameChange,
   onTypeChange,
-  onWeightChange,
+  onPriorityChange,
+  onUnitChange,
+  onTargetChange,
   onRecurringChange,
 }: TaskOverviewCardProps) {
+  const priorityScore = getTaskPriorityScore(form.priority);
+  const earnedPoints = getTaskEarnedPoints(form.priority, form.progress);
+
   return (
     <article className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_12px_30px_-24px_rgba(15,23,42,0.35)]">
       <div className="flex items-start justify-between gap-4">
@@ -68,12 +98,53 @@ export function TaskOverviewCard({
           </label>
 
           <label className="space-y-1.5">
-            <span className="text-sm font-semibold text-slate-700">Trọng số</span>
-            <ClearableNumberInput
-              min={1}
-              value={form.weight}
-              onValueChange={onWeightChange}
-              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            <span className="text-sm font-semibold text-slate-700">Phân loại chỉ tiêu</span>
+            <Select
+              value={form.unit}
+              onValueChange={(value) => onUnitChange(normalizeKeyResultUnitForType(form.type, value) as KeyResultUnitValue)}
+              disabled={form.type === "okr"}
+            >
+              <SelectTrigger className="h-11">
+                <SelectValue placeholder={form.type === "okr" ? "Task OKR dùng phần trăm" : "Chọn loại chỉ tiêu"} />
+              </SelectTrigger>
+              <SelectContent>
+                {getAllowedKeyResultUnitsByType(form.type).map((unit) => (
+                  <SelectItem key={unit.value} value={unit.value}>
+                    {unit.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
+
+          <label className="space-y-1.5">
+            <span className="text-sm font-semibold text-slate-700">Độ ưu tiên</span>
+            <Select value={form.priority} onValueChange={(value) => onPriorityChange(value as TaskPriority)}>
+              <SelectTrigger className="h-11">
+                <SelectValue placeholder="Chọn độ ưu tiên" />
+              </SelectTrigger>
+              <SelectContent>
+                {TASK_PRIORITIES.map((priority) => (
+                  <SelectItem key={priority.value} value={priority.value}>
+                    {getTaskPriorityOptionLabel(priority.value)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
+
+          <label className="space-y-1.5">
+            <span className="text-sm font-semibold text-slate-700">Chỉ tiêu cần đạt</span>
+            <FormattedNumberInput
+              value={form.target}
+              disabled={form.type === "okr"}
+              onValueChange={onTargetChange}
+              className={`h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
+                form.type === "okr"
+                  ? "cursor-not-allowed bg-slate-50 text-slate-400"
+                  : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              }`}
+              placeholder={form.type === "okr" ? "Task OKR luôn là 100%" : "Ví dụ: 40"}
             />
           </label>
 
@@ -92,7 +163,24 @@ export function TaskOverviewCard({
           <StatItem label="Người phụ trách" value={assigneeName} />
           <StatItem label="Timeline" value={timelineLabel} />
           <StatItem label="Loại task" value={getTaskTypeLabel(form.type)} />
-          <StatItem label="Trọng số" value={`${Math.round(form.weight)}%`} />
+          <StatItem
+            label="Độ ưu tiên"
+            value={
+              <span
+                className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getTaskPriorityBadgeClassName(form.priority)}`}
+              >
+                {getTaskPriorityLabel(form.priority)}
+              </span>
+            }
+          />
+          <StatItem label="Phân loại chỉ tiêu" value={formatKeyResultUnit(form.unit)} />
+          <StatItem label="Chỉ tiêu cần đạt" value={formatKeyResultMetric(Number(form.target || 0), form.unit)} />
+          {showTaskPoints ? (
+            <StatItem
+              label="Điểm task"
+              value={`${formatTaskPriorityPoints(earnedPoints)} / ${formatTaskPriorityPoints(priorityScore)} điểm`}
+            />
+          ) : null}
           <StatItem label="Chu kỳ" value={getTaskCycleLabel(form.isRecurring)} />
           <StatItem label="Người tạo" value={creatorName} />
         </div>

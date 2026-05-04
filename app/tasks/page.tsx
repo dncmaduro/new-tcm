@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  Fragment,
   Suspense,
   type ReactNode,
   type WheelEvent as ReactWheelEvent,
@@ -31,7 +30,17 @@ import {
   type GoalOwnerProfileRow,
 } from "@/lib/goal-owners";
 import { formatKeyResultMetric } from "@/lib/constants/key-results";
-import { buildGoalProgressMap, buildKeyResultProgressMap, getComputedTaskProgress } from "@/lib/okr";
+import {
+  compareTaskPriority,
+  getTaskPriorityBadgeClassName,
+  getTaskPriorityLabel,
+  getTaskPriorityScore,
+} from "@/lib/constants/tasks";
+import {
+  buildGoalProgressMap,
+  buildKeyResultProgressMap,
+  getComputedTaskProgress,
+} from "@/lib/okr";
 import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
 import {
@@ -43,8 +52,6 @@ import {
   getTimelineDurationDays,
   getTodayIndicatorOffsetPx,
   startOfScale,
-  TIMELINE_MAX_ZOOM,
-  TIMELINE_MIN_ZOOM,
   TIMELINE_ZOOM_STEP,
   type TimelinePeriod,
   type TimelineScale,
@@ -55,18 +62,22 @@ import {
   getTimelineMissingReason,
   getTimelineRange,
   getTimelineOutsideParentWarning,
-  isDateRangeOrdered,
-  startOfLocalDay,
 } from "@/lib/timeline";
-
-const DAY_MS = 24 * 60 * 60 * 1000;
+import {
+  getTaskStatus,
+  getStatusColors,
+  getStatusLabel,
+  getItemProgressStatus,
+} from "@/lib/timeline-ui-helpers";
 const DEFAULT_LEFT_PANEL_WIDTH = 420;
 const TASK_LEFT_PANEL_WIDTH = 360;
 
-const formatKeyResultProgressMetric = (current: number | null, target: number | null, unit: string | null) =>
-  `${formatKeyResultMetric(current, unit)} / ${formatKeyResultMetric(target, unit)}`;
+const formatKeyResultProgressMetric = (
+  current: number | null,
+  target: number | null,
+  unit: string | null,
+) => `${formatKeyResultMetric(current, unit)} / ${formatKeyResultMetric(target, unit)}`;
 
-type TimelineStatus = "todo" | "in_progress" | "done" | "blocked" | "cancelled";
 type TaskViewMode = "gantt" | "list";
 type StructureMode = "goal" | "key_result" | "task";
 
@@ -78,7 +89,9 @@ type TaskRow = {
   profile_id: string | null;
   is_recurring: boolean | null;
   type: string | null;
-  status: string | null;
+  priority: string | null;
+  current: number | null;
+  target: number | null;
   progress: number | null;
   weight: number | null;
   start_date: string | null;
@@ -130,12 +143,13 @@ type TaskItem = {
   keyResultMetric: string;
   keyResult: KeyResultLiteRow | null;
   type: string | null;
+  priority: string | null;
   isRecurring: boolean;
   assigneeId: string | null;
   assigneeName: string;
   assigneeShort: string;
-  status: TimelineStatus;
-  rawStatus: string | null;
+  current: number | null;
+  target: number | null;
   progress: number;
   weight: number;
   createdAt: string | null;
@@ -165,13 +179,6 @@ type KeyResultTimelineItem = {
   taskCount: number;
 };
 
-type QuickEditState = {
-  progress: string;
-  weight: string;
-  startDate: string;
-  endDate: string;
-};
-
 type TaskCreatePermissionDebug = {
   checkedAt: string;
   step: string;
@@ -185,51 +192,6 @@ type TaskCreatePermissionDebug = {
   rootDepartments: Array<{ id: string; name: string }>;
   canCreateTask: boolean;
   error: string | null;
-};
-
-const TIMELINE_STATUS_OPTIONS: Array<{ value: "all" | TimelineStatus; label: string }> = [
-  { value: "all", label: "Tất cả trạng thái" },
-  { value: "todo", label: "Cần làm" },
-  { value: "in_progress", label: "Đang làm" },
-  { value: "done", label: "Hoàn thành" },
-  { value: "blocked", label: "Bị chặn" },
-  { value: "cancelled", label: "Đã hủy" },
-];
-
-const statusMetaMap: Record<
-  TimelineStatus,
-  { label: string; badgeClassName: string; barClassName: string; fillClassName: string }
-> = {
-  todo: {
-    label: "Cần làm",
-    badgeClassName: "bg-slate-100 text-slate-700",
-    barClassName: "bg-slate-300 text-slate-900",
-    fillClassName: "bg-slate-500/55",
-  },
-  in_progress: {
-    label: "Đang làm",
-    badgeClassName: "bg-blue-50 text-blue-700",
-    barClassName: "bg-blue-500 text-white",
-    fillClassName: "bg-blue-300/70",
-  },
-  done: {
-    label: "Hoàn thành",
-    badgeClassName: "bg-emerald-50 text-emerald-700",
-    barClassName: "bg-emerald-500 text-white",
-    fillClassName: "bg-emerald-300/80",
-  },
-  blocked: {
-    label: "Bị chặn",
-    badgeClassName: "bg-rose-50 text-rose-700",
-    barClassName: "bg-rose-500 text-white",
-    fillClassName: "bg-rose-300/70",
-  },
-  cancelled: {
-    label: "Đã hủy",
-    badgeClassName: "bg-slate-200 text-slate-700",
-    barClassName: "bg-slate-400 text-white",
-    fillClassName: "bg-slate-300/75",
-  },
 };
 
 const STICKY_PANEL_SHADOW = "shadow-[10px_0_18px_-18px_rgba(15,23,42,0.35)]";
@@ -256,23 +218,6 @@ const toShortName = (name: string) => {
 const clampProgress = (value: number | null | undefined) => {
   const safe = Number.isFinite(value) ? Number(value) : 0;
   return Math.min(100, Math.max(0, Math.round(safe)));
-};
-
-const normalizeTimelineStatus = (value: string | null | undefined): TimelineStatus => {
-  const raw = (value ?? "").trim().toLowerCase();
-  if (raw === "blocked") {
-    return "blocked";
-  }
-  if (raw === "doing" || raw === "in_progress" || raw === "inprogress" || raw === "review") {
-    return "in_progress";
-  }
-  if (raw === "done" || raw === "completed") {
-    return "done";
-  }
-  if (raw === "cancelled" || raw === "canceled") {
-    return "cancelled";
-  }
-  return "todo";
 };
 
 const normalizeGoalLite = (value: unknown): GoalLiteRow | null => {
@@ -310,7 +255,7 @@ const normalizeKeyResultLite = (value: unknown): KeyResultLiteRow | null => {
   }
 
   const record = value as Record<string, unknown>;
-  const rawGoal = Array.isArray(record.goal) ? record.goal[0] ?? null : record.goal;
+  const rawGoal = Array.isArray(record.goal) ? (record.goal[0] ?? null) : record.goal;
   return {
     id: String(record.id),
     goal_id: record.goal_id ? String(record.goal_id) : null,
@@ -320,7 +265,8 @@ const normalizeKeyResultLite = (value: unknown): KeyResultLiteRow | null => {
     current: typeof record.current === "number" ? record.current : Number(record.current ?? 0),
     target: typeof record.target === "number" ? record.target : Number(record.target ?? 0),
     unit: record.unit ? String(record.unit) : null,
-    start_value: typeof record.start_value === "number" ? record.start_value : Number(record.start_value ?? 0),
+    start_value:
+      typeof record.start_value === "number" ? record.start_value : Number(record.start_value ?? 0),
     weight: typeof record.weight === "number" ? record.weight : Number(record.weight ?? 1),
     start_date: record.start_date ? String(record.start_date) : null,
     end_date: record.end_date ? String(record.end_date) : null,
@@ -330,53 +276,47 @@ const normalizeKeyResultLite = (value: unknown): KeyResultLiteRow | null => {
 
 const getTaskTimeline = (task: TaskItem) => getTimelineRange(task.startDate, task.endDate);
 
-const getTaskTimelineIssue = (task: TaskItem) => {
-  const timelineReason = getTimelineMissingReason(
+const getTaskTimelineAlignmentWarning = (task: TaskItem) =>
+  getTimelineOutsideParentWarning(
     task.startDate,
     task.endDate,
-    "Công việc chưa có mốc thời gian",
-    "Mốc thời gian công việc không hợp lệ",
+    task.keyResult?.start_date ?? null,
+    task.keyResult?.end_date ?? null,
+    {
+      subjectLabel: "Thời gian công việc",
+      parentLabel: "KR",
+    },
   );
 
-  if (timelineReason) {
-    return timelineReason;
-  }
-
-  if (task.keyResultId && !task.keyResult) {
-    return "Không tải được dữ liệu Key Result liên kết.";
-  }
-
-  if (!task.keyResultId) {
-    return "Công việc chưa gắn Key Result.";
-  }
-
-  return "Không thể đặt công việc lên timeline.";
-};
-
-const getTaskTimelineAlignmentWarning = (task: TaskItem) =>
-  getTimelineOutsideParentWarning(task.startDate, task.endDate, task.keyResult?.start_date ?? null, task.keyResult?.end_date ?? null, {
-    subjectLabel: "Thời gian công việc",
-    parentLabel: "KR",
-  });
-
-const buildTaskTooltip = (task: TaskItem) =>
+const buildTaskTooltip = (task: TaskItem, showTaskPoints: boolean) =>
   [
     task.name,
+    `Độ ưu tiên: ${getTaskPriorityLabel(task.priority)}`,
     `Mục tiêu: ${task.goalName}`,
     `KR: ${task.keyResultName}`,
     `Người phụ trách: ${task.assigneeName}`,
     `Tiến độ: ${task.progress}%`,
+    ...(showTaskPoints
+      ? [
+          `Điểm task: ${formatTaskPointValue(getTaskEarnedPoints(task))} / ${formatTaskPointValue(
+            getTaskPriorityScore(task.priority),
+          )} điểm`,
+        ]
+      : []),
     `Thời gian thực thi: ${formatTimelineRangeVi(task.startDate, task.endDate, {
       fallback: "Công việc chưa có mốc thời gian",
     })}`,
-    `Khung thời gian KR: ${formatTimelineRangeVi(task.keyResult?.start_date ?? null, task.keyResult?.end_date ?? null, {
-      fallback: "KR chưa có mốc thời gian",
-    })}`,
-    `Trạng thái: ${statusMetaMap[task.status].label}`,
+    `Khung thời gian KR: ${formatTimelineRangeVi(
+      task.keyResult?.start_date ?? null,
+      task.keyResult?.end_date ?? null,
+      {
+        fallback: "KR chưa có mốc thời gian",
+      },
+    )}`,
   ].join("\n");
 
 const buildTaskAccessibilityLabel = (task: TaskItem) =>
-  `${task.name}. ${statusMetaMap[task.status].label}. Tiến độ ${task.progress}%. ${formatTimelineRangeVi(
+  `${task.name}. ${getTaskPriorityLabel(task.priority)}. Tiến độ ${task.progress}%. ${formatTimelineRangeVi(
     task.startDate,
     task.endDate,
     {
@@ -384,18 +324,31 @@ const buildTaskAccessibilityLabel = (task: TaskItem) =>
     },
   )}`;
 
-function StatusBadge({ status }: { status: TimelineStatus }) {
-  return (
-    <span className={`rounded-lg px-2 py-1 text-xs font-semibold ${statusMetaMap[status].badgeClassName}`}>
-      {statusMetaMap[status].label}
-    </span>
-  );
-}
+const formatTaskPointValue = (value: number) =>
+  new Intl.NumberFormat("vi-VN", {
+    minimumFractionDigits: Number.isInteger(value) ? 0 : 1,
+    maximumFractionDigits: 1,
+  }).format(value);
+
+const getTaskEarnedPoints = (task: Pick<TaskItem, "priority" | "progress">) =>
+  (getTaskPriorityScore(task.priority) * clampProgress(task.progress)) / 100;
 
 function ProgressBar({ value }: { value: number }) {
+  const normalizedValue = clampProgress(value);
+  const getBarColor = () => {
+    if (normalizedValue >= 100) return "bg-emerald-500";
+    if (normalizedValue >= 75) return "bg-emerald-400";
+    if (normalizedValue >= 50) return "bg-blue-500";
+    if (normalizedValue >= 25) return "bg-amber-500";
+    return "bg-slate-400";
+  };
+
   return (
     <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-      <div className="h-full rounded-full bg-blue-600" style={{ width: `${value}%` }} />
+      <div
+        className={`h-full rounded-full transition-all ${getBarColor()}`}
+        style={{ width: `${normalizedValue}%` }}
+      />
     </div>
   );
 }
@@ -425,7 +378,9 @@ function TimelineBarContent({
         ) : (
           <span className="sr-only">{label}</span>
         )}
-        {showProgress ? <span className="shrink-0 text-xs font-semibold">{normalizedProgress}%</span> : null}
+        {showProgress ? (
+          <span className="shrink-0 text-xs font-semibold">{normalizedProgress}%</span>
+        ) : null}
       </span>
     </>
   );
@@ -472,7 +427,7 @@ function ToolbarButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex h-9 items-center rounded-lg border px-3 text-sm font-semibold transition ${
+      className={`inline-flex h-9 items-center rounded-lg border px-3 text-sm font-semibold transition cursor-pointer hover:bg-slate-100 ${
         active
           ? "border-blue-200 bg-blue-50 text-blue-700"
           : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
@@ -505,8 +460,14 @@ function TimelinePeriodHeader({
   return (
     <div className="relative" style={{ width: timelineWidth }}>
       {visibleWidthPx > 0 ? (
-        <div className="absolute inset-y-0" style={{ left: visibleOffsetPx, width: visibleWidthPx }}>
-          <div className="grid h-full" style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}>
+        <div
+          className="absolute inset-y-0"
+          style={{ left: visibleOffsetPx, width: visibleWidthPx }}
+        >
+          <div
+            className="grid h-full"
+            style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}
+          >
             {periods.map((period, index) => (
               <div
                 key={period.key}
@@ -515,7 +476,9 @@ function TimelinePeriodHeader({
                 }`}
               >
                 <p className="text-xs font-semibold text-slate-700">{period.label}</p>
-                <p className="mt-1 whitespace-nowrap text-[11px] text-slate-500">{period.subLabel}</p>
+                <p className="mt-1 whitespace-nowrap text-[11px] text-slate-500">
+                  {period.subLabel}
+                </p>
               </div>
             ))}
           </div>
@@ -555,7 +518,10 @@ function TimelinePeriodBackground({
   return (
     <div className="absolute inset-0 overflow-hidden">
       <div className="absolute inset-y-0" style={{ left: visibleOffsetPx, width: visibleWidthPx }}>
-        <div className="grid h-full" style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}>
+        <div
+          className="grid h-full"
+          style={{ gridTemplateColumns: `repeat(${periods.length}, ${periodWidth}px)` }}
+        >
           {periods.map((period, index) => (
             <div
               key={`${rowKey}-${period.key}`}
@@ -586,6 +552,10 @@ function TaskTimelineBar({
   const suppressHoverUntilRef = useRef(0);
   const durationLabel = formatTimelineDurationVi(task.startDate, task.endDate);
   const durationDays = getTimelineDurationDays(task.startDate, task.endDate);
+  const isMissingTimeline = !getTaskTimeline(task);
+  const taskStatus = getTaskStatus(task.startDate, task.endDate, task.progress, isMissingTimeline);
+  const statusColors = getStatusColors(taskStatus);
+  const statusLabel = getStatusLabel(taskStatus);
 
   const clearCloseTimer = () => {
     if (closeTimerRef.current) {
@@ -639,7 +609,9 @@ function TaskTimelineBar({
               setOpen((prev) => !prev);
             }
           }}
-          className={`absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl border border-slate-300 bg-slate-200 px-3 text-left shadow-sm transition hover:bg-slate-300 hover:brightness-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200 ${
+          className={`absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-lg border-2 px-3 text-left shadow-sm transition hover:brightness-[0.95] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 ${
+            statusColors.barBg
+          } ${statusColors.border} text-slate-900 font-medium ${
             isClamped ? "ring-2 ring-white/70" : ""
           }`}
           style={{ left, width }}
@@ -653,69 +625,96 @@ function TaskTimelineBar({
         align="center"
         sideOffset={10}
         collisionPadding={16}
-        className="w-[320px] max-w-[calc(100vw-24px)] rounded-2xl p-4"
+        className="w-[380px] max-w-[calc(100vw-24px)] rounded-2xl p-4"
         onPointerEnter={openPopover}
         onPointerLeave={closePopover}
       >
         <div className="space-y-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Công việc</p>
-              <p className="mt-1 text-base font-semibold text-slate-900">{task.name}</p>
+          <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`inline-flex px-2 py-1 rounded-md text-xs font-semibold ${statusColors.badgeBg} ${statusColors.badgeText}`}
+                >
+                  {statusLabel.icon} {statusLabel.status}
+                </span>
+                <span
+                  className={`inline-flex rounded-md px-2 py-1 text-xs font-semibold ${getTaskPriorityBadgeClassName(task.priority)}`}
+                >
+                  {getTaskPriorityLabel(task.priority)}
+                </span>
+              </div>
+              <p className="mt-2 text-lg font-bold text-slate-900">{task.name}</p>
             </div>
-            <StatusBadge status={task.status} />
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-xl bg-slate-50 p-3">
-              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Tiến độ</p>
-              <p className="mt-1 text-lg font-semibold text-slate-900">{task.progress}%</p>
+            <div className="rounded-lg bg-slate-50 p-3 border border-slate-200">
+              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500 font-semibold">
+                Tiến độ
+              </p>
+              <div className="mt-2 flex items-baseline gap-2">
+                <p className="text-2xl font-bold text-slate-900">{task.progress}%</p>
+              </div>
             </div>
-            <div className="rounded-xl bg-slate-50 p-3">
-              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Trọng số</p>
-              <p className="mt-1 text-lg font-semibold text-slate-900">{Math.round(task.weight)}</p>
+            <div className="rounded-lg bg-slate-50 p-3 border border-slate-200">
+              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500 font-semibold">
+                Thời lượng
+              </p>
+              <p className="mt-2 text-lg font-semibold text-slate-900">{durationLabel}</p>
+              {durationDays ? <p className="text-xs text-slate-500">{durationDays} ngày</p> : null}
             </div>
-            <div className="rounded-xl bg-slate-50 p-3 sm:col-span-2">
-              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">Thời lượng</p>
-              <p className="mt-1 text-lg font-semibold text-slate-900">{durationLabel}</p>
-              {durationDays ? <p className="mt-1 text-xs text-slate-500">{durationDays} ngày theo lịch</p> : null}
+            <div className="rounded-lg bg-slate-50 p-3 border border-slate-200">
+              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500 font-semibold">
+                Điểm task
+              </p>
+              <p className="mt-2 text-lg font-semibold text-slate-900">
+                {formatTaskPointValue(getTaskEarnedPoints(task))} /{" "}
+                {formatTaskPointValue(getTaskPriorityScore(task.priority))} điểm
+              </p>
+            </div>
+            <div className="rounded-lg bg-slate-50 p-3 border border-slate-200">
+              <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500 font-semibold">
+                Độ ưu tiên
+              </p>
+              <p className="mt-2 text-lg font-semibold text-slate-900">
+                {getTaskPriorityLabel(task.priority)}
+              </p>
             </div>
           </div>
 
-          <div className="space-y-2 text-sm text-slate-600">
+          <div className="space-y-2 text-sm">
             <div className="flex items-start justify-between gap-3">
-              <span className="text-slate-500">Người phụ trách</span>
-              <span className="text-right font-medium text-slate-900">{task.assigneeName}</span>
+              <span className="text-slate-600 font-medium">Người phụ trách</span>
+              <span className="text-right text-slate-900 font-semibold">{task.assigneeName}</span>
             </div>
             <div className="flex items-start justify-between gap-3">
-              <span className="text-slate-500">Bắt đầu</span>
-              <span className="text-right font-medium text-slate-900">
-                {formatDateOnlyVi(task.startDate, "Chưa đặt")}
+              <span className="text-slate-600 font-medium">Mục tiêu</span>
+              <span className="text-right text-slate-900">{task.goalName}</span>
+            </div>
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-slate-600 font-medium">Key Result</span>
+              <span className="text-right text-slate-900">{task.keyResultName}</span>
+            </div>
+            <div className="flex items-start justify-between gap-3 border-t border-slate-100 pt-2">
+              <span className="text-slate-600 font-medium">Bắt đầu</span>
+              <span className="text-right text-slate-900 font-semibold">
+                {formatDateOnlyVi(task.startDate, "—")}
               </span>
             </div>
             <div className="flex items-start justify-between gap-3">
-              <span className="text-slate-500">Kết thúc</span>
-              <span className="text-right font-medium text-slate-900">
-                {formatDateOnlyVi(task.endDate, "Chưa đặt")}
+              <span className="text-slate-600 font-medium">Kết thúc</span>
+              <span className="text-right text-slate-900 font-semibold">
+                {formatDateOnlyVi(task.endDate, "—")}
               </span>
-            </div>
-            <div className="flex items-start justify-between gap-3">
-              <span className="text-slate-500">KR</span>
-              <span className="text-right font-medium text-slate-900">{task.keyResultName}</span>
-            </div>
-            <div className="flex items-start justify-between gap-3">
-              <span className="text-slate-500">Mục tiêu</span>
-              <span className="text-right font-medium text-slate-900">{task.goalName}</span>
             </div>
           </div>
 
           <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
-            <p className="min-w-0 flex-1 text-xs text-slate-500">
-              Hover để xem nhanh hoặc chạm vào bar trên thiết bị cảm ứng.
-            </p>
+            <p className="text-xs text-slate-500">Nhấn để xem chi tiết đầy đủ</p>
             <Link
               href={`/tasks/${task.id}`}
-              className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700"
+              className="inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 transition"
             >
               Mở chi tiết
             </Link>
@@ -734,15 +733,18 @@ function TasksPageContent() {
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [goals, setGoals] = useState<GoalLiteRow[]>([]);
   const [keyResults, setKeyResults] = useState<KeyResultLiteRow[]>([]);
-  const [goalOwnersByGoalId, setGoalOwnersByGoalId] = useState<Record<string, GoalOwnerProfile[]>>({});
+  const [goalOwnersByGoalId, setGoalOwnersByGoalId] = useState<Record<string, GoalOwnerProfile[]>>(
+    {},
+  );
   const [isLoadingTasks, setIsLoadingTasks] = useState(true);
   const [taskLoadError, setTaskLoadError] = useState<string | null>(null);
   const [goalFilters, setGoalFilters] = useState<Array<{ id: string; name: string }>>([]);
-  const [keyResultFilters, setKeyResultFilters] = useState<Array<{ id: string; name: string; goalId: string }>>([]);
+  const [keyResultFilters, setKeyResultFilters] = useState<
+    Array<{ id: string; name: string; goalId: string }>
+  >([]);
   const [assigneeFilters, setAssigneeFilters] = useState<Array<{ id: string; name: string }>>([]);
 
   const [searchKeyword, setSearchKeyword] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | TimelineStatus>("all");
   const [goalFilter, setGoalFilter] = useState<"all" | string>("all");
   const [keyResultFilter, setKeyResultFilter] = useState<"all" | string>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<"all" | string>("all");
@@ -751,16 +753,6 @@ function TasksPageContent() {
   const [timeScale, setTimeScale] = useState<TimelineScale>("week");
   const [zoomLevel, setZoomLevel] = useState(1);
   const [showNoTimelineSection, setShowNoTimelineSection] = useState(false);
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const [quickEditState, setQuickEditState] = useState<QuickEditState>({
-    progress: "0",
-    weight: "1",
-    startDate: "",
-    endDate: "",
-  });
-  const [assigneeDraftByTaskId, setAssigneeDraftByTaskId] = useState<Record<string, string>>({});
-  const [savingTaskId, setSavingTaskId] = useState<string | null>(null);
-  const [savingAssigneeTaskId, setSavingAssigneeTaskId] = useState<string | null>(null);
   const timelineScrollRef = useRef<HTMLDivElement | null>(null);
   const timelineViewportFrameRef = useRef<number | null>(null);
   const pendingViewportRatioRef = useRef<number | null>(null);
@@ -769,6 +761,7 @@ function TasksPageContent() {
 
   const showPermissionDebug = searchParams.get("debugPermission") === "1";
   const canCreateTask = workspaceAccess.canManage && !workspaceAccess.error;
+  const canViewTaskPoints = workspaceAccess.canViewTaskPoints;
   const isCheckingCreatePermission = workspaceAccess.isLoading;
   const rootDepartments = workspaceAccess.managedDepartments;
   const permissionDebug: TaskCreatePermissionDebug = useMemo(
@@ -807,7 +800,8 @@ function TasksPageContent() {
         ] = await Promise.all([
           supabase
             .from("tasks")
-            .select(`
+            .select(
+              `
               id,
               name,
               key_result_id,
@@ -815,8 +809,9 @@ function TasksPageContent() {
               profile_id,
               is_recurring,
               type,
-              status,
-              progress,
+              priority,
+              current,
+              target,
               weight,
               start_date,
               end_date,
@@ -849,7 +844,8 @@ function TasksPageContent() {
                 name,
                 email
               )
-            `)
+            `,
+            )
             .order("created_at", { ascending: false }),
           supabase.from("profiles").select("id,name,email").order("name", { ascending: true }),
           supabase
@@ -858,7 +854,8 @@ function TasksPageContent() {
             .order("name", { ascending: true }),
           supabase
             .from("key_results")
-            .select(`
+            .select(
+              `
               id,
               goal_id,
               name,
@@ -877,7 +874,8 @@ function TasksPageContent() {
                 start_date,
                 end_date
               )
-            `)
+            `,
+            )
             .order("name", { ascending: true }),
         ]);
 
@@ -939,66 +937,76 @@ function TasksPageContent() {
           return;
         }
 
-        const normalizedGoalOwnerRows = ((goalOwnerRowsData ?? []) as GoalOwnerLinkRow[]).map((row) => ({
-          goal_id: row.goal_id ? String(row.goal_id) : null,
-          profile_id: row.profile_id ? String(row.profile_id) : null,
-        }));
-        const nextGoalOwnersByGoalId = buildGoalOwnersByGoalId(normalizedGoalOwnerRows, mappedProfiles);
+        const normalizedGoalOwnerRows = ((goalOwnerRowsData ?? []) as GoalOwnerLinkRow[]).map(
+          (row) => ({
+            goal_id: row.goal_id ? String(row.goal_id) : null,
+            profile_id: row.profile_id ? String(row.profile_id) : null,
+          }),
+        );
+        const nextGoalOwnersByGoalId = buildGoalOwnersByGoalId(
+          normalizedGoalOwnerRows,
+          mappedProfiles,
+        );
         mappedGoals.forEach((goal) => {
           if (!nextGoalOwnersByGoalId[goal.id]) {
             nextGoalOwnersByGoalId[goal.id] = [];
           }
         });
 
-        const mappedTasks = ((taskRowsData ?? []) as Array<Record<string, unknown>>).map((rawRow) => {
-          const row = rawRow as TaskRow;
-          const keyResult = normalizeKeyResultLite(
-            Array.isArray(rawRow.key_result) ? rawRow.key_result[0] ?? null : rawRow.key_result,
-          );
-          const assignee = normalizeProfileLite(Array.isArray(rawRow.assignee) ? rawRow.assignee[0] ?? null : rawRow.assignee);
-          const fallbackAssignee = normalizeProfileLite(
-            Array.isArray(rawRow.profile) ? rawRow.profile[0] ?? null : rawRow.profile,
-          );
-          const effectiveAssignee = assignee ?? fallbackAssignee;
-          const goalName = keyResult?.goal?.name ?? "Chưa có mục tiêu";
-          const keyResultName = keyResult?.name ?? (row.key_result_id ? "KR không khả dụng" : "Chưa gắn key result");
-          const keyResultMetric = keyResult
-            ? formatKeyResultProgressMetric(keyResult.current, keyResult.target, keyResult.unit)
-            : "Chưa có số liệu KR";
-          const assigneeName = effectiveAssignee?.name?.trim() || effectiveAssignee?.email?.trim() || "Chưa gán";
-          const effectiveAssigneeId = row.assignee_id
-            ? String(row.assignee_id)
-            : row.profile_id
-              ? String(row.profile_id)
-              : null;
+        const mappedTasks = ((taskRowsData ?? []) as Array<Record<string, unknown>>).map(
+          (rawRow) => {
+            const row = rawRow as TaskRow;
+            const taskProgress = getComputedTaskProgress(row);
+            const keyResult = normalizeKeyResultLite(
+              Array.isArray(rawRow.key_result) ? (rawRow.key_result[0] ?? null) : rawRow.key_result,
+            );
+            const assignee = normalizeProfileLite(
+              Array.isArray(rawRow.assignee) ? (rawRow.assignee[0] ?? null) : rawRow.assignee,
+            );
+            const fallbackAssignee = normalizeProfileLite(
+              Array.isArray(rawRow.profile) ? (rawRow.profile[0] ?? null) : rawRow.profile,
+            );
+            const effectiveAssignee = assignee ?? fallbackAssignee;
+            const goalName = keyResult?.goal?.name ?? "Chưa có mục tiêu";
+            const keyResultName =
+              keyResult?.name ?? (row.key_result_id ? "KR không khả dụng" : "Chưa gắn key result");
+            const keyResultMetric = keyResult
+              ? formatKeyResultProgressMetric(keyResult.current, keyResult.target, keyResult.unit)
+              : "Chưa có số liệu KR";
+            const assigneeName =
+              effectiveAssignee?.name?.trim() || effectiveAssignee?.email?.trim() || "Chưa gán";
+            const effectiveAssigneeId = row.assignee_id
+              ? String(row.assignee_id)
+              : row.profile_id
+                ? String(row.profile_id)
+                : null;
 
-          return {
-            id: String(row.id),
-            name: String(row.name),
-            goalId: keyResult?.goal?.id ?? (keyResult?.goal_id ? String(keyResult.goal_id) : null),
-            goalName,
-            keyResultId: row.key_result_id ? String(row.key_result_id) : null,
-            keyResultName,
-            keyResultMetric,
-            keyResult,
-            type: row.type ? String(row.type) : null,
-            isRecurring: Boolean(row.is_recurring),
-            assigneeId: effectiveAssigneeId,
-            assigneeName,
-            assigneeShort: toShortName(assigneeName),
-            status: normalizeTimelineStatus(row.status),
-            rawStatus: row.status ? String(row.status) : null,
-            progress: getComputedTaskProgress({
-              type: row.type,
-              status: row.status,
-              progress: row.progress,
-            }),
-            weight: typeof row.weight === "number" ? row.weight : Number(row.weight ?? 1),
-            createdAt: row.created_at ? String(row.created_at) : null,
-            startDate: row.start_date ? String(row.start_date) : null,
-            endDate: row.end_date ? String(row.end_date) : null,
-          } satisfies TaskItem;
-        });
+            return {
+              id: String(row.id),
+              name: String(row.name),
+              goalId:
+                keyResult?.goal?.id ?? (keyResult?.goal_id ? String(keyResult.goal_id) : null),
+              goalName,
+              keyResultId: row.key_result_id ? String(row.key_result_id) : null,
+              keyResultName,
+              keyResultMetric,
+              keyResult,
+              type: row.type ? String(row.type) : null,
+              priority: row.priority ? String(row.priority) : null,
+              isRecurring: Boolean(row.is_recurring),
+              assigneeId: effectiveAssigneeId,
+              assigneeName,
+              assigneeShort: toShortName(assigneeName),
+              current: typeof row.current === "number" ? row.current : Number(row.current ?? 0),
+              target: typeof row.target === "number" ? row.target : Number(row.target ?? 0),
+              progress: taskProgress,
+              weight: typeof row.weight === "number" ? row.weight : Number(row.weight ?? 1),
+              createdAt: row.created_at ? String(row.created_at) : null,
+              startDate: row.start_date ? String(row.start_date) : null,
+              endDate: row.end_date ? String(row.end_date) : null,
+            } satisfies TaskItem;
+          },
+        );
 
         setTasks(mappedTasks);
         setGoals(mappedGoals);
@@ -1092,28 +1100,45 @@ function TasksPageContent() {
     return next;
   }, [keyResults]);
 
-  const filteredTasks = useMemo(() => {
-    return tasks.filter((task) => {
-      if (statusFilter !== "all" && task.status !== statusFilter) {
-        return false;
-      }
-      if (goalFilter !== "all" && task.goalId !== goalFilter) {
-        return false;
-      }
-      if (keyResultFilter !== "all" && task.keyResultId !== keyResultFilter) {
-        return false;
-      }
-      if (assigneeFilter !== "all" && task.assigneeId !== assigneeFilter) {
-        return false;
-      }
-      if (!normalizedKeyword) {
-        return true;
-      }
+  const showGoalFilter = structureMode !== "goal";
+  const showKeyResultFilter = structureMode === "task";
+  const showAssigneeFilter = structureMode === "task";
 
-      const haystack = `${task.name} ${task.goalName} ${task.keyResultName} ${task.assigneeName}`.toLowerCase();
-      return haystack.includes(normalizedKeyword);
-    });
-  }, [assigneeFilter, goalFilter, keyResultFilter, normalizedKeyword, statusFilter, tasks]);
+  const activeGoalFilter = showGoalFilter ? goalFilter : "all";
+  const activeKeyResultFilter = showKeyResultFilter ? keyResultFilter : "all";
+  const activeAssigneeFilter = showAssigneeFilter ? assigneeFilter : "all";
+
+  const filteredTasks = useMemo(() => {
+    return [...tasks]
+      .filter((task) => {
+        if (activeGoalFilter !== "all" && task.goalId !== activeGoalFilter) {
+          return false;
+        }
+        if (activeKeyResultFilter !== "all" && task.keyResultId !== activeKeyResultFilter) {
+          return false;
+        }
+        if (activeAssigneeFilter !== "all" && task.assigneeId !== activeAssigneeFilter) {
+          return false;
+        }
+        if (!normalizedKeyword) {
+          return true;
+        }
+
+        const haystack =
+          `${task.name} ${task.goalName} ${task.keyResultName} ${task.assigneeName}`.toLowerCase();
+        return haystack.includes(normalizedKeyword);
+      })
+      .sort((left, right) => {
+        const byPriority = compareTaskPriority(left.priority, right.priority);
+        if (byPriority !== 0) {
+          return byPriority;
+        }
+
+        const leftTime = new Date(left.createdAt ?? 0).getTime();
+        const rightTime = new Date(right.createdAt ?? 0).getTime();
+        return rightTime - leftTime;
+      });
+  }, [activeAssigneeFilter, activeGoalFilter, activeKeyResultFilter, normalizedKeyword, tasks]);
 
   const filteredTaskCountByGoalId = useMemo(() => {
     const next = new Map<string, number>();
@@ -1183,28 +1208,29 @@ function TasksPageContent() {
   const filteredGoalTimelineItems = useMemo(
     () =>
       goalTimelineItems.filter((goal) => {
-        if (goalFilter !== "all" && goal.id !== goalFilter) {
+        if (activeGoalFilter !== "all" && goal.id !== activeGoalFilter) {
           return false;
         }
 
         const relatedKeyResults = keyResultsByGoalId.get(goal.id) ?? [];
-        if (keyResultFilter !== "all" && !relatedKeyResults.some((keyResult) => keyResult.id === keyResultFilter)) {
+        if (
+          activeKeyResultFilter !== "all" &&
+          !relatedKeyResults.some((keyResult) => keyResult.id === activeKeyResultFilter)
+        ) {
           return false;
         }
 
         const relatedTasks = tasksByGoalId.get(goal.id) ?? [];
         const goalOwners = goalOwnersByGoalId[goal.id] ?? [];
 
-        if (assigneeFilter !== "all") {
-          const hasMatchingOwner = goalOwners.some((owner) => owner.id === assigneeFilter);
-          const hasMatchingTaskAssignee = relatedTasks.some((task) => task.assigneeId === assigneeFilter);
+        if (activeAssigneeFilter !== "all") {
+          const hasMatchingOwner = goalOwners.some((owner) => owner.id === activeAssigneeFilter);
+          const hasMatchingTaskAssignee = relatedTasks.some(
+            (task) => task.assigneeId === activeAssigneeFilter,
+          );
           if (!hasMatchingOwner && !hasMatchingTaskAssignee) {
             return false;
           }
-        }
-
-        if (statusFilter !== "all" && !relatedTasks.some((task) => task.status === statusFilter)) {
-          return false;
         }
 
         if (!normalizedKeyword) {
@@ -1215,7 +1241,9 @@ function TasksPageContent() {
           goal.name,
           getGoalOwnerSearchText(goalOwners),
           relatedKeyResults.map((keyResult) => keyResult.name).join(" "),
-          relatedTasks.map((task) => `${task.name} ${task.keyResultName} ${task.assigneeName}`).join(" "),
+          relatedTasks
+            .map((task) => `${task.name} ${task.keyResultName} ${task.assigneeName}`)
+            .join(" "),
         ]
           .join(" ")
           .toLowerCase();
@@ -1223,14 +1251,13 @@ function TasksPageContent() {
         return haystack.includes(normalizedKeyword);
       }),
     [
-      assigneeFilter,
-      goalFilter,
+      activeAssigneeFilter,
+      activeGoalFilter,
       goalOwnersByGoalId,
       goalTimelineItems,
-      keyResultFilter,
+      activeKeyResultFilter,
       keyResultsByGoalId,
       normalizedKeyword,
-      statusFilter,
       tasksByGoalId,
     ],
   );
@@ -1238,18 +1265,18 @@ function TasksPageContent() {
   const filteredKeyResultTimelineItems = useMemo(
     () =>
       keyResultTimelineItems.filter((keyResult) => {
-        if (goalFilter !== "all" && keyResult.goalId !== goalFilter) {
+        if (activeGoalFilter !== "all" && keyResult.goalId !== activeGoalFilter) {
           return false;
         }
-        if (keyResultFilter !== "all" && keyResult.id !== keyResultFilter) {
+        if (activeKeyResultFilter !== "all" && keyResult.id !== activeKeyResultFilter) {
           return false;
         }
 
         const relatedTasks = tasksByKeyResultId.get(keyResult.id) ?? [];
-        if (assigneeFilter !== "all" && !relatedTasks.some((task) => task.assigneeId === assigneeFilter)) {
-          return false;
-        }
-        if (statusFilter !== "all" && !relatedTasks.some((task) => task.status === statusFilter)) {
+        if (
+          activeAssigneeFilter !== "all" &&
+          !relatedTasks.some((task) => task.assigneeId === activeAssigneeFilter)
+        ) {
           return false;
         }
         if (!normalizedKeyword) {
@@ -1268,12 +1295,11 @@ function TasksPageContent() {
         return haystack.includes(normalizedKeyword);
       }),
     [
-      assigneeFilter,
-      goalFilter,
-      keyResultFilter,
+      activeAssigneeFilter,
+      activeGoalFilter,
+      activeKeyResultFilter,
       keyResultTimelineItems,
       normalizedKeyword,
-      statusFilter,
       tasksByKeyResultId,
     ],
   );
@@ -1289,19 +1315,29 @@ function TasksPageContent() {
   );
 
   const visibleGoalTimelineItems = useMemo(
-    () => filteredGoalTimelineItems.filter((goal) => Boolean(getTimelineRange(goal.startDate, goal.endDate))),
+    () =>
+      filteredGoalTimelineItems.filter((goal) =>
+        Boolean(getTimelineRange(goal.startDate, goal.endDate)),
+      ),
     [filteredGoalTimelineItems],
   );
   const noTimelineGoalItems = useMemo(
-    () => filteredGoalTimelineItems.filter((goal) => !getTimelineRange(goal.startDate, goal.endDate)),
+    () =>
+      filteredGoalTimelineItems.filter((goal) => !getTimelineRange(goal.startDate, goal.endDate)),
     [filteredGoalTimelineItems],
   );
   const visibleKeyResultTimelineItems = useMemo(
-    () => filteredKeyResultTimelineItems.filter((keyResult) => Boolean(getTimelineRange(keyResult.startDate, keyResult.endDate))),
+    () =>
+      filteredKeyResultTimelineItems.filter((keyResult) =>
+        Boolean(getTimelineRange(keyResult.startDate, keyResult.endDate)),
+      ),
     [filteredKeyResultTimelineItems],
   );
   const noTimelineKeyResultItems = useMemo(
-    () => filteredKeyResultTimelineItems.filter((keyResult) => !getTimelineRange(keyResult.startDate, keyResult.endDate)),
+    () =>
+      filteredKeyResultTimelineItems.filter(
+        (keyResult) => !getTimelineRange(keyResult.startDate, keyResult.endDate),
+      ),
     [filteredKeyResultTimelineItems],
   );
   const timelineSourceItems = useMemo(() => {
@@ -1313,11 +1349,21 @@ function TasksPageContent() {
     }
     return visibleTasks;
   }, [structureMode, visibleGoalTimelineItems, visibleKeyResultTimelineItems, visibleTasks]);
-  const leftPanelWidth = structureMode === "task" ? TASK_LEFT_PANEL_WIDTH : DEFAULT_LEFT_PANEL_WIDTH;
-  const periods = useMemo(() => buildTimelinePeriods(timelineSourceItems, timeScale), [timeScale, timelineSourceItems]);
-  const periodWidth = useMemo(() => getPeriodWidthForZoom(timeScale, zoomLevel), [timeScale, zoomLevel]);
+  const leftPanelWidth =
+    structureMode === "task" ? TASK_LEFT_PANEL_WIDTH : DEFAULT_LEFT_PANEL_WIDTH;
+  const periods = useMemo(
+    () => buildTimelinePeriods(timelineSourceItems, timeScale),
+    [timeScale, timelineSourceItems],
+  );
+  const periodWidth = useMemo(
+    () => getPeriodWidthForZoom(timeScale, zoomLevel),
+    [timeScale, zoomLevel],
+  );
   const timelineWidth = periods.length * periodWidth;
-  const timelineViewportWidth = Math.max(periodWidth * 12, timelineViewport.clientWidth - leftPanelWidth);
+  const timelineViewportWidth = Math.max(
+    periodWidth * 12,
+    timelineViewport.clientWidth - leftPanelWidth,
+  );
   const visibleTimelineWindow = useMemo(() => {
     if (periods.length === 0) {
       return {
@@ -1342,7 +1388,14 @@ function TasksPageContent() {
       offsetPx: startIndex * periodWidth,
       widthPx: Math.max(0, (endIndex - startIndex) * periodWidth),
     };
-  }, [periodWidth, periods, timeScale, timelineViewport.scrollLeft, timelineViewportWidth, timelineWidth]);
+  }, [
+    periodWidth,
+    periods,
+    timeScale,
+    timelineViewport.scrollLeft,
+    timelineViewportWidth,
+    timelineWidth,
+  ]);
   const firstPeriodStart = periods[0]?.start ?? startOfScale(new Date(), timeScale);
   const todayIndex = useMemo(() => {
     const today = new Date();
@@ -1359,35 +1412,81 @@ function TasksPageContent() {
     return offset;
   }, [firstPeriodStart, periodWidth, periods.length, timeScale, timelineWidth]);
 
-  const tasksInProgress = useMemo(
-    () => filteredTasks.filter((task) => task.status === "in_progress").length,
-    [filteredTasks],
-  );
-  const overdueTaskCount = useMemo(
-    () =>
-      filteredTasks.filter((task) => {
-        const timeline = getTaskTimeline(task);
-        if (!timeline) {
-          return false;
-        }
-        const today = startOfLocalDay(new Date());
-        return timeline.end < today && !["done", "cancelled"].includes(task.status);
-      }).length,
-    [filteredTasks],
-  );
-  const dueThisWeekCount = useMemo(
-    () =>
-      filteredTasks.filter((task) => {
-        const timeline = getTaskTimeline(task);
-        if (!timeline) {
-          return false;
-        }
-        const today = startOfLocalDay(new Date());
-        const diffDays = Math.round((timeline.end.getTime() - today.getTime()) / DAY_MS);
-        return diffDays >= 0 && diffDays <= 7 && !["done", "cancelled"].includes(task.status);
-      }).length,
-    [filteredTasks],
-  );
+  const notStartedCount = useMemo(() => {
+    if (structureMode === "goal") {
+      return filteredGoalTimelineItems.filter((goal) => {
+        const status = getItemProgressStatus(goal.progress, 100, goal.endDate);
+        return status === "not-started";
+      }).length;
+    } else if (structureMode === "key_result") {
+      return filteredKeyResultTimelineItems.filter((kr) => {
+        const status = getItemProgressStatus(kr.progress, 100, kr.endDate);
+        return status === "not-started";
+      }).length;
+    } else {
+      return filteredTasks.filter((task) => {
+        const status = getItemProgressStatus(task.progress, 100, task.endDate);
+        return status === "not-started";
+      }).length;
+    }
+  }, [structureMode, filteredGoalTimelineItems, filteredKeyResultTimelineItems, filteredTasks]);
+
+  const inProgressCount = useMemo(() => {
+    if (structureMode === "goal") {
+      return filteredGoalTimelineItems.filter((goal) => {
+        const status = getItemProgressStatus(goal.progress, 100, goal.endDate);
+        return status === "in-progress";
+      }).length;
+    } else if (structureMode === "key_result") {
+      return filteredKeyResultTimelineItems.filter((kr) => {
+        const status = getItemProgressStatus(kr.progress, 100, kr.endDate);
+        return status === "in-progress";
+      }).length;
+    } else {
+      return filteredTasks.filter((task) => {
+        const status = getItemProgressStatus(task.progress, 100, task.endDate);
+        return status === "in-progress";
+      }).length;
+    }
+  }, [structureMode, filteredGoalTimelineItems, filteredKeyResultTimelineItems, filteredTasks]);
+
+  const overdueTaskCount = useMemo(() => {
+    if (structureMode === "goal") {
+      return filteredGoalTimelineItems.filter((goal) => {
+        const status = getItemProgressStatus(goal.progress, 100, goal.endDate);
+        return status === "overdue";
+      }).length;
+    } else if (structureMode === "key_result") {
+      return filteredKeyResultTimelineItems.filter((kr) => {
+        const status = getItemProgressStatus(kr.progress, 100, kr.endDate);
+        return status === "overdue";
+      }).length;
+    } else {
+      return filteredTasks.filter((task) => {
+        const status = getItemProgressStatus(task.progress, 100, task.endDate);
+        return status === "overdue";
+      }).length;
+    }
+  }, [structureMode, filteredGoalTimelineItems, filteredKeyResultTimelineItems, filteredTasks]);
+
+  const completedCount = useMemo(() => {
+    if (structureMode === "goal") {
+      return filteredGoalTimelineItems.filter((goal) => {
+        const status = getItemProgressStatus(goal.progress, 100, goal.endDate);
+        return status === "completed";
+      }).length;
+    } else if (structureMode === "key_result") {
+      return filteredKeyResultTimelineItems.filter((kr) => {
+        const status = getItemProgressStatus(kr.progress, 100, kr.endDate);
+        return status === "completed";
+      }).length;
+    } else {
+      return filteredTasks.filter((task) => {
+        const status = getItemProgressStatus(task.progress, 100, task.endDate);
+        return status === "completed";
+      }).length;
+    }
+  }, [structureMode, filteredGoalTimelineItems, filteredKeyResultTimelineItems, filteredTasks]);
   const structureModeMeta = useMemo(
     () =>
       ({
@@ -1423,7 +1522,7 @@ function TasksPageContent() {
           listTitle: "Danh sách công việc",
           description:
             "Theo dõi thực thi theo ngày bắt đầu và ngày kết thúc của từng công việc, đồng thời đối chiếu với khung thời gian của KR.",
-          missingTitle: "Công việc chưa có thời gian thực thi",
+          missingTitle: "Công việc chưa có mốc thời gian",
           missingDescription:
             "Các công việc này chưa có đủ ngày bắt đầu và ngày kết thúc nên chưa thể hiển thị như timeline bar.",
         },
@@ -1455,9 +1554,7 @@ function TasksPageContent() {
       : structureMode === "key_result"
         ? filteredKeyResultTimelineItems.length
         : filteredTasks.length;
-  const currentTotalItemCount =
-    structureMode === "goal" ? goals.length : structureMode === "key_result" ? keyResults.length : tasks.length;
-  const autoFocusSignature = `${viewMode}:${structureMode}:${timeScale}:${statusFilter}:${goalFilter}:${keyResultFilter}:${assigneeFilter}:${normalizedKeyword}`;
+  const autoFocusSignature = `${viewMode}:${structureMode}:${timeScale}:${activeGoalFilter}:${activeKeyResultFilter}:${activeAssigneeFilter}:${normalizedKeyword}`;
 
   const setTimelineViewportSnapshot = useCallback((scrollLeft?: number, clientWidth?: number) => {
     const container = timelineScrollRef.current;
@@ -1589,42 +1686,41 @@ function TasksPageContent() {
 
       scheduleTimelineViewportSync();
     },
-    [leftPanelWidth, scheduleTimelineViewportSync, setTimelineViewportSnapshot, timelineWidth, todayIndicatorOffset],
+    [
+      leftPanelWidth,
+      scheduleTimelineViewportSync,
+      setTimelineViewportSnapshot,
+      timelineWidth,
+      todayIndicatorOffset,
+    ],
   );
 
-  const handleZoomOut = useCallback(() => {
-    applyTimelineZoom(zoomLevel - TIMELINE_ZOOM_STEP);
-  }, [applyTimelineZoom, zoomLevel]);
+  const handleTimelineWheel = useCallback(
+    (event: ReactWheelEvent<HTMLDivElement>) => {
+      const container = timelineScrollRef.current;
+      if (!container) {
+        return;
+      }
 
-  const handleZoomIn = useCallback(() => {
-    applyTimelineZoom(zoomLevel + TIMELINE_ZOOM_STEP);
-  }, [applyTimelineZoom, zoomLevel]);
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        applyTimelineZoom(
+          zoomLevel + (event.deltaY < 0 ? TIMELINE_ZOOM_STEP : -TIMELINE_ZOOM_STEP),
+        );
+        return;
+      }
 
-  const handleZoomReset = useCallback(() => {
-    applyTimelineZoom(1);
-  }, [applyTimelineZoom]);
+      if (!event.shiftKey || Math.abs(event.deltaY) < Math.abs(event.deltaX)) {
+        return;
+      }
 
-  const handleTimelineWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
-    const container = timelineScrollRef.current;
-    if (!container) {
-      return;
-    }
-
-    if (event.ctrlKey || event.metaKey) {
       event.preventDefault();
-      applyTimelineZoom(zoomLevel + (event.deltaY < 0 ? TIMELINE_ZOOM_STEP : -TIMELINE_ZOOM_STEP));
-      return;
-    }
-
-    if (!event.shiftKey || Math.abs(event.deltaY) < Math.abs(event.deltaX)) {
-      return;
-    }
-
-    event.preventDefault();
-    container.scrollLeft += event.deltaY;
-    setTimelineViewportSnapshot(container.scrollLeft, container.clientWidth);
-    scheduleTimelineViewportSync();
-  }, [applyTimelineZoom, scheduleTimelineViewportSync, setTimelineViewportSnapshot, zoomLevel]);
+      container.scrollLeft += event.deltaY;
+      setTimelineViewportSnapshot(container.scrollLeft, container.clientWidth);
+      scheduleTimelineViewportSync();
+    },
+    [applyTimelineZoom, scheduleTimelineViewportSync, setTimelineViewportSnapshot, zoomLevel],
+  );
 
   const updateStructureMode = useCallback(
     (nextMode: StructureMode) => {
@@ -1652,121 +1748,6 @@ function TasksPageContent() {
     scrollTimelineToToday("smooth");
   }, [scrollTimelineToToday]);
 
-  const openQuickEdit = (task: TaskItem) => {
-    setEditingTaskId(task.id);
-    setTaskLoadError(null);
-    setQuickEditState({
-      progress: String(task.progress),
-      weight: String(Math.round(task.weight)),
-      startDate: task.startDate ?? task.keyResult?.start_date ?? "",
-      endDate: task.endDate ?? task.keyResult?.end_date ?? "",
-    });
-  };
-
-  const handleSaveQuickEdit = async (task: TaskItem) => {
-    if (savingTaskId) {
-      return;
-    }
-
-    const safeProgress =
-      task.type === "okr" ? getComputedTaskProgress({ type: task.type, status: task.rawStatus, progress: task.progress }) : clampProgress(Number(quickEditState.progress));
-    const safeWeight = Number(quickEditState.weight);
-    if (
-      (quickEditState.startDate && !quickEditState.endDate) ||
-      (!quickEditState.startDate && quickEditState.endDate)
-    ) {
-      setTaskLoadError("Vui lòng nhập đủ ngày bắt đầu và ngày kết thúc hoặc để trống cả hai.");
-      return;
-    }
-    if (!Number.isFinite(safeWeight) || safeWeight <= 0) {
-      setTaskLoadError("Trọng số công việc phải lớn hơn 0.");
-      return;
-    }
-    if (!isDateRangeOrdered(quickEditState.startDate || null, quickEditState.endDate || null)) {
-      setTaskLoadError("Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.");
-      return;
-    }
-    setSavingTaskId(task.id);
-
-    const taskUpdateResult = await supabase
-      .from("tasks")
-      .update({
-        progress: safeProgress,
-        weight: Math.round(safeWeight),
-        start_date: quickEditState.startDate.trim() || null,
-        end_date: quickEditState.endDate.trim() || null,
-      })
-      .eq("id", task.id);
-
-    if (taskUpdateResult.error) {
-      setTaskLoadError(taskUpdateResult.error.message || "Không thể cập nhật nhanh công việc.");
-      setSavingTaskId(null);
-      return;
-    }
-
-    setTasks((prev) =>
-      prev.map((item) =>
-        item.id === task.id
-          ? {
-              ...item,
-              progress: safeProgress,
-              weight: Math.round(safeWeight),
-              startDate: quickEditState.startDate.trim() || null,
-              endDate: quickEditState.endDate.trim() || null,
-            }
-          : item,
-      ),
-    );
-    setEditingTaskId(null);
-    setSavingTaskId(null);
-  };
-
-  const handleAssignTaskAssignee = async (task: TaskItem) => {
-    const nextAssigneeId = assigneeDraftByTaskId[task.id] ?? task.assigneeId ?? "unassigned";
-
-    if (savingAssigneeTaskId || nextAssigneeId === "unassigned" || nextAssigneeId === task.assigneeId) {
-      return;
-    }
-
-    setTaskLoadError(null);
-    setSavingAssigneeTaskId(task.id);
-
-    const updateResult = await supabase
-      .from("tasks")
-      .update({
-        assignee_id: nextAssigneeId,
-        profile_id: nextAssigneeId,
-      })
-      .eq("id", task.id);
-
-    if (updateResult.error) {
-      setTaskLoadError(updateResult.error.message || "Không thể gán người phụ trách cho công việc.");
-      setSavingAssigneeTaskId(null);
-      return;
-    }
-
-    const assigneeName = assigneeFilters.find((item) => item.id === nextAssigneeId)?.name ?? "Chưa gán";
-
-    setTasks((prev) =>
-      prev.map((item) =>
-        item.id === task.id
-          ? {
-              ...item,
-              assigneeId: nextAssigneeId,
-              assigneeName,
-              assigneeShort: toShortName(assigneeName),
-            }
-          : item,
-      ),
-    );
-    setAssigneeDraftByTaskId((prev) => {
-      const next = { ...prev };
-      delete next[task.id];
-      return next;
-    });
-    setSavingAssigneeTaskId(null);
-  };
-
   const addTaskHref = useMemo(() => {
     const params = new URLSearchParams();
     const defaultDepartmentId = rootDepartments[0]?.id;
@@ -1789,7 +1770,15 @@ function TasksPageContent() {
     }
 
     scheduleTimelineViewportSync();
-  }, [leftPanelWidth, scheduleTimelineViewportSync, structureMode, timeScale, timelineWidth, viewMode, zoomLevel]);
+  }, [
+    leftPanelWidth,
+    scheduleTimelineViewportSync,
+    structureMode,
+    timeScale,
+    timelineWidth,
+    viewMode,
+    zoomLevel,
+  ]);
 
   useEffect(() => {
     if (viewMode !== "gantt") {
@@ -1815,7 +1804,14 @@ function TasksPageContent() {
     return () => {
       observer.disconnect();
     };
-  }, [scheduleTimelineViewportSync, structureMode, syncTimelineViewport, timeScale, viewMode, zoomLevel]);
+  }, [
+    scheduleTimelineViewportSync,
+    structureMode,
+    syncTimelineViewport,
+    timeScale,
+    viewMode,
+    zoomLevel,
+  ]);
 
   useLayoutEffect(() => {
     if (viewMode !== "gantt" || !timelineScrollRef.current) {
@@ -1834,7 +1830,13 @@ function TasksPageContent() {
       scrollTimelineToToday("auto");
       lastAutoFocusSignatureRef.current = autoFocusSignature;
     }
-  }, [autoFocusSignature, restoreViewportRatio, scrollTimelineToToday, todayIndicatorOffset, viewMode]);
+  }, [
+    autoFocusSignature,
+    restoreViewportRatio,
+    scrollTimelineToToday,
+    todayIndicatorOffset,
+    viewMode,
+  ]);
 
   return (
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
@@ -1842,226 +1844,251 @@ function TasksPageContent() {
         <WorkspaceSidebar active="tasks" />
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <header className="sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-7">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm text-slate-500">
-                  <Link href="/dashboard" className="hover:text-slate-700">
-                    Bảng điều khiển
-                  </Link>
-                  <span className="px-2">›</span>
-                  <span>Công việc</span>
-                </p>
-                <h1 className="mt-1 text-3xl font-semibold tracking-[-0.02em] text-slate-900">
-                  Timeline thực thi
-                </h1>
-                <p className="mt-1 text-sm text-slate-500">
-                  {currentModeMeta.subtitle} · {currentFilteredItemCount} / {currentTotalItemCount}{" "}
-                  {currentModeMeta.pluralLabel} theo bộ lọc
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="rounded-xl border border-slate-200 bg-white p-1">
-                  <ScaleButton active={viewMode === "gantt"} onClick={() => setViewMode("gantt")}>
-                    Gantt
-                  </ScaleButton>
-                  <ScaleButton active={viewMode === "list"} onClick={() => setViewMode("list")}>
-                    Danh sách
-                  </ScaleButton>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-1">
-                  <ScaleButton active={structureMode === "goal"} onClick={() => updateStructureMode("goal")}>
-                    Mục tiêu
-                  </ScaleButton>
-                  <ScaleButton active={structureMode === "key_result"} onClick={() => updateStructureMode("key_result")}>
-                    KR
-                  </ScaleButton>
-                  <ScaleButton active={structureMode === "task"} onClick={() => updateStructureMode("task")}>
-                    Công việc
-                  </ScaleButton>
-                </div>
-                <input
-                  value={searchKeyword}
-                  onChange={(event) => setSearchKeyword(event.target.value)}
-                  placeholder="Tìm theo công việc, KR, mục tiêu, người phụ trách..."
-                  className="h-11 w-[320px] rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                />
-                {!isCheckingCreatePermission && canCreateTask ? (
-                  <button
-                    type="button"
-                    onClick={() => router.push(addTaskHref)}
-                    className="h-11 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700"
-                  >
-                    + Thêm công việc
-                  </button>
-                ) : null}
-              </div>
+          <header className="sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-5 backdrop-blur lg:px-7">
+            <div>
+              <p className="text-sm font-semibold text-gray-500">
+                <Link href="/dashboard" className="hover:text-gray-900">
+                  Bảng điều khiển
+                </Link>
+                <span className="px-2">›</span>
+                <span>Quản lý công việc</span>
+              </p>
+              <h1 className="mt-2 text-4xl font-bold tracking-[-0.03em] text-slate-900">
+                Biểu đồ Công việc
+              </h1>
             </div>
           </header>
 
           <main className="space-y-4 px-4 py-5 lg:px-7">
             {showPermissionDebug && permissionDebug ? (
               <div className="rounded-2xl border border-slate-200 bg-slate-950 px-4 py-3 text-xs text-slate-100">
-                <p className="mb-2 font-semibold text-sky-300">Debug quyền tạo công việc (debugPermission=1)</p>
+                <p className="mb-2 font-semibold text-sky-300">
+                  Debug quyền tạo công việc (debugPermission=1)
+                </p>
                 <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed">
                   {JSON.stringify(permissionDebug, null, 2)}
                 </pre>
               </div>
             ) : null}
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-4">
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto]">
-                <Select
-                  value={statusFilter}
-                  onValueChange={(value) => setStatusFilter(value as "all" | TimelineStatus)}
-                >
-                  <SelectTrigger className="h-10">
-                    <SelectValue placeholder="Tất cả trạng thái" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {TIMELINE_STATUS_OPTIONS.map((status) => (
-                      <SelectItem key={status.value} value={status.value}>
-                        {status.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 lg:p-5">
+              {/* View Mode & Structure Mode Selection */}
+              <div className="flex flex-wrap items-center gap-4 border-b border-slate-100 pb-4">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">
+                    Chế độ xem:
+                  </span>
+                  <div className="rounded-xl border border-slate-200 bg-white p-1">
+                    <ScaleButton active={viewMode === "gantt"} onClick={() => setViewMode("gantt")}>
+                      Gantt
+                    </ScaleButton>
+                    <ScaleButton active={viewMode === "list"} onClick={() => setViewMode("list")}>
+                      Danh sách
+                    </ScaleButton>
+                  </div>
+                </div>
 
-                <Select
-                  value={goalFilter}
-                  onValueChange={(value) => {
-                    setGoalFilter(value as "all" | string);
-                    setKeyResultFilter("all");
-                  }}
-                >
-                  <SelectTrigger className="h-10">
-                    <SelectValue placeholder="Tất cả mục tiêu" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Tất cả mục tiêu</SelectItem>
-                    {goalFilters.map((goal) => (
-                      <SelectItem key={goal.id} value={goal.id}>
-                        {goal.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">
+                    Cấp độ:
+                  </span>
+                  <div className="rounded-xl border border-slate-200 bg-white p-1">
+                    <ScaleButton
+                      active={structureMode === "goal"}
+                      onClick={() => updateStructureMode("goal")}
+                    >
+                      Mục tiêu
+                    </ScaleButton>
+                    <ScaleButton
+                      active={structureMode === "key_result"}
+                      onClick={() => updateStructureMode("key_result")}
+                    >
+                      KR
+                    </ScaleButton>
+                    <ScaleButton
+                      active={structureMode === "task"}
+                      onClick={() => updateStructureMode("task")}
+                    >
+                      Công việc
+                    </ScaleButton>
+                  </div>
+                </div>
+              </div>
 
-                <Select value={keyResultFilter} onValueChange={(value) => setKeyResultFilter(value as "all" | string)}>
-                  <SelectTrigger className="h-10">
-                    <SelectValue placeholder="Tất cả key result" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Tất cả key result</SelectItem>
-                    {filteredKeyResultFilters.map((keyResult) => (
-                      <SelectItem key={keyResult.id} value={keyResult.id}>
-                        {keyResult.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              {/* Search and Add Action */}
+              <div className="flex flex-wrap items-center gap-3">
+                <input
+                  value={searchKeyword}
+                  onChange={(event) => setSearchKeyword(event.target.value)}
+                  placeholder="Tìm kiếm công việc, KR, mục tiêu, người phụ trách..."
+                  className="flex-1 min-w-[240px] h-10 rounded-lg border border-slate-200 bg-white px-4 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+                {!isCheckingCreatePermission && canCreateTask ? (
+                  <button
+                    type="button"
+                    onClick={() => router.push(addTaskHref)}
+                    className="h-10 shrink-0 rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700 transition"
+                  >
+                    + Thêm công việc
+                  </button>
+                ) : null}
+              </div>
 
-                <Select value={assigneeFilter} onValueChange={(value) => setAssigneeFilter(value as "all" | string)}>
-                  <SelectTrigger className="h-10">
-                    <SelectValue placeholder="Tất cả người phụ trách" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Tất cả người phụ trách</SelectItem>
-                    {assigneeFilters.map((assignee) => (
-                      <SelectItem key={assignee.id} value={assignee.id}>
-                        {assignee.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              {/* Filter Bar */}
+              <div className="grid gap-3 border-t border-slate-100 pt-4 lg:grid-cols-[1fr_1fr_1fr_auto]">
+                {showGoalFilter ? (
+                  <Select
+                    value={goalFilter}
+                    onValueChange={(value) => {
+                      setGoalFilter(value as "all" | string);
+                      setKeyResultFilter("all");
+                    }}
+                  >
+                    <SelectTrigger className="h-10 text-sm">
+                      <SelectValue placeholder="Tất cả mục tiêu" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Tất cả mục tiêu</SelectItem>
+                      {goalFilters.map((goal) => (
+                        <SelectItem key={goal.id} value={goal.id}>
+                          {goal.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : null}
+
+                {showKeyResultFilter ? (
+                  <Select
+                    value={keyResultFilter}
+                    onValueChange={(value) => setKeyResultFilter(value as "all" | string)}
+                  >
+                    <SelectTrigger className="h-10 text-sm">
+                      <SelectValue placeholder="Tất cả key result" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Tất cả key result</SelectItem>
+                      {filteredKeyResultFilters.map((keyResult) => (
+                        <SelectItem key={keyResult.id} value={keyResult.id}>
+                          {keyResult.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : null}
+
+                {showAssigneeFilter ? (
+                  <Select
+                    value={assigneeFilter}
+                    onValueChange={(value) => setAssigneeFilter(value as "all" | string)}
+                  >
+                    <SelectTrigger className="h-10 text-sm">
+                      <SelectValue placeholder="Tất cả người phụ trách" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Tất cả người phụ trách</SelectItem>
+                      {assigneeFilters.map((assignee) => (
+                        <SelectItem key={assignee.id} value={assignee.id}>
+                          {assignee.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : null}
 
                 <button
                   type="button"
                   onClick={() => {
                     setSearchKeyword("");
-                    setStatusFilter("all");
                     setGoalFilter("all");
                     setKeyResultFilter("all");
                     setAssigneeFilter("all");
                   }}
-                  className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  className="h-10 rounded-lg border border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 transition"
                 >
                   Xóa lọc
                 </button>
               </div>
             </section>
 
-            <section className="rounded-2xl border border-slate-200 bg-white p-4">
-              <div className="flex flex-wrap items-center justify-between gap-4">
+            <section className="rounded-2xl border border-slate-200 bg-white p-4 lg:p-5">
+              <div className="mb-5 flex flex-col items-start justify-between gap-4 border-b border-slate-100 pb-5 lg:flex-row lg:items-center">
                 <div>
-                  <h2 className="text-base font-semibold text-slate-900">
+                  <h2 className="text-lg font-bold text-slate-900">
                     {viewMode === "gantt" ? currentModeMeta.ganttTitle : currentModeMeta.listTitle}
                   </h2>
-                  <p className="mt-1 text-sm text-slate-500">{currentModeMeta.description}</p>
+                  <p className="mt-2 text-sm text-slate-600">{currentModeMeta.description}</p>
                 </div>
-                <div className="flex flex-wrap items-center gap-3">
-                  {viewMode === "gantt" ? (
-                    <>
-                      <div className="rounded-xl border border-slate-200 bg-slate-100 p-1">
-                        <ScaleButton active={timeScale === "day"} onClick={() => updateTimeScale("day")}>
-                          Ngày
-                        </ScaleButton>
-                        <ScaleButton active={timeScale === "week"} onClick={() => updateTimeScale("week")}>
-                          Tuần
-                        </ScaleButton>
-                        <ScaleButton active={timeScale === "month"} onClick={() => updateTimeScale("month")}>
-                          Tháng
-                        </ScaleButton>
-                      </div>
-                      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-1 pl-3">
-                        <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                          Zoom ngang
-                        </span>
-                        <ToolbarButton onClick={handleZoomOut} disabled={zoomLevel <= TIMELINE_MIN_ZOOM}>
-                          -
-                        </ToolbarButton>
-                        <ToolbarButton onClick={handleZoomReset} active={zoomLevel === 1}>
-                          {Math.round(zoomLevel * 100)}%
-                        </ToolbarButton>
-                        <ToolbarButton onClick={handleZoomIn} disabled={zoomLevel >= TIMELINE_MAX_ZOOM}>
-                          +
-                        </ToolbarButton>
-                      </div>
-                      <ToolbarButton
-                        onClick={handleJumpToToday}
-                        active={todayIndicatorOffset !== null}
-                        disabled={todayIndicatorOffset === null}
+
+                {viewMode === "gantt" ? (
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <div className="rounded-lg border border-slate-200 bg-slate-100 p-1">
+                      <ScaleButton
+                        active={timeScale === "day"}
+                        onClick={() => updateTimeScale("day")}
                       >
-                        Hôm nay
-                      </ToolbarButton>
-                      <p className="text-sm text-slate-500">
-                        Dùng nút +/- hoặc giữ Ctrl/Cmd + lăn chuột để zoom. Giữ Shift + lăn chuột để cuộn ngang trên timeline.
-                      </p>
-                    </>
-                  ) : null}
-                </div>
+                        Ngày
+                      </ScaleButton>
+                      <ScaleButton
+                        active={timeScale === "week"}
+                        onClick={() => updateTimeScale("week")}
+                      >
+                        Tuần
+                      </ScaleButton>
+                      <ScaleButton
+                        active={timeScale === "month"}
+                        onClick={() => updateTimeScale("month")}
+                      >
+                        Tháng
+                      </ScaleButton>
+                    </div>
+                    <ToolbarButton
+                      onClick={handleJumpToToday}
+                      active={todayIndicatorOffset !== null}
+                      disabled={todayIndicatorOffset === null}
+                    >
+                      Hôm nay
+                    </ToolbarButton>
+                  </div>
+                ) : null}
               </div>
 
-              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                    Quá thời gian thực thi
+              {/* Timeline Help Text */}
+              {viewMode === "gantt" ? (
+                <p className="text-xs text-slate-500 mb-4">
+                  <strong>Mẹo:</strong> Giữ Ctrl/Cmd + lăn chuột để zoom. Giữ Shift + lăn chuột để
+                  cuộn ngang. Hover vào task bar để xem chi tiết.
+                </p>
+              ) : null}
+
+              {/* Statistics Cards */}
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-600">
+                    Chưa thực hiện
                   </p>
-                  <p className="mt-2 text-2xl font-semibold text-slate-900">{overdueTaskCount}</p>
+                  <p className="mt-2 text-3xl font-bold text-slate-700">{notStartedCount}</p>
                 </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">Kết thúc 7 ngày</p>
-                  <p className="mt-2 text-2xl font-semibold text-slate-900">{dueThisWeekCount}</p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">Đang thực thi</p>
-                  <p className="mt-2 text-2xl font-semibold text-slate-900">{tasksInProgress}</p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                    {currentModeMeta.label} thiếu mốc
+
+                <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50 px-4 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-emerald-600">
+                    Đang thực hiện
                   </p>
-                  <p className="mt-2 text-2xl font-semibold text-slate-900">{currentNoTimelineCount}</p>
+                  <p className="mt-2 text-3xl font-bold text-emerald-700">{inProgressCount}</p>
+                </div>
+
+                <div className="rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-red-600">
+                    Quá hạn
+                  </p>
+                  <p className="mt-2 text-3xl font-bold text-red-700">{overdueTaskCount}</p>
+                </div>
+
+                <div className="rounded-xl border-2 border-blue-200 bg-blue-50 px-4 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-blue-600">
+                    Hoàn thành
+                  </p>
+                  <p className="mt-2 text-3xl font-bold text-blue-700">{completedCount}</p>
                 </div>
               </div>
             </section>
@@ -2094,445 +2121,392 @@ function TasksPageContent() {
 
             {!isLoadingTasks && currentFilteredItemCount > 0 ? (
               viewMode === "gantt" ? (
-              structureMode === "goal" ? (
-              <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                <div
-                  ref={timelineScrollRef}
-                  onScroll={handleTimelineScroll}
-                  onWheel={handleTimelineWheel}
-                  className="overflow-x-auto overflow-y-hidden rounded-2xl overscroll-x-contain scroll-smooth [scrollbar-gutter:stable]"
-                >
-                  <div className="min-w-full" style={{ width: leftPanelWidth + timelineWidth }}>
+                structureMode === "goal" ? (
+                  <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
                     <div
-                      className="grid border-b border-slate-200 bg-slate-50"
-                      style={{ gridTemplateColumns: `${leftPanelWidth}px ${timelineWidth}px` }}
+                      ref={timelineScrollRef}
+                      onScroll={handleTimelineScroll}
+                      onWheel={handleTimelineWheel}
+                      className="overflow-x-auto overflow-y-hidden rounded-2xl overscroll-x-contain scroll-smooth [scrollbar-gutter:stable]"
                     >
-                      <div className={`sticky left-0 z-30 border-r border-slate-200 bg-slate-50 px-5 py-4 ${STICKY_PANEL_SHADOW}`}>
-                        <p className="text-sm font-semibold text-slate-900">Danh sách mục tiêu</p>
-                      </div>
-                      <TimelinePeriodHeader
-                        periods={visibleTimelineWindow.periods}
-                        periodWidth={periodWidth}
-                        timelineWidth={timelineWidth}
-                        visibleStartIndex={visibleTimelineWindow.startIndex}
-                        visibleOffsetPx={visibleTimelineWindow.offsetPx}
-                        visibleWidthPx={visibleTimelineWindow.widthPx}
-                        todayIndex={todayIndex}
-                        todayIndicatorOffset={todayIndicatorOffset}
-                      />
-                    </div>
-
-                    {visibleGoalTimelineItems.map((goal) => {
-                      const barLayout = getItemBarLayout(goal.startDate, goal.endDate, 12);
-                      if (!barLayout) {
-                        return null;
-                      }
-
-                      return (
+                      <div className="min-w-full" style={{ width: leftPanelWidth + timelineWidth }}>
                         <div
-                          key={goal.id}
-                          className="grid border-b border-slate-100"
+                          className="grid border-b border-slate-200 bg-slate-50"
                           style={{ gridTemplateColumns: `${leftPanelWidth}px ${timelineWidth}px` }}
                         >
-                          <div className={`sticky left-0 z-20 border-r border-slate-200 bg-white px-5 py-4 ${STICKY_PANEL_SHADOW}`}>
-                            <div className="flex items-center justify-between gap-3">
-                              <div>
-                                <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">Mục tiêu</p>
-                                <p className="mt-1 text-base font-semibold text-slate-900">{goal.name}</p>
-                                <p className="mt-1 text-xs text-slate-500">
-                                  {formatTimelineRangeVi(goal.startDate, goal.endDate, {
-                                    fallback: "Chưa đặt khung thời gian",
-                                  })}
-                                </p>
-                                <p className="mt-1 text-[11px] text-slate-400">
-                                  {goal.keyResultCount} KR · {goal.taskCount} công việc
-                                </p>
-                              </div>
-                              {goal.id !== "no-goal" ? (
-                                <Link
-                                  href={`/goals/${goal.id}`}
-                                  className="text-xs font-semibold text-blue-700 hover:text-blue-800"
-                                >
-                                  Mở mục tiêu
-                                </Link>
-                              ) : null}
-                            </div>
+                          <div
+                            className={`sticky left-0 z-30 border-r border-slate-200 bg-slate-50 px-5 py-4 ${STICKY_PANEL_SHADOW}`}
+                          >
+                            <p className="text-sm font-semibold text-slate-900">
+                              Danh sách mục tiêu
+                            </p>
                           </div>
-                          <div className="relative min-h-[86px] bg-white">
-                            <TimelinePeriodBackground
-                              rowKey={goal.id}
-                              periods={visibleTimelineWindow.periods}
-                              periodWidth={periodWidth}
-                              visibleStartIndex={visibleTimelineWindow.startIndex}
-                              visibleOffsetPx={visibleTimelineWindow.offsetPx}
-                              visibleWidthPx={visibleTimelineWindow.widthPx}
-                              todayIndex={todayIndex}
-                            />
-                            {todayIndicatorOffset !== null ? (
-                              <div
-                                className="pointer-events-none absolute inset-y-0 z-[1] w-px bg-blue-400/75"
-                                style={{ left: todayIndicatorOffset }}
-                              />
-                            ) : null}
-                            <Link
-                              href={goal.id !== "no-goal" ? `/goals/${goal.id}` : "/goals"}
-                              title={`${goal.name}\nTiến độ: ${goal.progress}%\n${formatTimelineRangeVi(goal.startDate, goal.endDate, {
-                                fallback: "Chưa đặt khung thời gian",
-                              })}`}
-                              className="absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl border border-slate-300 bg-slate-200 px-3 text-left shadow-sm transition hover:bg-slate-300"
-                              style={{ left: barLayout.left, width: barLayout.width }}
-                            >
-                              <TimelineBarContent label={goal.name} progress={goal.progress} width={barLayout.width} />
-                            </Link>
-                          </div>
+                          <TimelinePeriodHeader
+                            periods={visibleTimelineWindow.periods}
+                            periodWidth={periodWidth}
+                            timelineWidth={timelineWidth}
+                            visibleStartIndex={visibleTimelineWindow.startIndex}
+                            visibleOffsetPx={visibleTimelineWindow.offsetPx}
+                            visibleWidthPx={visibleTimelineWindow.widthPx}
+                            todayIndex={todayIndex}
+                            todayIndicatorOffset={todayIndicatorOffset}
+                          />
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </section>
-              ) : structureMode === "key_result" ? (
-              <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                <div
-                  ref={timelineScrollRef}
-                  onScroll={handleTimelineScroll}
-                  onWheel={handleTimelineWheel}
-                  className="overflow-x-auto overflow-y-hidden rounded-2xl overscroll-x-contain scroll-smooth [scrollbar-gutter:stable]"
-                >
-                  <div className="min-w-full" style={{ width: leftPanelWidth + timelineWidth }}>
-                    <div
-                      className="grid border-b border-slate-200 bg-slate-50"
-                      style={{ gridTemplateColumns: `${leftPanelWidth}px ${timelineWidth}px` }}
-                    >
-                      <div className={`sticky left-0 z-30 border-r border-slate-200 bg-slate-50 px-5 py-4 ${STICKY_PANEL_SHADOW}`}>
-                        <p className="text-sm font-semibold text-slate-900">Danh sách key result</p>
-                        <p className="mt-1 text-xs text-slate-500">Mỗi dòng là một KR, vẫn giữ mục tiêu làm ngữ cảnh đi kèm.</p>
-                      </div>
-                      <TimelinePeriodHeader
-                        periods={visibleTimelineWindow.periods}
-                        periodWidth={periodWidth}
-                        timelineWidth={timelineWidth}
-                        visibleStartIndex={visibleTimelineWindow.startIndex}
-                        visibleOffsetPx={visibleTimelineWindow.offsetPx}
-                        visibleWidthPx={visibleTimelineWindow.widthPx}
-                        todayIndex={todayIndex}
-                        todayIndicatorOffset={todayIndicatorOffset}
-                      />
-                    </div>
 
-                    {visibleKeyResultTimelineItems.map((keyResult) => {
-                      const barLayout = getItemBarLayout(keyResult.startDate, keyResult.endDate, 12);
-                      if (!barLayout) {
-                        return null;
-                      }
+                        {visibleGoalTimelineItems.map((goal) => {
+                          const barLayout = getItemBarLayout(goal.startDate, goal.endDate, 12);
+                          if (!barLayout) {
+                            return null;
+                          }
 
-                      return (
-                        <div
-                          key={keyResult.id}
-                          className="grid border-b border-slate-100"
-                          style={{ gridTemplateColumns: `${leftPanelWidth}px ${timelineWidth}px` }}
-                        >
-                          <div className={`sticky left-0 z-20 border-r border-slate-200 bg-white px-5 py-4 ${STICKY_PANEL_SHADOW}`}>
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                                  <p className="text-sm font-semibold text-slate-900">{keyResult.name}</p>
-                                  <p className="text-xs text-slate-500">{keyResult.metric}</p>
-                                </div>
-                                <p className="mt-1 text-xs text-slate-500">{keyResult.goalName}</p>
-                                <p className="mt-1 text-[11px] text-slate-400">
-                                  {keyResult.taskCount} công việc ·{" "}
-                                  {formatTimelineRangeVi(keyResult.startDate, keyResult.endDate, {
-                                    fallback: "KR chưa có mốc thời gian",
-                                  })}
-                                </p>
-                              </div>
-                              {keyResult.goalId !== "no-goal" && keyResult.id !== "no-kr" ? (
-                                <Link
-                                  href={`/tasks/new?goalId=${keyResult.goalId}&keyResultId=${keyResult.id}`}
-                                  className="text-xs font-semibold text-blue-700 hover:text-blue-800"
-                                >
-                                  + Thêm công việc
-                                </Link>
-                              ) : null}
-                            </div>
-                          </div>
-                          <div className="relative min-h-[86px] bg-white">
-                            <TimelinePeriodBackground
-                              rowKey={keyResult.id}
-                              periods={visibleTimelineWindow.periods}
-                              periodWidth={periodWidth}
-                              visibleStartIndex={visibleTimelineWindow.startIndex}
-                              visibleOffsetPx={visibleTimelineWindow.offsetPx}
-                              visibleWidthPx={visibleTimelineWindow.widthPx}
-                              todayIndex={todayIndex}
-                            />
-                            {todayIndicatorOffset !== null ? (
-                              <div
-                                className="pointer-events-none absolute inset-y-0 z-[1] w-px bg-blue-400/75"
-                                style={{ left: todayIndicatorOffset }}
-                              />
-                            ) : null}
-                            <Link
-                              href={
-                                keyResult.goalId !== "no-goal" && keyResult.id !== "no-kr"
-                                  ? `/tasks/new?goalId=${keyResult.goalId}&keyResultId=${keyResult.id}`
-                                  : "/tasks"
-                              }
-                              title={`${keyResult.name}\nTiến độ: ${keyResult.progress}%\n${formatTimelineRangeVi(keyResult.startDate, keyResult.endDate, {
-                                fallback: "KR chưa có mốc thời gian",
-                              })}`}
-                              className="absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl border border-slate-300 bg-slate-200 px-3 text-left shadow-sm transition hover:bg-slate-300"
-                              style={{ left: barLayout.left, width: barLayout.width }}
+                          return (
+                            <div
+                              key={goal.id}
+                              className="grid border-b border-slate-100"
+                              style={{
+                                gridTemplateColumns: `${leftPanelWidth}px ${timelineWidth}px`,
+                              }}
                             >
-                              <TimelineBarContent
-                                label={keyResult.name}
-                                progress={keyResult.progress}
-                                width={barLayout.width}
-                              />
-                            </Link>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </section>
-              ) : (
-              <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                <div
-                  ref={timelineScrollRef}
-                  onScroll={handleTimelineScroll}
-                  onWheel={handleTimelineWheel}
-                  className="overflow-x-auto overflow-y-hidden rounded-2xl overscroll-x-contain scroll-smooth [scrollbar-gutter:stable]"
-                >
-                  <div
-                    className="min-w-full"
-                    style={{ width: leftPanelWidth + timelineWidth }}
-                  >
-                    <div
-                      className="grid border-b border-slate-200 bg-slate-50"
-                      style={{ gridTemplateColumns: `${leftPanelWidth}px ${timelineWidth}px` }}
-                    >
-                      <div className={`sticky left-0 z-30 border-r border-slate-200 bg-slate-50 px-5 py-4 ${STICKY_PANEL_SHADOW}`}>
-                        <p className="text-sm font-semibold text-slate-900">Danh sách công việc</p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          Mỗi dòng là một công việc với mốc thực thi riêng.
-                        </p>
-                      </div>
-                      <TimelinePeriodHeader
-                        periods={visibleTimelineWindow.periods}
-                        periodWidth={periodWidth}
-                        timelineWidth={timelineWidth}
-                        visibleStartIndex={visibleTimelineWindow.startIndex}
-                        visibleOffsetPx={visibleTimelineWindow.offsetPx}
-                        visibleWidthPx={visibleTimelineWindow.widthPx}
-                        todayIndex={todayIndex}
-                        todayIndicatorOffset={todayIndicatorOffset}
-                      />
-                    </div>
-
-                    {visibleTasks.map((task) => {
-                      const barLayout = getItemBarLayout(task.startDate, task.endDate);
-                      const tooltip = buildTaskTooltip(task);
-                      const quickEditing = editingTaskId === task.id;
-                      const alignmentWarning = getTaskTimelineAlignmentWarning(task);
-                      const quickEditAlignmentWarning =
-                        quickEditing
-                          ? getTimelineOutsideParentWarning(
-                              quickEditState.startDate || null,
-                              quickEditState.endDate || null,
-                              task.keyResult?.start_date ?? null,
-                              task.keyResult?.end_date ?? null,
-                              {
-                                subjectLabel: "Thời gian công việc",
-                                parentLabel: "KR",
-                              },
-                            )
-                          : alignmentWarning;
-
-                      return (
-                        <div
-                          key={task.id}
-                          className="grid border-b border-slate-100 last:border-b-0"
-                          style={{ gridTemplateColumns: `${leftPanelWidth}px ${timelineWidth}px` }}
-                        >
-                          <div className={`sticky left-0 z-10 border-r border-slate-200 bg-white px-5 py-3 ${STICKY_PANEL_SHADOW}`}>
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0 flex-1">
-                                <Link
-                                  href={`/tasks/${task.id}`}
-                                  className="block truncate text-sm font-semibold text-slate-900 hover:text-blue-700"
-                                  title={tooltip}
-                                >
-                                  {task.name}
-                                </Link>
-                                <p className="mt-1 text-xs text-slate-500">
-                                  {task.type === "okr" ? "Công việc OKR" : "Công việc KPI"}
-                                  {" · "}
-                                  {task.assigneeName}
-                                  {task.isRecurring ? " · Lặp lại" : ""}
-                                </p>
-                                <div className="mt-2 flex flex-wrap items-center gap-2">
-                                  <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">
-                                    Tiến độ {task.progress}%
-                                  </span>
-                                  <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">
-                                    Trọng số {Math.round(task.weight)}%
-                                  </span>
-                                </div>
-                                {alignmentWarning ? (
-                                  <p className="mt-1 text-[11px] text-amber-600">{alignmentWarning}</p>
-                                ) : null}
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => openQuickEdit(task)}
-                                className="text-xs font-semibold text-blue-700 hover:text-blue-800"
+                              <div
+                                className={`sticky left-0 z-20 border-r border-slate-200 bg-white px-5 py-4 ${STICKY_PANEL_SHADOW}`}
                               >
-                                Sửa nhanh
-                              </button>
+                                <div className="flex items-center justify-between gap-3">
+                                  <div>
+                                    <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                                      Mục tiêu
+                                    </p>
+                                    <p className="mt-1 text-base font-semibold text-slate-900">
+                                      {goal.name}
+                                    </p>
+                                    <p className="mt-1 text-xs text-slate-500">
+                                      {formatTimelineRangeVi(goal.startDate, goal.endDate, {
+                                        fallback: "Chưa đặt khung thời gian",
+                                      })}
+                                    </p>
+                                    <p className="mt-1 text-[11px] text-slate-400">
+                                      {goal.keyResultCount} KR · {goal.taskCount} công việc
+                                    </p>
+                                  </div>
+                                  {goal.id !== "no-goal" ? (
+                                    <Link
+                                      href={`/goals/${goal.id}`}
+                                      className="text-xs font-semibold text-blue-700 hover:text-blue-800"
+                                    >
+                                      Mở mục tiêu
+                                    </Link>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <div className="relative min-h-[86px] bg-white">
+                                <TimelinePeriodBackground
+                                  rowKey={goal.id}
+                                  periods={visibleTimelineWindow.periods}
+                                  periodWidth={periodWidth}
+                                  visibleStartIndex={visibleTimelineWindow.startIndex}
+                                  visibleOffsetPx={visibleTimelineWindow.offsetPx}
+                                  visibleWidthPx={visibleTimelineWindow.widthPx}
+                                  todayIndex={todayIndex}
+                                />
+                                {todayIndicatorOffset !== null ? (
+                                  <div
+                                    className="pointer-events-none absolute inset-y-0 z-[1] w-px bg-blue-400/75"
+                                    style={{ left: todayIndicatorOffset }}
+                                  />
+                                ) : null}
+                                <Link
+                                  href={goal.id !== "no-goal" ? `/goals/${goal.id}` : "/goals"}
+                                  title={`${goal.name}\nTiến độ: ${goal.progress}%\n${formatTimelineRangeVi(
+                                    goal.startDate,
+                                    goal.endDate,
+                                    {
+                                      fallback: "Chưa đặt khung thời gian",
+                                    },
+                                  )}`}
+                                  className="absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl border border-slate-300 bg-slate-200 px-3 text-left shadow-sm transition hover:bg-slate-300"
+                                  style={{ left: barLayout.left, width: barLayout.width }}
+                                >
+                                  <TimelineBarContent
+                                    label={goal.name}
+                                    progress={goal.progress}
+                                    width={barLayout.width}
+                                  />
+                                </Link>
+                              </div>
                             </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </section>
+                ) : structureMode === "key_result" ? (
+                  <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                    <div
+                      ref={timelineScrollRef}
+                      onScroll={handleTimelineScroll}
+                      onWheel={handleTimelineWheel}
+                      className="overflow-x-auto overflow-y-hidden rounded-2xl overscroll-x-contain scroll-smooth [scrollbar-gutter:stable]"
+                    >
+                      <div className="min-w-full" style={{ width: leftPanelWidth + timelineWidth }}>
+                        <div
+                          className="grid border-b border-slate-200 bg-slate-50"
+                          style={{ gridTemplateColumns: `${leftPanelWidth}px ${timelineWidth}px` }}
+                        >
+                          <div
+                            className={`sticky left-0 z-30 border-r border-slate-200 bg-slate-50 px-5 py-4 ${STICKY_PANEL_SHADOW}`}
+                          >
+                            <p className="text-sm font-semibold text-slate-900">
+                              Danh sách key result
+                            </p>
+                          </div>
+                          <TimelinePeriodHeader
+                            periods={visibleTimelineWindow.periods}
+                            periodWidth={periodWidth}
+                            timelineWidth={timelineWidth}
+                            visibleStartIndex={visibleTimelineWindow.startIndex}
+                            visibleOffsetPx={visibleTimelineWindow.offsetPx}
+                            visibleWidthPx={visibleTimelineWindow.widthPx}
+                            todayIndex={todayIndex}
+                            todayIndicatorOffset={todayIndicatorOffset}
+                          />
+                        </div>
 
-                            {quickEditing ? (
-                              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                                <div className="grid gap-3 sm:grid-cols-2">
-                                  <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
-                                    <span>Tiến độ</span>
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      max={100}
-                                      value={quickEditState.progress}
-                                      disabled={task.type === "okr"}
-                                      onChange={(event) =>
-                                        setQuickEditState((prev) => ({
-                                          ...prev,
-                                          progress: event.target.value,
-                                        }))
-                                      }
-                                      className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
-                                    />
-                                  </label>
-                                  <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
-                                    <span>Trọng số (%)</span>
-                                    <div className="relative">
-                                      <input
-                                        type="number"
-                                        min={1}
-                                        step="1"
-                                        value={quickEditState.weight}
-                                        onChange={(event) =>
-                                          setQuickEditState((prev) => ({
-                                            ...prev,
-                                            weight: event.target.value,
-                                          }))
-                                        }
-                                        className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 pr-8 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                                      />
-                                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">
-                                        %
+                        {visibleKeyResultTimelineItems.map((keyResult) => {
+                          const barLayout = getItemBarLayout(
+                            keyResult.startDate,
+                            keyResult.endDate,
+                            12,
+                          );
+                          if (!barLayout) {
+                            return null;
+                          }
+
+                          return (
+                            <div
+                              key={keyResult.id}
+                              className="grid border-b border-slate-100"
+                              style={{
+                                gridTemplateColumns: `${leftPanelWidth}px ${timelineWidth}px`,
+                              }}
+                            >
+                              <div
+                                className={`sticky left-0 z-20 border-r border-slate-200 bg-white px-5 py-4 ${STICKY_PANEL_SHADOW}`}
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                                      <p className="text-sm font-semibold text-slate-900">
+                                        {keyResult.name}
+                                      </p>
+                                      <p className="text-xs text-slate-500">{keyResult.metric}</p>
+                                    </div>
+                                    <p className="mt-1 text-xs text-slate-500">
+                                      {keyResult.goalName}
+                                    </p>
+                                    <p className="mt-1 text-[11px] text-slate-400">
+                                      {keyResult.taskCount} công việc ·{" "}
+                                      {formatTimelineRangeVi(
+                                        keyResult.startDate,
+                                        keyResult.endDate,
+                                        {
+                                          fallback: "KR chưa có mốc thời gian",
+                                        },
+                                      )}
+                                    </p>
+                                  </div>
+                                  {keyResult.goalId !== "no-goal" && keyResult.id !== "no-kr" ? (
+                                    <Link
+                                      href={`/tasks/new?goalId=${keyResult.goalId}&keyResultId=${keyResult.id}`}
+                                      className="text-xs font-semibold text-blue-700 hover:text-blue-800"
+                                    >
+                                      + Thêm công việc
+                                    </Link>
+                                  ) : null}
+                                </div>
+                              </div>
+                              <div className="relative min-h-[86px] bg-white">
+                                <TimelinePeriodBackground
+                                  rowKey={keyResult.id}
+                                  periods={visibleTimelineWindow.periods}
+                                  periodWidth={periodWidth}
+                                  visibleStartIndex={visibleTimelineWindow.startIndex}
+                                  visibleOffsetPx={visibleTimelineWindow.offsetPx}
+                                  visibleWidthPx={visibleTimelineWindow.widthPx}
+                                  todayIndex={todayIndex}
+                                />
+                                {todayIndicatorOffset !== null ? (
+                                  <div
+                                    className="pointer-events-none absolute inset-y-0 z-[1] w-px bg-blue-400/75"
+                                    style={{ left: todayIndicatorOffset }}
+                                  />
+                                ) : null}
+                                <Link
+                                  href={
+                                    keyResult.goalId !== "no-goal" && keyResult.id !== "no-kr"
+                                      ? `/tasks/new?goalId=${keyResult.goalId}&keyResultId=${keyResult.id}`
+                                      : "/tasks"
+                                  }
+                                  title={`${keyResult.name}\nTiến độ: ${keyResult.progress}%\n${formatTimelineRangeVi(
+                                    keyResult.startDate,
+                                    keyResult.endDate,
+                                    {
+                                      fallback: "KR chưa có mốc thời gian",
+                                    },
+                                  )}`}
+                                  className="absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl border border-slate-300 bg-slate-200 px-3 text-left shadow-sm transition hover:bg-slate-300"
+                                  style={{ left: barLayout.left, width: barLayout.width }}
+                                >
+                                  <TimelineBarContent
+                                    label={keyResult.name}
+                                    progress={keyResult.progress}
+                                    width={barLayout.width}
+                                  />
+                                </Link>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </section>
+                ) : (
+                  <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                    <div
+                      ref={timelineScrollRef}
+                      onScroll={handleTimelineScroll}
+                      onWheel={handleTimelineWheel}
+                      className="overflow-x-auto overflow-y-hidden rounded-2xl overscroll-x-contain scroll-smooth [scrollbar-gutter:stable]"
+                    >
+                      <div className="min-w-full" style={{ width: leftPanelWidth + timelineWidth }}>
+                        <div
+                          className="grid border-b border-slate-200 bg-slate-50"
+                          style={{ gridTemplateColumns: `${leftPanelWidth}px ${timelineWidth}px` }}
+                        >
+                          <div
+                            className={`sticky left-0 z-30 border-r border-slate-200 bg-slate-50 px-5 py-4 ${STICKY_PANEL_SHADOW}`}
+                          >
+                            <p className="text-sm font-semibold text-slate-900">
+                              Danh sách công việc
+                            </p>
+                          </div>
+                          <TimelinePeriodHeader
+                            periods={visibleTimelineWindow.periods}
+                            periodWidth={periodWidth}
+                            timelineWidth={timelineWidth}
+                            visibleStartIndex={visibleTimelineWindow.startIndex}
+                            visibleOffsetPx={visibleTimelineWindow.offsetPx}
+                            visibleWidthPx={visibleTimelineWindow.widthPx}
+                            todayIndex={todayIndex}
+                            todayIndicatorOffset={todayIndicatorOffset}
+                          />
+                        </div>
+
+                        {visibleTasks.map((task) => {
+                          const barLayout = getItemBarLayout(task.startDate, task.endDate);
+                          const tooltip = buildTaskTooltip(task, canViewTaskPoints);
+                          const alignmentWarning = getTaskTimelineAlignmentWarning(task);
+                          const taskTimelineStatus = getTaskStatus(
+                            task.startDate,
+                            task.endDate,
+                            task.progress,
+                            !getTaskTimeline(task),
+                          );
+                          const taskStatusColors = getStatusColors(taskTimelineStatus);
+
+                          return (
+                            <div
+                              key={task.id}
+                              className="grid border-b border-slate-100 last:border-b-0"
+                              style={{
+                                gridTemplateColumns: `${leftPanelWidth}px ${timelineWidth}px`,
+                              }}
+                            >
+                              <div
+                                className={`sticky left-0 z-10 border-r border-slate-200 bg-white px-5 py-4 ${STICKY_PANEL_SHADOW}`}
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    <Link
+                                      href={`/tasks/${task.id}`}
+                                      className="group block truncate text-base font-bold text-slate-900 hover:text-blue-700 transition"
+                                      title={tooltip}
+                                    >
+                                      {task.name}
+                                    </Link>
+                                    <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+                                      <p className="text-xs text-slate-500 font-medium">
+                                        {task.goalName}
+                                      </p>
+                                      <span className="inline-block h-1 w-1 rounded-full bg-slate-300"></span>
+                                      <p className="text-xs text-slate-500">{task.keyResultName}</p>
+                                    </div>
+                                    <p className="mt-2 text-xs text-slate-600">
+                                      {task.assigneeName}
+                                      {task.isRecurring ? " · 🔁 Lặp lại" : ""}
+                                    </p>
+                                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                                      <span
+                                        className={`inline-flex px-2 py-1 rounded-md text-[10px] font-semibold ${taskStatusColors.badgeBg} ${taskStatusColors.badgeText}`}
+                                      >
+                                        Tiến độ {task.progress}%
+                                      </span>
+                                      <span
+                                        className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${getTaskPriorityBadgeClassName(task.priority)}`}
+                                      >
+                                        {getTaskPriorityLabel(task.priority)}
                                       </span>
                                     </div>
-                                  </label>
-                                  <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
-                                    <span>Ngày bắt đầu</span>
-                                    <input
-                                      type="date"
-                                      value={quickEditState.startDate}
-                                      onChange={(event) =>
-                                        setQuickEditState((prev) => ({
-                                          ...prev,
-                                          startDate: event.target.value,
-                                        }))
-                                      }
-                                      className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                                    />
-                                  </label>
-                                  <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
-                                    <span>Ngày kết thúc</span>
-                                    <input
-                                      type="date"
-                                      min={quickEditState.startDate || undefined}
-                                      value={quickEditState.endDate}
-                                      onChange={(event) =>
-                                        setQuickEditState((prev) => ({
-                                          ...prev,
-                                          endDate: event.target.value,
-                                        }))
-                                      }
-                                      className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                                    />
-                                  </label>
+                                    <p className="mt-2 text-[11px] font-medium text-slate-600">
+                                      {formatTaskPointValue(getTaskEarnedPoints(task))} /{" "}
+                                      {formatTaskPointValue(getTaskPriorityScore(task.priority))}{" "}
+                                      điểm
+                                    </p>
+                                    {alignmentWarning ? (
+                                      <p className="mt-2 text-[11px] text-amber-600 font-medium">
+                                        ⚠️ {alignmentWarning}
+                                      </p>
+                                    ) : null}
+                                  </div>
                                 </div>
-                                <p className="mt-2 text-[11px] text-slate-500">
-                                  {task.type === "okr"
-                                    ? "Task OKR lấy progress theo trạng thái hiện tại. Quick edit ở đây chỉ cập nhật trọng số và timeline."
-                                    : task.keyResultId
-                                      ? "Giá trị ban đầu được autofill từ KR nếu task chưa có ngày. Khi lưu, thay đổi chỉ áp dụng cho công việc này."
-                                      : "Task này chưa gắn Key Result. Bạn vẫn có thể đặt mốc thời gian riêng cho công việc."}
-                                </p>
-                                {quickEditAlignmentWarning ? (
-                                  <p className="mt-1 text-[11px] text-amber-600">{quickEditAlignmentWarning}</p>
+                              </div>
+
+                              <div className="relative min-h-[92px] bg-white">
+                                <TimelinePeriodBackground
+                                  rowKey={task.id}
+                                  periods={visibleTimelineWindow.periods}
+                                  periodWidth={periodWidth}
+                                  visibleStartIndex={visibleTimelineWindow.startIndex}
+                                  visibleOffsetPx={visibleTimelineWindow.offsetPx}
+                                  visibleWidthPx={visibleTimelineWindow.widthPx}
+                                  todayIndex={todayIndex}
+                                />
+                                {todayIndicatorOffset !== null ? (
+                                  <div
+                                    className="pointer-events-none absolute inset-y-0 z-[1] w-px bg-blue-400/75"
+                                    style={{ left: todayIndicatorOffset }}
+                                  />
                                 ) : null}
-                                <div className="mt-3 flex items-center justify-end gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => setEditingTaskId(null)}
-                                    className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                                  >
-                                    Hủy
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => void handleSaveQuickEdit(task)}
-                                    disabled={savingTaskId === task.id}
-                                    className="inline-flex h-8 items-center rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                                  >
-                                    {savingTaskId === task.id ? "Đang lưu..." : "Lưu nhanh"}
-                                  </button>
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
 
-                          <div className="relative min-h-[92px] bg-white">
-                            <TimelinePeriodBackground
-                              rowKey={task.id}
-                              periods={visibleTimelineWindow.periods}
-                              periodWidth={periodWidth}
-                              visibleStartIndex={visibleTimelineWindow.startIndex}
-                              visibleOffsetPx={visibleTimelineWindow.offsetPx}
-                              visibleWidthPx={visibleTimelineWindow.widthPx}
-                              todayIndex={todayIndex}
-                            />
-                            {todayIndicatorOffset !== null ? (
-                              <div
-                                className="pointer-events-none absolute inset-y-0 z-[1] w-px bg-blue-400/75"
-                                style={{ left: todayIndicatorOffset }}
-                              />
-                            ) : null}
-
-                            {barLayout ? (
-                              <TaskTimelineBar
-                                task={task}
-                                left={barLayout.left}
-                                width={barLayout.width}
-                                isClamped={barLayout.isClamped}
-                              />
-                            ) : (
-                              <div className="absolute inset-y-0 left-0 flex items-center px-4 text-xs text-slate-400">
-                                Công việc chưa có mốc thời gian
+                                {barLayout ? (
+                                  <TaskTimelineBar
+                                    task={task}
+                                    left={barLayout.left}
+                                    width={barLayout.width}
+                                    isClamped={barLayout.isClamped}
+                                  />
+                                ) : (
+                                  <div className="absolute inset-y-0 left-0 flex items-center px-4 text-xs text-slate-400">
+                                    Công việc chưa có mốc thời gian
+                                  </div>
+                                )}
                               </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </section>
-              )) : structureMode === "goal" ? (
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </section>
+                )
+              ) : structureMode === "goal" ? (
                 <section className="rounded-2xl border border-slate-200 bg-white">
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[920px] text-left">
@@ -2550,14 +2524,18 @@ function TasksPageContent() {
                           <tr key={goal.id} className="border-b border-slate-100 align-top">
                             <td className="px-5 py-4">
                               <p className="text-sm font-semibold text-slate-900">{goal.name}</p>
-                              <p className="mt-1 text-xs text-slate-500">{goal.taskCount} công việc theo bộ lọc</p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                {goal.taskCount} công việc theo bộ lọc
+                              </p>
                             </td>
                             <td className="px-4 py-4 text-sm text-slate-600">
                               {formatTimelineRangeVi(goal.startDate, goal.endDate, {
                                 fallback: "Mục tiêu chưa có mốc thời gian",
                               })}
                             </td>
-                            <td className="px-4 py-4 text-sm text-slate-700">{goal.keyResultCount}</td>
+                            <td className="px-4 py-4 text-sm text-slate-700">
+                              {goal.keyResultCount}
+                            </td>
                             <td className="px-4 py-4 text-sm text-slate-700">{goal.taskCount}</td>
                             <td className="px-4 py-4">
                               {goal.id !== "no-goal" ? (
@@ -2593,16 +2571,22 @@ function TasksPageContent() {
                         {filteredKeyResultTimelineItems.map((keyResult) => (
                           <tr key={keyResult.id} className="border-b border-slate-100 align-top">
                             <td className="px-5 py-4">
-                              <p className="text-sm font-semibold text-slate-900">{keyResult.name}</p>
+                              <p className="text-sm font-semibold text-slate-900">
+                                {keyResult.name}
+                              </p>
                             </td>
-                            <td className="px-4 py-4 text-sm text-slate-700">{keyResult.goalName}</td>
+                            <td className="px-4 py-4 text-sm text-slate-700">
+                              {keyResult.goalName}
+                            </td>
                             <td className="px-4 py-4 text-sm text-slate-500">{keyResult.metric}</td>
                             <td className="px-4 py-4 text-sm text-slate-600">
                               {formatTimelineRangeVi(keyResult.startDate, keyResult.endDate, {
                                 fallback: "KR chưa có mốc thời gian",
                               })}
                             </td>
-                            <td className="px-4 py-4 text-sm text-slate-700">{keyResult.taskCount}</td>
+                            <td className="px-4 py-4 text-sm text-slate-700">
+                              {keyResult.taskCount}
+                            </td>
                             <td className="px-4 py-4">
                               {keyResult.goalId !== "no-goal" && keyResult.id !== "no-kr" ? (
                                 <Link
@@ -2629,204 +2613,89 @@ function TasksPageContent() {
                           <th className="px-4 py-3 font-semibold">KR</th>
                           <th className="px-4 py-3 font-semibold">Mục tiêu</th>
                           <th className="px-4 py-3 font-semibold">Người phụ trách</th>
-                          <th className="px-4 py-3 font-semibold">Trạng thái</th>
+                          <th className="px-4 py-3 font-semibold">Độ ưu tiên</th>
                           <th className="px-4 py-3 font-semibold">Tiến độ</th>
-                          <th className="px-4 py-3 font-semibold">Trọng số</th>
                           <th className="px-4 py-3 font-semibold">Thời gian thực thi</th>
                           <th className="px-4 py-3 font-semibold">Thao tác</th>
                         </tr>
                       </thead>
                       <tbody>
                         {filteredTasks.map((task) => {
-                          const quickEditing = editingTaskId === task.id;
                           const alignmentWarning = getTaskTimelineAlignmentWarning(task);
-                          const quickEditAlignmentWarning =
-                            quickEditing
-                              ? getTimelineOutsideParentWarning(
-                                  quickEditState.startDate || null,
-                                  quickEditState.endDate || null,
-                                  task.keyResult?.start_date ?? null,
-                                  task.keyResult?.end_date ?? null,
-                                  {
-                                    subjectLabel: "Thời gian công việc",
-                                    parentLabel: "KR",
-                                  },
-                                )
-                              : alignmentWarning;
                           return (
-                            <Fragment key={task.id}>
-                              <tr className="border-b border-slate-100 align-top">
-                                <td className="px-5 py-4">
-                                  <Link
-                                    href={`/tasks/${task.id}`}
-                                    className="text-sm font-semibold text-slate-900 hover:text-blue-700"
-                                  >
-                                    {task.name}
-                                  </Link>
-                                  <p className="mt-1 text-xs text-slate-500">
-                                    {task.type?.toUpperCase() ?? "KPI"} · {task.progress}%
-                                    {task.isRecurring ? " · Lặp lại" : ""}
+                            <tr key={task.id} className="border-b border-slate-100 align-top">
+                              <td className="px-5 py-4">
+                                <Link
+                                  href={`/tasks/${task.id}`}
+                                  className="text-sm font-semibold text-slate-900 hover:text-blue-700"
+                                >
+                                  {task.name}
+                                </Link>
+                                <p className="mt-1 text-xs text-slate-500">
+                                  {task.type?.toUpperCase() ?? "KPI"} · {task.progress}%
+                                  {task.isRecurring ? " · Lặp lại" : ""}
+                                </p>
+                              </td>
+                              <td className="px-4 py-4">
+                                <p className="text-sm font-semibold text-slate-900">
+                                  {task.keyResultName}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-500">
+                                  {task.keyResultMetric}
+                                </p>
+                              </td>
+                              <td className="px-4 py-4">
+                                <p className="text-sm text-slate-700">{task.goalName}</p>
+                              </td>
+                              <td className="px-4 py-4">
+                                <p className="text-sm text-slate-700">{task.assigneeName}</p>
+                              </td>
+                              <td className="px-4 py-4">
+                                <span
+                                  className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getTaskPriorityBadgeClassName(task.priority)}`}
+                                >
+                                  {getTaskPriorityLabel(task.priority)}
+                                </span>
+                              </td>
+                              <td className="px-4 py-4">
+                                <div className="w-[140px]">
+                                  <ProgressBar value={task.progress} />
+                                  <p className="mt-2 text-xs text-slate-500">{task.progress}%</p>
+                                  <p className="mt-1 text-xs font-medium text-slate-600">
+                                    {formatTaskPointValue(getTaskEarnedPoints(task))} /{" "}
+                                    {formatTaskPointValue(getTaskPriorityScore(task.priority))} điểm
                                   </p>
-                                </td>
-                                <td className="px-4 py-4">
-                                  <p className="text-sm font-semibold text-slate-900">{task.keyResultName}</p>
-                                  <p className="mt-1 text-xs text-slate-500">{task.keyResultMetric}</p>
-                                </td>
-                                <td className="px-4 py-4">
-                                  <p className="text-sm text-slate-700">{task.goalName}</p>
-                                </td>
-                                <td className="px-4 py-4">
-                                  <p className="text-sm text-slate-700">{task.assigneeName}</p>
-                                </td>
-                                <td className="px-4 py-4">
-                                  <StatusBadge status={task.status} />
-                                </td>
-                                <td className="px-4 py-4">
-                                  <div className="w-[140px]">
-                                    <ProgressBar value={task.progress} />
-                                    <p className="mt-2 text-xs text-slate-500">{task.progress}%</p>
-                                  </div>
-                                </td>
-                                <td className="px-4 py-4 text-sm font-semibold text-slate-700">
-                                  {Math.round(task.weight)}
-                                </td>
-                                <td className="px-4 py-4 text-sm text-slate-600">
-                                  <p>
-                                    {formatTimelineRangeVi(task.startDate, task.endDate, {
-                                      fallback: "Công việc chưa có mốc thời gian",
-                                    })}
-                                  </p>
-                                  <p className="mt-1 text-xs text-slate-400">
-                                    Khung thời gian của KR:{" "}
-                                    {formatTimelineRangeVi(task.keyResult?.start_date ?? null, task.keyResult?.end_date ?? null, {
+                                </div>
+                              </td>
+                              <td className="px-4 py-4 text-sm text-slate-600">
+                                <p>
+                                  {formatTimelineRangeVi(task.startDate, task.endDate, {
+                                    fallback: "Công việc chưa có mốc thời gian",
+                                  })}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-400">
+                                  Khung thời gian của KR:{" "}
+                                  {formatTimelineRangeVi(
+                                    task.keyResult?.start_date ?? null,
+                                    task.keyResult?.end_date ?? null,
+                                    {
                                       fallback: "KR chưa có mốc thời gian",
-                                    })}
-                                  </p>
-                                  {alignmentWarning ? (
-                                    <p className="mt-1 text-xs text-amber-600">{alignmentWarning}</p>
-                                  ) : null}
-                                </td>
-                                <td className="px-4 py-4">
-                                  <div className="flex items-center gap-2">
-                                    <Link
-                                      href={`/tasks/${task.id}`}
-                                      className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                                    >
-                                      Chi tiết
-                                    </Link>
-                                    <button
-                                      type="button"
-                                      onClick={() => openQuickEdit(task)}
-                                      className="inline-flex h-8 items-center rounded-lg bg-blue-50 px-3 text-xs font-semibold text-blue-700 hover:bg-blue-100"
-                                    >
-                                      Sửa nhanh
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                              {quickEditing ? (
-                                <tr className="border-b border-slate-100 bg-slate-50">
-                                  <td colSpan={9} className="px-5 py-4">
-                                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[120px_120px_180px_180px_minmax(0,1fr)]">
-                                      <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
-                                        <span>Tiến độ</span>
-                                        <input
-                                          type="number"
-                                          min={0}
-                                          max={100}
-                                          value={quickEditState.progress}
-                                          disabled={task.type === "okr"}
-                                          onChange={(event) =>
-                                            setQuickEditState((prev) => ({
-                                              ...prev,
-                                              progress: event.target.value,
-                                            }))
-                                          }
-                                          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
-                                        />
-                                      </label>
-                                      <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
-                                        <span>Trọng số (%)</span>
-                                        <div className="relative">
-                                          <input
-                                            type="number"
-                                            min={1}
-                                            step="1"
-                                            value={quickEditState.weight}
-                                            onChange={(event) =>
-                                              setQuickEditState((prev) => ({
-                                                ...prev,
-                                                weight: event.target.value,
-                                              }))
-                                            }
-                                            className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 pr-8 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                                          />
-                                          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">
-                                            %
-                                          </span>
-                                        </div>
-                                      </label>
-                                      <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
-                                        <span>Ngày bắt đầu</span>
-                                        <input
-                                          type="date"
-                                          value={quickEditState.startDate}
-                                          onChange={(event) =>
-                                            setQuickEditState((prev) => ({
-                                              ...prev,
-                                              startDate: event.target.value,
-                                            }))
-                                          }
-                                          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                                        />
-                                      </label>
-                                      <label className="min-w-0 space-y-1 text-xs font-medium text-slate-600">
-                                        <span>Ngày kết thúc</span>
-                                        <input
-                                          type="date"
-                                          min={quickEditState.startDate || undefined}
-                                          value={quickEditState.endDate}
-                                          onChange={(event) =>
-                                            setQuickEditState((prev) => ({
-                                              ...prev,
-                                              endDate: event.target.value,
-                                            }))
-                                          }
-                                          className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                                        />
-                                      </label>
-                                      <div className="flex items-end justify-end gap-2 md:col-span-2 xl:col-span-1">
-                                        <button
-                                          type="button"
-                                          onClick={() => setEditingTaskId(null)}
-                                          className="inline-flex h-9 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                                        >
-                                          Hủy
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => void handleSaveQuickEdit(task)}
-                                          disabled={savingTaskId === task.id}
-                                          className="inline-flex h-9 items-center rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                                        >
-                                          {savingTaskId === task.id ? "Đang lưu..." : "Lưu nhanh"}
-                                        </button>
-                                      </div>
-                                    </div>
-                                    <p className="mt-2 text-[11px] text-slate-500">
-                                      {task.type === "okr"
-                                        ? "Task OKR lấy progress theo trạng thái hiện tại. Quick edit ở đây chỉ cập nhật trọng số và timeline."
-                                        : task.keyResultId
-                                          ? "Giá trị ban đầu được autofill từ KR nếu task chưa có ngày. Khi lưu, thay đổi chỉ áp dụng cho công việc này."
-                                          : "Task này chưa gắn Key Result. Bạn vẫn có thể đặt mốc thời gian riêng cho công việc."}
-                                    </p>
-                                    {quickEditAlignmentWarning ? (
-                                      <p className="mt-1 text-[11px] text-amber-600">{quickEditAlignmentWarning}</p>
-                                    ) : null}
-                                  </td>
-                                </tr>
-                              ) : null}
-                            </Fragment>
+                                    },
+                                  )}
+                                </p>
+                                {alignmentWarning ? (
+                                  <p className="mt-1 text-xs text-amber-600">{alignmentWarning}</p>
+                                ) : null}
+                              </td>
+                              <td className="px-4 py-4">
+                                <Link
+                                  href={`/tasks/${task.id}`}
+                                  className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                >
+                                  Chi tiết
+                                </Link>
+                              </td>
+                            </tr>
                           );
                         })}
                       </tbody>
@@ -2837,20 +2706,23 @@ function TasksPageContent() {
             ) : null}
 
             {!isLoadingTasks && viewMode === "gantt" && currentNoTimelineCount > 0 ? (
-              <section className="rounded-2xl border border-slate-200 bg-white p-5">
-                <div className="mb-4 flex items-center justify-between gap-3">
+              <section className="rounded-2xl border-2 border-amber-200 bg-gradient-to-br from-amber-50 to-yellow-50/50 p-5">
+                <div className="mb-5 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
                   <div>
-                    <h2 className="text-base font-semibold text-slate-900">{currentModeMeta.missingTitle}</h2>
-                    <p className="mt-1 text-sm text-slate-500">{currentModeMeta.missingDescription}</p>
+                    <h2 className="flex items-center gap-2 text-lg font-bold text-amber-900">
+                      <span>⚠️</span>
+                      {currentModeMeta.missingTitle}
+                    </h2>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
-                      {currentNoTimelineCount} {currentModeMeta.pluralLabel}
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="inline-flex h-8 items-center gap-2 rounded-lg bg-amber-100/80 px-3 font-semibold text-amber-700">
+                      <span className="text-sm">{currentNoTimelineCount}</span>
+                      <span className="text-xs">{currentModeMeta.pluralLabel}</span>
                     </span>
                     <button
                       type="button"
                       onClick={() => setShowNoTimelineSection((prev) => !prev)}
-                      className="inline-flex h-9 items-center rounded-xl border border-slate-200 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      className="inline-flex h-8 items-center rounded-lg border border-amber-300 bg-white px-3 text-sm font-semibold text-amber-700 hover:bg-amber-50 transition"
                     >
                       {showNoTimelineSection ? "Thu gọn" : "Mở rộng"}
                     </button>
@@ -2859,116 +2731,138 @@ function TasksPageContent() {
 
                 {showNoTimelineSection ? (
                   <>
-                    <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                      Thêm đầy đủ ngày bắt đầu và ngày kết thúc để mục tiêu, KR hoặc công việc xuất hiện trong timeline và Gantt.
-                    </div>
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                      {structureMode === "goal"
-                        ? noTimelineGoalItems.map((goal) => (
-                          <div key={goal.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <p className="text-sm font-semibold text-slate-900">{goal.name}</p>
-                                <p className="mt-1 text-xs text-slate-500">
-                                  {goal.keyResultCount} KR · {goal.taskCount} công việc
-                                </p>
-                              </div>
-                            </div>
-                            <p className="mt-3 text-xs text-slate-500">
-                              {getTimelineMissingReason(
-                                goal.startDate,
-                                goal.endDate,
-                                "Mục tiêu chưa có mốc thời gian",
-                                "Mốc thời gian mục tiêu không hợp lệ",
-                              )}
-                            </p>
-                          </div>
-                        ))
-                      : structureMode === "key_result"
-                        ? noTimelineKeyResultItems.map((keyResult) => (
-                            <div key={keyResult.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div>
+                      {structureMode === "goal" ? (
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          {noTimelineGoalItems.map((goal) => (
+                            <div
+                              key={goal.id}
+                              className="rounded-xl border border-amber-200 bg-white p-4 hover:shadow-sm transition"
+                            >
                               <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <p className="text-sm font-semibold text-slate-900">{keyResult.name}</p>
-                                  <p className="mt-1 text-xs text-slate-500">{keyResult.goalName}</p>
-                                  <p className="mt-1 text-xs font-medium text-slate-600">{keyResult.metric}</p>
+                                <div className="min-w-0 flex-1">
+                                  <p className="font-bold text-slate-900">{goal.name}</p>
+                                  <p className="mt-1 text-sm text-slate-600">
+                                    {goal.keyResultCount} KR · {goal.taskCount} công việc
+                                  </p>
                                 </div>
                               </div>
-                              <p className="mt-3 text-xs text-slate-500">
+                              <p className="mt-3 text-xs text-amber-700 font-medium">
                                 {getTimelineMissingReason(
-                                  keyResult.startDate,
-                                  keyResult.endDate,
-                                  "KR chưa có mốc thời gian",
-                                  "Mốc thời gian KR không hợp lệ",
+                                  goal.startDate,
+                                  goal.endDate,
+                                  "Chưa có ngày bắt đầu hoặc kết thúc",
+                                  "Ngày bắt đầu/kết thúc không hợp lệ",
                                 )}
                               </p>
                             </div>
-                          ))
-                        : noTimelineTasks.map((task) => (
-                            <div key={task.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                          ))}
+                        </div>
+                      ) : structureMode === "key_result" ? (
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          {noTimelineKeyResultItems.map((keyResult) => (
+                            <div
+                              key={keyResult.id}
+                              className="rounded-xl border border-amber-200 bg-white p-4 hover:shadow-sm transition"
+                            >
                               <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <Link
-                                    href={`/tasks/${task.id}`}
-                                    className="text-sm font-semibold text-slate-900 hover:text-blue-700"
-                                  >
-                                    {task.name}
-                                  </Link>
-                                  <p className="mt-1 text-xs text-slate-500">{task.goalName}</p>
-                                  <p className="mt-1 text-xs font-medium text-slate-600">{task.keyResultName}</p>
+                                <div className="min-w-0 flex-1">
+                                  <p className="font-bold text-slate-900">{keyResult.name}</p>
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    {keyResult.goalName}
+                                  </p>
+                                  <p className="mt-1 text-xs text-slate-600 font-medium">
+                                    {keyResult.metric}
+                                  </p>
                                 </div>
-                                <StatusBadge status={task.status} />
                               </div>
-                              <div className="mt-3">
-                                <ProgressBar value={task.progress} />
-                                <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-                                  <span>{task.progress}%</span>
-                                  <span>{task.assigneeName}</span>
-                                </div>
-                                <p className="mt-2 text-xs text-slate-500">{getTaskTimelineIssue(task)}</p>
-                                {!task.assigneeId && canCreateTask ? (
-                                  <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
-                                    <p className="text-xs font-semibold text-slate-700">Gán người phụ trách</p>
-                                    <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                                      <Select
-                                        value={assigneeDraftByTaskId[task.id] ?? "unassigned"}
-                                        onValueChange={(value) =>
-                                          setAssigneeDraftByTaskId((prev) => ({
-                                            ...prev,
-                                            [task.id]: value,
-                                          }))
-                                        }
-                                      >
-                                        <SelectTrigger className="h-9 flex-1 bg-white">
-                                          <SelectValue placeholder="Chọn người phụ trách" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="unassigned">Chọn người phụ trách</SelectItem>
-                                          {assigneeFilters.map((assignee) => (
-                                            <SelectItem key={assignee.id} value={assignee.id}>
-                                              {assignee.name}
-                                            </SelectItem>
-                                          ))}
-                                        </SelectContent>
-                                      </Select>
-                                      <button
-                                        type="button"
-                                        onClick={() => void handleAssignTaskAssignee(task)}
-                                        disabled={
-                                          savingAssigneeTaskId === task.id ||
-                                          !assigneeDraftByTaskId[task.id] ||
-                                          assigneeDraftByTaskId[task.id] === "unassigned"
-                                        }
-                                        className="inline-flex h-9 items-center justify-center rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                                      >
-                                        {savingAssigneeTaskId === task.id ? "Đang gán..." : "Gán"}
-                                      </button>
-                                    </div>
-                                  </div>
-                                ) : null}
-                              </div>
+                              <p className="mt-3 text-xs text-amber-700 font-medium">
+                                {getTimelineMissingReason(
+                                  keyResult.startDate,
+                                  keyResult.endDate,
+                                  "Chưa có ngày bắt đầu hoặc kết thúc",
+                                  "Ngày bắt đầu/kết thúc không hợp lệ",
+                                )}
+                              </p>
                             </div>
                           ))}
+                        </div>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full min-w-[1200px] text-left text-sm">
+                            <thead>
+                              <tr className="border-b border-amber-200 text-[11px] uppercase tracking-[0.08em] text-amber-700">
+                                <th className="px-4 py-3 font-bold">Công việc</th>
+                                <th className="px-4 py-3 font-bold">Mục tiêu</th>
+                                <th className="px-4 py-3 font-bold">KR</th>
+                                <th className="px-4 py-3 font-bold">Người phụ trách</th>
+                                <th className="px-4 py-3 font-bold">Độ ưu tiên</th>
+                                <th className="px-4 py-3 font-bold">Tiến độ</th>
+                                <th className="px-4 py-3 font-bold">Thao tác</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {noTimelineTasks.map((task) => (
+                                <tr
+                                  key={task.id}
+                                  className="border-b border-amber-100 hover:bg-amber-50/50 transition align-top"
+                                >
+                                  <td className="px-4 py-3">
+                                    <Link
+                                      href={`/tasks/${task.id}`}
+                                      className="font-semibold text-slate-900 hover:text-blue-700"
+                                    >
+                                      {task.name}
+                                    </Link>
+                                    <p className="mt-1 text-xs text-slate-500">
+                                      {task.type?.toUpperCase() ?? "KPI"}
+                                      {task.isRecurring ? " · 🔁" : ""}
+                                    </p>
+                                  </td>
+                                  <td className="px-4 py-3 text-slate-700">{task.goalName}</td>
+                                  <td className="px-4 py-3">
+                                    <p className="font-medium text-slate-900">
+                                      {task.keyResultName}
+                                    </p>
+                                    <p className="mt-1 text-xs text-slate-500">
+                                      {task.keyResultMetric}
+                                    </p>
+                                  </td>
+                                  <td className="px-4 py-3 text-slate-700">{task.assigneeName}</td>
+                                  <td className="px-4 py-3">
+                                    <span
+                                      className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getTaskPriorityBadgeClassName(task.priority)}`}
+                                    >
+                                      {getTaskPriorityLabel(task.priority)}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="w-[140px]">
+                                      <ProgressBar value={task.progress} />
+                                      <p className="mt-2 text-xs text-slate-500">
+                                        {task.progress}%
+                                      </p>
+                                      <p className="mt-1 text-xs font-medium text-slate-600">
+                                        {formatTaskPointValue(getTaskEarnedPoints(task))} /{" "}
+                                        {formatTaskPointValue(getTaskPriorityScore(task.priority))}{" "}
+                                        điểm
+                                      </p>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <Link
+                                      href={`/tasks/${task.id}`}
+                                      className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition"
+                                    >
+                                      Chi tiết
+                                    </Link>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
                     </div>
                   </>
                 ) : null}

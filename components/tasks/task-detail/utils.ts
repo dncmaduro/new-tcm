@@ -1,4 +1,10 @@
+import { normalizeKeyResultUnitForType } from "@/lib/constants/key-results";
 import {
+  getTaskStatusByProgress,
+  getTaskPriorityBadgeClassName,
+  getTaskPriorityLabel,
+  getTaskPriorityScore,
+  normalizeTaskPriority,
   TASK_STATUSES,
   TASK_TYPES,
   normalizeTaskStatus,
@@ -84,18 +90,46 @@ export const formatDateTime = (value: string | null) => {
   }).format(date);
 };
 
-export const buildTaskFormState = (task: TaskRow): TaskFormState => ({
-  name: task.name,
-  description: task.description ?? "",
-  note: task.note ?? "",
-  isRecurring: Boolean(task.is_recurring),
-  hypothesis: task.hypothesis ?? "",
-  result: task.result ?? "",
-  type: getTaskTypeValue(task.type),
-  status: normalizeTaskStatus(task.status),
-  progress: getComputedTaskProgress(task),
-  weight: typeof task.weight === "number" ? task.weight : Number(task.weight ?? 1),
-});
+export const buildTaskFormState = (task: TaskRow): TaskFormState => {
+  const progress = getComputedTaskProgress(task);
+
+  return {
+    name: task.name,
+    description: task.description ?? "",
+    note: task.note ?? "",
+    isRecurring: Boolean(task.is_recurring),
+    hypothesis: task.hypothesis ?? "",
+    result: task.result ?? "",
+    type: getTaskTypeValue(task.type),
+    priority: normalizeTaskPriority(task.priority),
+    status: getTaskStatusByProgress(progress),
+    unit: normalizeKeyResultUnitForType(task.type, task.unit),
+    target:
+      getTaskTypeValue(task.type) === "okr"
+        ? "100"
+        : Number.isFinite(task.target)
+          ? String(Number(task.target))
+          : "",
+    progress,
+    weight: typeof task.weight === "number" ? task.weight : Number(task.weight ?? 1),
+  };
+};
+
+export const formatTaskPriorityPoints = (value: number) =>
+  new Intl.NumberFormat("vi-VN", {
+    minimumFractionDigits: Number.isInteger(value) ? 0 : 1,
+    maximumFractionDigits: 1,
+  }).format(value);
+
+export const getTaskEarnedPoints = (priority: string | null | undefined, progress: number) =>
+  (getTaskPriorityScore(priority) * clampProgress(progress)) / 100;
+
+export {
+  getTaskPriorityBadgeClassName,
+  getTaskPriorityLabel,
+  getTaskPriorityScore,
+  normalizeTaskPriority,
+};
 
 export const buildTaskTimelineForm = (
   task: TaskRow | null,

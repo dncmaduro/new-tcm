@@ -89,7 +89,6 @@ const toRolePriority = (roleName: string) => {
 export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   const router = useRouter();
   const workspaceAccess = useWorkspaceAccess();
-  const { canManage } = workspaceAccess;
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const managementMenuRef = useRef<HTMLDivElement | null>(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
@@ -129,8 +128,8 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   }, [isCollapsed]);
 
   const visibleSidebarItems = sidebarItems.filter((item) => {
-    if (item.key === "departmentPerformance") {
-      return canManage;
+    if (item.key === "departmentPerformance" || item.key === "departments") {
+      return false;
     }
     return true;
   });

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
+import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { ClearableNumberInput } from "@/components/ui/clearable-number-input";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
@@ -14,9 +15,10 @@ import {
   normalizeGoalTypeValue,
 } from "@/lib/constants/goals";
 import {
+  getAllowedKeyResultUnitsByType,
   KEY_RESULT_UNITS,
   KeyResultUnitValue,
-  formatKeyResultUnit,
+  normalizeKeyResultUnitForType,
 } from "@/lib/constants/key-results";
 import { syncGoalOwners } from "@/lib/goal-owners";
 import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
@@ -178,10 +180,7 @@ const normalizeDepartmentParticipations = (
     if (!row.departmentId || acc.some((item) => item.departmentId === row.departmentId)) {
       return acc;
     }
-    acc.push({
-      ...row,
-      ...normalizeParticipationWeightPair(Number(row.goalWeight)),
-    });
+    acc.push(row);
     return acc;
   }, []);
 
@@ -194,13 +193,11 @@ const normalizeDepartmentParticipations = (
     .map((row) => ({
       ...row,
       role: "participant" as GoalDepartmentRole,
-      ...normalizeParticipationWeightPair(Number(row.goalWeight)),
     }))
     .concat({
       ...withOwner,
       departmentId: ownerDepartmentId,
       role: "owner",
-      ...normalizeParticipationWeightPair(Number(withOwner.goalWeight)),
     });
 };
 
@@ -222,8 +219,8 @@ const getUniqueDepartmentLinks = (goalId: string, rows: DepartmentParticipationF
       goal_id: goalId,
       department_id: item.departmentId,
       role: item.role,
-      goal_weight: normalizeParticipationWeightPair(Number(item.goalWeight)).goalWeight / 100,
-      kr_weight: normalizeParticipationWeightPair(Number(item.goalWeight)).krWeight / 100,
+      goal_weight: DEFAULT_GOAL_WEIGHT / 100,
+      kr_weight: DEFAULT_KR_WEIGHT / 100,
     });
     return acc;
   }, []);
@@ -232,12 +229,17 @@ const sortDepartmentsByName = (rows: DepartmentOption[]) =>
   [...rows].sort((a, b) => a.name.localeCompare(b.name, "vi"));
 
 const findMarketingDepartmentId = (rows: DepartmentOption[]) => {
-  const exactMatch = rows.find((department) => department.name.trim().toLowerCase() === "marketing");
+  const exactMatch = rows.find(
+    (department) => department.name.trim().toLowerCase() === "marketing",
+  );
   if (exactMatch) {
     return exactMatch.id;
   }
 
-  return rows.find((department) => department.name.trim().toLowerCase().includes("marketing"))?.id ?? null;
+  return (
+    rows.find((department) => department.name.trim().toLowerCase().includes("marketing"))?.id ??
+    null
+  );
 };
 
 const buildDepartmentTree = (rows: DepartmentOption[]): DepartmentTreeNode[] => {
@@ -277,6 +279,104 @@ const buildDepartmentTree = (rows: DepartmentOption[]): DepartmentTreeNode[] => 
   return rootDepartments.map((department) => buildNode(department, 0));
 };
 
+const buildDepartmentMap = (rows: DepartmentOption[]) =>
+  rows.reduce<Record<string, DepartmentOption>>((acc, department) => {
+    acc[department.id] = department;
+    return acc;
+  }, {});
+
+const getTopLevelDepartmentId = (
+  departmentId: string | null | undefined,
+  departmentsById: Record<string, DepartmentOption>,
+) => {
+  if (!departmentId) {
+    return null;
+  }
+
+  let currentDepartmentId: string | null = departmentId;
+  const visitedDepartmentIds = new Set<string>();
+
+  while (currentDepartmentId) {
+    if (visitedDepartmentIds.has(currentDepartmentId)) {
+      break;
+    }
+
+    visitedDepartmentIds.add(currentDepartmentId);
+    const currentDepartment: DepartmentOption | undefined = departmentsById[currentDepartmentId];
+
+    if (!currentDepartment) {
+      return departmentId;
+    }
+
+    if (!currentDepartment.parentDepartmentId) {
+      return currentDepartment.id;
+    }
+
+    currentDepartmentId = currentDepartment.parentDepartmentId;
+  }
+
+  return departmentId;
+};
+
+const isDepartmentInBranch = (
+  departmentId: string,
+  rootDepartmentId: string,
+  departmentsById: Record<string, DepartmentOption>,
+  options?: { includeRoot?: boolean },
+) => {
+  let currentDepartmentId: string | null = departmentId;
+  const visitedDepartmentIds = new Set<string>();
+
+  while (currentDepartmentId) {
+    if (visitedDepartmentIds.has(currentDepartmentId)) {
+      break;
+    }
+
+    visitedDepartmentIds.add(currentDepartmentId);
+    if (currentDepartmentId === rootDepartmentId) {
+      return (options?.includeRoot ?? false) ? true : departmentId !== rootDepartmentId;
+    }
+
+    currentDepartmentId = departmentsById[currentDepartmentId]?.parentDepartmentId ?? null;
+  }
+
+  return false;
+};
+
+const resolvePrimaryDepartmentId = ({
+  departments,
+  managedRootDepartmentIds,
+  preferredDepartmentId,
+}: {
+  departments: DepartmentOption[];
+  managedRootDepartmentIds: string[];
+  preferredDepartmentId?: string | null;
+}) => {
+  const departmentsById = buildDepartmentMap(departments);
+  const availableRootDepartments =
+    managedRootDepartmentIds.length > 0
+      ? departments.filter((department) => managedRootDepartmentIds.includes(department.id))
+      : departments.filter((department) => !department.parentDepartmentId);
+
+  const normalizedPreferredDepartmentId = getTopLevelDepartmentId(
+    preferredDepartmentId,
+    departmentsById,
+  );
+
+  if (
+    normalizedPreferredDepartmentId &&
+    availableRootDepartments.some((department) => department.id === normalizedPreferredDepartmentId)
+  ) {
+    return normalizedPreferredDepartmentId;
+  }
+
+  return (
+    findMarketingDepartmentId(availableRootDepartments) ??
+    sortDepartmentsByName(availableRootDepartments)[0]?.id ??
+    ""
+  );
+};
+
 function DepartmentTreeItem({
   node,
   collapsedDepartmentIds,
@@ -307,19 +407,6 @@ function DepartmentTreeItem({
         }`}
         style={{ marginLeft: `${node.depth * 18}px` }}
       >
-        {hasChildren ? (
-          <button
-            type="button"
-            aria-label={isCollapsed ? `Mở nhánh ${node.name}` : `Thu nhánh ${node.name}`}
-            onClick={() => onToggleBranch(node.id)}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-500 hover:border-slate-300 hover:text-slate-700"
-          >
-            {isCollapsed ? "+" : "-"}
-          </button>
-        ) : (
-          <span className="inline-flex h-8 w-8 shrink-0" />
-        )}
-
         <button
           type="button"
           onClick={() => {
@@ -389,7 +476,7 @@ function NewGoalPageContent() {
 
   const [form, setForm] = useState<GoalFormState>(defaultForm);
   const [allDepartments, setAllDepartments] = useState<DepartmentOption[]>([]);
-  const [profileOptions, setProfileOptions] = useState<ProfileOption[]>([]);
+  const [, setProfileOptions] = useState<ProfileOption[]>([]);
   const [departmentParticipations, setDepartmentParticipations] = useState<
     DepartmentParticipationFormState[]
   >([]);
@@ -427,6 +514,10 @@ function NewGoalPageContent() {
       canCreateGoal: workspaceAccess.canManage,
     }),
     [workspaceAccess],
+  );
+  const managedRootDepartmentIds = useMemo(
+    () => rootDepartments.map((department) => department.id),
+    [rootDepartments],
   );
 
   useEffect(() => {
@@ -521,18 +612,25 @@ function NewGoalPageContent() {
                 },
               ];
 
-        const nextQuarter = typeof goalData.quarter === "number" ? goalData.quarter : initialQuarter;
+        const nextQuarter =
+          typeof goalData.quarter === "number" ? goalData.quarter : initialQuarter;
         const nextYear = typeof goalData.year === "number" ? goalData.year : now.getFullYear();
         const normalizedGoalType = normalizeGoalTypeValue(
           goalData.type ? String(goalData.type) : GOAL_TYPES[0].value,
         );
         const nextDateRange = getQuarterDateRange(nextYear, nextQuarter);
+        const primaryDepartmentId = resolvePrimaryDepartmentId({
+          departments: departmentOptions,
+          managedRootDepartmentIds,
+          preferredDepartmentId: goalData.department_id ? String(goalData.department_id) : null,
+        });
+        const departmentsById = buildDepartmentMap(departmentOptions);
 
         setForm({
           name: String(goalData.name ?? ""),
           description: String(goalData.description ?? ""),
           type: normalizedGoalType,
-          departmentId: goalData.department_id ? String(goalData.department_id) : "",
+          departmentId: primaryDepartmentId,
           ownerIds:
             !goalOwnersError && (goalOwnerRows?.length ?? 0) > 0
               ? [
@@ -550,40 +648,63 @@ function NewGoalPageContent() {
           startDate: nextDateRange.startDate,
           endDate: nextDateRange.endDate,
           target:
-            normalizedGoalType === "okr" || goalData.target === null || goalData.target === undefined
-              ? ""
+            normalizedGoalType === "okr"
+              ? "100"
+              : goalData.target === null || goalData.target === undefined
+                ? ""
               : String(goalData.target),
-          unit:
-            KEY_RESULT_UNITS.find((unit) => unit.value === goalData.unit)?.value ??
-            KEY_RESULT_UNITS[0].value,
+          unit: normalizeKeyResultUnitForType(
+            normalizedGoalType,
+            goalData.unit ? String(goalData.unit) : null,
+          ),
         });
         setDepartmentParticipations(
           normalizeDepartmentParticipations(
             goalDepartmentRows
               .filter((item) => item.department_id)
+              .filter((item) =>
+                isDepartmentInBranch(
+                  String(item.department_id),
+                  primaryDepartmentId,
+                  departmentsById,
+                  { includeRoot: true },
+                ),
+              )
               .map((item) => ({
-                departmentId: String(item.department_id),
-                role: (item.role === "owner" ? "owner" : "participant") as GoalDepartmentRole,
-                ...normalizeParticipationWeightPair(
-                  typeof item.goal_weight === "number"
-                    ? Number(item.goal_weight) * 100
-                    : DEFAULT_GOAL_WEIGHT,
+                ...createDepartmentParticipation(
+                  String(item.department_id),
+                  (item.role === "owner" ? "owner" : "participant") as GoalDepartmentRole,
                 ),
               })),
-            goalData.department_id ? String(goalData.department_id) : "",
+            primaryDepartmentId,
           ),
         );
         return;
       }
 
-      const nextDepartmentId =
-        findMarketingDepartmentId(departmentOptions) ??
-        (queryDepartmentId
-          ? departmentOptions.find((department) => department.id === queryDepartmentId)?.id ?? null
-          : null) ??
-        departmentOptions[0]?.id ??
-        "";
-      resetDepartmentParticipationState(nextDepartmentId);
+      const nextDepartmentId = resolvePrimaryDepartmentId({
+        departments: departmentOptions,
+        managedRootDepartmentIds,
+        preferredDepartmentId: queryDepartmentId,
+      });
+      const nextDepartmentsById = buildDepartmentMap(departmentOptions);
+      const initialParticipations =
+        queryDepartmentId &&
+        nextDepartmentId &&
+        queryDepartmentId !== nextDepartmentId &&
+        isDepartmentInBranch(queryDepartmentId, nextDepartmentId, nextDepartmentsById)
+          ? normalizeDepartmentParticipations(
+              [
+                createDepartmentParticipation(nextDepartmentId, "owner"),
+                createDepartmentParticipation(queryDepartmentId, "participant"),
+              ],
+              nextDepartmentId,
+            )
+          : nextDepartmentId
+            ? [createDepartmentParticipation(nextDepartmentId, "owner")]
+            : [];
+      setCollapsedDepartmentIds({});
+      setDepartmentParticipations(initialParticipations);
       setForm((prev) => ({
         ...prev,
         departmentId: nextDepartmentId,
@@ -607,12 +728,26 @@ function NewGoalPageContent() {
     canCreateGoal,
     editGoalId,
     isCheckingPermission,
+    managedRootDepartmentIds,
     queryDepartmentId,
     rootDepartments,
     workspaceAccess.profileId,
   ]);
 
-  const departmentTree = useMemo(() => buildDepartmentTree(allDepartments), [allDepartments]);
+  const departmentsById = useMemo(() => buildDepartmentMap(allDepartments), [allDepartments]);
+  const participantDepartments = useMemo(
+    () =>
+      form.departmentId
+        ? allDepartments.filter((department) =>
+            isDepartmentInBranch(department.id, form.departmentId, departmentsById),
+          )
+        : [],
+    [allDepartments, departmentsById, form.departmentId],
+  );
+  const departmentTree = useMemo(
+    () => buildDepartmentTree(participantDepartments),
+    [participantDepartments],
+  );
 
   const selectedDepartmentIds = useMemo(() => {
     const next = new Set(departmentParticipations.map((item) => item.departmentId));
@@ -628,13 +763,6 @@ function NewGoalPageContent() {
   );
   const isKpiGoal = form.type === "kpi";
   const isOkrGoal = form.type === "okr";
-
-  const resetDepartmentParticipationState = (primaryDepartmentId: string) => {
-    setCollapsedDepartmentIds({});
-    setDepartmentParticipations(
-      primaryDepartmentId ? [createDepartmentParticipation(primaryDepartmentId, "owner")] : [],
-    );
-  };
 
   useEffect(() => {
     setCollapsedDepartmentIds((prev) => {
@@ -680,22 +808,28 @@ function NewGoalPageContent() {
     });
   }, [form.quarter, form.year]);
 
+  useEffect(() => {
+    setForm((prev) => {
+      const nextUnit = normalizeKeyResultUnitForType(prev.type, prev.unit);
+      const nextTarget = prev.type === "okr" ? "100" : prev.target;
+
+      if (prev.unit === nextUnit && prev.target === nextTarget) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        unit: nextUnit,
+        target: nextTarget,
+      };
+    });
+  }, [form.type]);
+
   const isFormValid = useMemo(() => {
-    const hasValidGoalTarget =
-      !form.target.trim() ||
-      (Number.isFinite(Number(form.target)) &&
-        Number(form.target) > 0);
+    const hasValidGoalTarget = Number.isFinite(Number(form.target)) && Number(form.target) > 0;
     const hasValidDepartmentParticipations =
       departmentParticipations.length > 0 &&
-      departmentParticipations.every((item) => {
-        const goalWeight = Number(item.goalWeight);
-        return (
-          item.departmentId.trim().length > 0 &&
-          Number.isFinite(goalWeight) &&
-          goalWeight >= 0 &&
-          goalWeight <= 100
-        );
-      });
+      departmentParticipations.every((item) => item.departmentId.trim().length > 0);
 
     return (
       form.name.trim().length > 0 &&
@@ -711,7 +845,6 @@ function NewGoalPageContent() {
       form.endDate.trim().length > 0 &&
       new Date(form.startDate).getTime() <= new Date(form.endDate).getTime() &&
       hasValidGoalTarget &&
-      (form.type === "okr" || Number(form.target) > 0) &&
       hasValidDepartmentParticipations
     );
   }, [departmentParticipations, form]);
@@ -722,7 +855,10 @@ function NewGoalPageContent() {
         return prev;
       }
 
-      if (departmentId === form.departmentId) {
+      if (
+        departmentId === form.departmentId ||
+        !isDepartmentInBranch(departmentId, form.departmentId, departmentsById)
+      ) {
         return normalizeDepartmentParticipations(prev, form.departmentId);
       }
 
@@ -744,15 +880,6 @@ function NewGoalPageContent() {
     }));
   };
 
-  const toggleOwnerSelection = (profileId: string) => {
-    setForm((prev) => ({
-      ...prev,
-      ownerIds: prev.ownerIds.includes(profileId)
-        ? prev.ownerIds.filter((ownerId) => ownerId !== profileId)
-        : [...prev.ownerIds, profileId],
-    }));
-  };
-
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -766,13 +893,13 @@ function NewGoalPageContent() {
       return;
     }
 
-    const safeGoalTarget = form.target.trim().length > 0 ? Number(form.target) : null;
-    if (form.type === "kpi" && (safeGoalTarget === null || !Number.isFinite(safeGoalTarget) || safeGoalTarget <= 0)) {
-      setSubmitError("Goal kiểu KPI phải có target lớn hơn 0.");
+    const safeGoalTarget = Number(form.target);
+    if (!Number.isFinite(safeGoalTarget) || safeGoalTarget <= 0) {
+      setSubmitError("Chỉ tiêu của goal phải lớn hơn 0.");
       return;
     }
-    if (safeGoalTarget !== null && (!Number.isFinite(safeGoalTarget) || safeGoalTarget < 0)) {
-      setSubmitError("Target của goal phải là số hợp lệ.");
+    if (form.type === "okr" && safeGoalTarget !== 100) {
+      setSubmitError("Goal kiểu OKR luôn có chỉ tiêu cố định là 100%.");
       return;
     }
 
@@ -780,20 +907,10 @@ function NewGoalPageContent() {
       departmentParticipations,
       form.departmentId,
     );
-    const invalidParticipation = normalizedParticipations.find((item) => {
-      const goalWeight = Number(item.goalWeight);
-      return (
-        !item.departmentId ||
-        !Number.isFinite(goalWeight) ||
-        goalWeight < 0 ||
-        goalWeight > 100
-      );
-    });
+    const invalidParticipation = normalizedParticipations.find((item) => !item.departmentId);
 
     if (invalidParticipation) {
-      setSubmitError(
-        "Mỗi phòng ban tham gia phải có trọng số mục tiêu hợp lệ từ 0 đến 100%.",
-      );
+      setSubmitError("Mỗi phòng ban tham gia phải có phòng ban hợp lệ.");
       return;
     }
 
@@ -812,8 +929,8 @@ function NewGoalPageContent() {
         note: form.note.trim() || null,
         start_date: form.startDate || null,
         end_date: form.endDate || null,
-        target: form.type === "okr" ? null : safeGoalTarget,
-        unit: form.type === "okr" ? null : form.unit || null,
+        target: safeGoalTarget,
+        unit: form.unit || null,
       };
 
       let savedGoalId = editGoalId ? String(editGoalId) : null;
@@ -1029,19 +1146,13 @@ function NewGoalPageContent() {
         <WorkspaceSidebar active="goals" />
 
         <div className="flex h-screen w-full flex-1 flex-col overflow-hidden lg:pl-[var(--workspace-sidebar-width)]">
-          <header className="border-b border-slate-200 bg-[#f3f5fa] px-4 py-4 lg:px-7">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm text-slate-500">
-                <Link href="/goals" className="hover:text-slate-700">
-                  Mục tiêu
-                </Link>
-                <span className="px-2">›</span>
-                <span className="font-semibold text-slate-700">
-                  {isEditMode ? "Chỉnh sửa mục tiêu" : "Tạo mục tiêu mới"}
-                </span>
-              </div>
-            </div>
-          </header>
+          <WorkspacePageHeader
+            title={isEditMode ? "Chỉnh sửa mục tiêu" : "Tạo mục tiêu mới"}
+            items={[
+              { label: "Mục tiêu", href: "/goals" },
+              { label: isEditMode ? "Chỉnh sửa mục tiêu" : "Tạo mục tiêu mới" },
+            ]}
+          />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-7">
             {showPermissionDebug && permissionDebug ? (
@@ -1100,7 +1211,7 @@ function NewGoalPageContent() {
                     />
                   </div>
 
-                  <div className="grid gap-4 md:grid-cols-2">
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                     <div className="space-y-1.5">
                       <label className="text-sm font-semibold text-slate-700">Loại (type)</label>
                       <Select
@@ -1109,7 +1220,6 @@ function NewGoalPageContent() {
                           setForm((prev) => ({
                             ...prev,
                             type: value,
-                            target: value === "okr" ? "" : prev.target,
                           }))
                         }
                       >
@@ -1144,52 +1254,9 @@ function NewGoalPageContent() {
                             <SelectItem key={status.value} value={status.value}>
                               {status.label}
                             </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">
-                        Người chịu trách nhiệm
-                      </label>
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                        {profileOptions.length > 0 ? (
-                          <div className="flex flex-wrap gap-2">
-                            {profileOptions.map((profile) => {
-                              const isSelected = form.ownerIds.includes(profile.id);
-
-                              return (
-                                <button
-                                  key={profile.id}
-                                  type="button"
-                                  onClick={() => toggleOwnerSelection(profile.id)}
-                                  className={`inline-flex min-h-10 items-center rounded-xl border px-3 py-2 text-left text-sm font-medium transition ${
-                                    isSelected
-                                      ? "border-blue-600 bg-blue-600 text-white"
-                                      : "border-slate-200 bg-white text-slate-700 hover:border-blue-300"
-                                  }`}
-                                >
-                                  <span className="line-clamp-1">
-                                    {profile.name}
-                                    {profile.email ? ` · ${profile.email}` : ""}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <p className="text-sm text-slate-500">
-                            Chưa có hồ sơ nào để gán người chịu trách nhiệm.
-                          </p>
-                        )}
-                        <p className="mt-3 text-xs text-slate-500">
-                          Một Goal có thể có nhiều người chịu trách nhiệm ngang vai trò. Có thể để
-                          trống nếu chưa muốn gán ngay.
-                        </p>
-                      </div>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     </div>
 
                     <div className="space-y-1.5">
@@ -1197,7 +1264,7 @@ function NewGoalPageContent() {
                         Đơn vị đo mục tiêu
                       </label>
                       <Select
-                        value={isOkrGoal ? undefined : form.unit}
+                        value={form.unit}
                         disabled={isOkrGoal}
                         onValueChange={(value: KeyResultUnitValue) =>
                           setForm((prev) => ({
@@ -1208,186 +1275,46 @@ function NewGoalPageContent() {
                       >
                         <SelectTrigger>
                           <SelectValue
-                            placeholder={isOkrGoal ? "Goal OKR không dùng đơn vị" : "Chọn đơn vị"}
+                            placeholder={isOkrGoal ? "Goal OKR dùng phần trăm" : "Chọn đơn vị"}
                           />
                         </SelectTrigger>
                         <SelectContent>
-                          {KEY_RESULT_UNITS.map((unit) => (
+                          {getAllowedKeyResultUnitsByType(form.type).map((unit) => (
                             <SelectItem key={unit.value} value={unit.value}>
                               {unit.label}
                             </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label htmlFor="goal-target" className="text-sm font-semibold text-slate-700">
-                      Chỉ tiêu {isKpiGoal ? "*" : ""}
-                    </label>
-                    <FormattedNumberInput
-                      id="goal-target"
-                      value={form.target}
-                      onValueChange={(value) =>
-                        setForm((prev) => ({
-                          ...prev,
-                          target: value,
-                        }))
-                      }
-                      disabled={isOkrGoal}
-                      className={`h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
-                        isOkrGoal
-                          ? "cursor-not-allowed bg-slate-50 text-slate-400"
-                          : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                      }`}
-                      placeholder={
-                        isKpiGoal
-                          ? "Ví dụ: 1.200.000.000"
-                          : "Goal OKR không nhập chỉ tiêu"
-                      }
-                    />
-                    <p className="text-xs text-slate-500">
-                      {isKpiGoal
-                        ? `Goal kiểu KPI nên có target rõ ràng theo đơn vị ${formatKeyResultUnit(form.unit)}.`
-                        : `Goal kiểu OKR không nhập chỉ tiêu ở mức goal. Đơn vị hiện tại: ${formatKeyResultUnit(form.unit)}.`}
-                    </p>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-sm font-semibold text-slate-700">
-                      Phòng ban chịu trách nhiệm chính *
-                    </label>
-                    <Select
-                      value={form.departmentId || undefined}
-                      onValueChange={(value) => {
-                        setForm((prev) => ({
-                          ...prev,
-                          departmentId: value,
-                        }));
-                        resetDepartmentParticipationState(value);
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Chọn phòng ban" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {allDepartments.map((department) => (
-                          <SelectItem key={department.id} value={department.id}>
-                            {department.name}
-                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label htmlFor="goal-target" className="text-sm font-semibold text-slate-700">
+                      Chỉ tiêu {isKpiGoal ? "*" : ""}
+                      </label>
+                      <FormattedNumberInput
+                        id="goal-target"
+                        value={form.target}
+                        onValueChange={(value) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            target: value,
+                          }))
+                        }
+                        disabled={isOkrGoal}
+                        className={`h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
+                          isOkrGoal
+                            ? "cursor-not-allowed bg-slate-50 text-slate-400"
+                            : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        }`}
+                        placeholder={
+                          isKpiGoal ? "Ví dụ: 1.200.000.000" : "Goal OKR luôn là 100%"
+                        }
+                      />
+                    </div>
                   </div>
 
-                  {form.departmentId ? (
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between gap-3">
-                          <label className="text-sm font-semibold text-slate-700">
-                            Các phòng ban tham gia
-                          </label>
-                          <span className="text-xs text-slate-500">
-                            {participantDepartmentCount} phòng ban tham gia
-                          </span>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                          <div className="space-y-2">
-                            {departmentTree.map((department) => (
-                              <DepartmentTreeItem
-                                key={department.id}
-                                node={department}
-                                collapsedDepartmentIds={collapsedDepartmentIds}
-                                onToggleBranch={toggleDepartmentBranch}
-                                onToggleDepartment={toggleRelatedDepartment}
-                                primaryDepartmentId={form.departmentId}
-                                selectedDepartmentIds={selectedDepartmentIds}
-                              />
-                            ))}
-                          </div>
-                          <p className="mt-3 text-xs text-slate-500">
-                            Bấm vào từng node để thêm hoặc bỏ phòng ban tham gia. Goal vẫn có
-                            `department_id` là đơn vị chính. Mỗi phòng ban tham gia có trọng số
-                            mục tiêu để phục vụ chấm hiệu suất theo mục tiêu.
-                          </p>
-                        </div>
-                        {departmentParticipations.length > 0 ? (
-                          <div className="mt-3 space-y-3">
-                            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-800">
-                              Trọng số mục tiêu (%) là tỷ trọng ảnh hưởng của tiến độ mục tiêu lên hiệu suất của phòng ban đó
-                            </div>
-                            {departmentParticipations
-                              .slice()
-                              .sort((a, b) =>
-                                a.departmentId === form.departmentId
-                                  ? -1
-                                  : b.departmentId === form.departmentId
-                                    ? 1
-                                    : 0,
-                              )
-                              .map((item) => {
-                                const departmentName =
-                                  allDepartments.find(
-                                    (department) => department.id === item.departmentId,
-                                  )?.name ?? "Phòng ban";
-                                const isPrimary = item.departmentId === form.departmentId;
-
-                                return (
-                                  <div
-                                    key={item.departmentId}
-                                    className="grid gap-3 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-[minmax(0,1.3fr)_160px_160px]"
-                                  >
-                                    <div>
-                                      <p className="text-sm font-semibold text-slate-800">
-                                        {departmentName}
-                                      </p>
-                                      <p className="mt-1 text-xs text-slate-500">
-                                        {isPrimary
-                                          ? "Đơn vị chính của mục tiêu"
-                                          : "Đơn vị tham gia thực thi"}
-                                      </p>
-                                    </div>
-
-                                    <label className="space-y-1 text-xs font-medium text-slate-600">
-                                      <span>Trọng số mục tiêu (%)</span>
-                                      <ClearableNumberInput
-                                        min={0}
-                                        max={100}
-                                        step="0.1"
-                                        value={item.goalWeight}
-                                        onValueChange={(value) =>
-                                          setDepartmentParticipations((prev) =>
-                                            prev.map((row) =>
-                                              row.departmentId === item.departmentId
-                                                ? {
-                                                    ...row,
-                                                    ...normalizeParticipationWeightPair(value),
-                                                  }
-                                                : row,
-                                            ),
-                                          )
-                                        }
-                                        className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                                      />
-                                    </label>
-
-                                    <label className="space-y-1 text-xs font-medium text-slate-600">
-                                      <span>Trọng số KR (%)</span>
-                                      <div className="flex h-10 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700">
-                                        {item.krWeight}%
-                                      </div>
-                                    </label>
-                                  </div>
-                                );
-                              })}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                     <div className="space-y-1.5">
                       <label className="text-sm font-semibold text-slate-700">Quý (1-4) *</label>
                       <Select
@@ -1429,9 +1356,7 @@ function NewGoalPageContent() {
                         className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       />
                     </div>
-                  </div>
 
-                  <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-1.5">
                       <label
                         htmlFor="goal-start-date"
@@ -1480,6 +1405,38 @@ function NewGoalPageContent() {
                     </p>
                   ) : null}
 
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <label className="text-sm font-semibold text-slate-700">
+                          Các phòng ban tham gia
+                        </label>
+                        <span className="text-xs text-slate-500">
+                          {participantDepartmentCount} phòng ban tham gia
+                        </span>
+                      </div>
+                      {departmentTree.length > 0 ? (
+                        <div className="space-y-2">
+                          {departmentTree.map((department) => (
+                            <DepartmentTreeItem
+                              key={department.id}
+                              node={department}
+                              collapsedDepartmentIds={collapsedDepartmentIds}
+                              onToggleBranch={toggleDepartmentBranch}
+                              onToggleDepartment={toggleRelatedDepartment}
+                              primaryDepartmentId={form.departmentId}
+                              selectedDepartmentIds={selectedDepartmentIds}
+                            />
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-slate-500">
+                          Phòng ban chính hiện chưa có phòng ban con để thêm vào danh sách tham gia.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
                   <div className="space-y-1.5">
                     <label
                       htmlFor="goal-description"
@@ -1501,27 +1458,6 @@ function NewGoalPageContent() {
                       placeholder="Mô tả mục tiêu"
                     />
                   </div>
-
-                  {!form.description.trim() ? (
-                    <div className="space-y-1.5">
-                      <label htmlFor="goal-note" className="text-sm font-semibold text-slate-700">
-                        Ghi chú (note)
-                      </label>
-                      <textarea
-                        id="goal-note"
-                        rows={3}
-                        value={form.note}
-                        onChange={(event) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            note: event.target.value,
-                          }))
-                        }
-                        className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                        placeholder="Ghi chú nội bộ"
-                      />
-                    </div>
-                  ) : null}
 
                   <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
                     <Link

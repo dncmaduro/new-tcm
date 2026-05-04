@@ -1,24 +1,32 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarIcon } from "lucide-react";
 import { format } from "date-fns";
 import { vi } from "date-fns/locale";
 import { useEffect, useState } from "react";
+import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   TIME_REQUEST_TYPES,
   getTimeRequestTypeDescription,
   type TimeRequestType,
-  isMissingTimeRequestType,
   roundLeaveMinutesUp,
 } from "@/lib/constants/time-requests";
+import { fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
+import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
 
 type RoleRow = {
   id: string;
@@ -65,6 +73,19 @@ const toMonthStartIso = (value: Date) => {
   return `${year}-${month}-01`;
 };
 
+const fromIsoDateParam = (value: string | null) => {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return undefined;
+  }
+
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return undefined;
+  }
+
+  return parsed;
+};
+
 const parseMinutesInput = (value: string) => {
   const normalizedValue = value.trim();
   if (normalizedValue === "") {
@@ -74,6 +95,51 @@ const parseMinutesInput = (value: string) => {
 };
 
 const formatHoursLabel = (value: number) => `${Math.max(0, value)} giờ`;
+
+const combineDateAndTimeToIso = (date: Date, timeValue: string) => {
+  if (!timeValue || !/^\d{2}:\d{2}$/.test(timeValue)) {
+    return null;
+  }
+
+  const [hoursToken, minutesToken] = timeValue.split(":");
+  const hours = Number.parseInt(hoursToken, 10);
+  const minutes = Number.parseInt(minutesToken, 10);
+
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null;
+  }
+
+  const combined = new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+    hours,
+    minutes,
+    0,
+    0,
+  );
+
+  if (Number.isNaN(combined.getTime())) {
+    return null;
+  }
+
+  return combined.toISOString();
+};
+
+const formatDurationShort = (minutes: number) => {
+  const safeMinutes = Math.max(0, Math.round(minutes));
+  const hours = Math.floor(safeMinutes / 60);
+  const restMinutes = safeMinutes % 60;
+
+  if (hours === 0) {
+    return `${restMinutes} phút`;
+  }
+  if (restMinutes === 0) {
+    return `${hours} giờ`;
+  }
+
+  return `${hours} giờ ${restMinutes} phút`;
+};
 
 const fetchCurrentProfileId = async () => {
   const { data: authData, error: authError } = await supabase.auth.getUser();
@@ -105,8 +171,9 @@ const fetchLeaveBalanceForMonth = async (profileId: string, targetDate: Date) =>
   if (ensureError) {
     const message = ensureError.message || "Không thể khởi tạo quỹ phép của tháng đã chọn.";
     const isMissingRpc =
-      message.includes("Could not find the function public.ensure_leave_balance_for_profile_month") ||
-      message.includes("schema cache");
+      message.includes(
+        "Could not find the function public.ensure_leave_balance_for_profile_month",
+      ) || message.includes("schema cache");
 
     if (!isMissingRpc) {
       throw new Error(message);
@@ -155,28 +222,55 @@ const getAncestors = (
 
 export default function CreateTimeRequestPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const queryCorrectionDate = searchParams.get("date");
   const [currentProfileId, setCurrentProfileId] = useState<string | null>(null);
   const [requestType, setRequestType] = useState<TimeRequestType | "">("");
-  const [correctionDate, setCorrectionDate] = useState<Date | undefined>(new Date());
+  const [correctionDate, setCorrectionDate] = useState<Date | undefined>(
+    () => fromIsoDateParam(queryCorrectionDate) ?? new Date(),
+  );
   const [minutesInput, setMinutesInput] = useState<string>("");
   const [reasonInput, setReasonInput] = useState<string>("");
+  const [remoteCheckInInput, setRemoteCheckInInput] = useState<string>("");
+  const [remoteCheckOutInput, setRemoteCheckOutInput] = useState<string>("");
   const [leaveBalance, setLeaveBalance] = useState<LeaveBalanceRow | null>(null);
+  const [selectedHoliday, setSelectedHoliday] = useState<Holiday | null>(null);
   const [isLoadingLeaveBalance, setIsLoadingLeaveBalance] = useState<boolean>(false);
   const [leaveBalanceError, setLeaveBalanceError] = useState<string>("");
   const [formError, setFormError] = useState<string>("");
   const [submitSuccess, setSubmitSuccess] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const isLeaveRequest = requestType ? isMissingTimeRequestType(requestType) : false;
-  const requiresMinutesInput = requestType === "approved_leave";
+  const isApprovedLeaveRequest = requestType === "approved_leave";
+  const isUnauthorizedLeaveRequest = requestType === "unauthorized_leave";
+  const isRemoteRequest = requestType === "remote";
+  const requiresMinutesInput = isApprovedLeaveRequest;
   const parsedMinutesPreview = parseMinutesInput(minutesInput);
   const roundedLeaveMinutesPreview =
-    isLeaveRequest && parsedMinutesPreview !== null && Number.isFinite(parsedMinutesPreview) && parsedMinutesPreview > 0
+    isApprovedLeaveRequest &&
+    parsedMinutesPreview !== null &&
+    Number.isFinite(parsedMinutesPreview) &&
+    parsedMinutesPreview > 0
       ? roundLeaveMinutesUp(parsedMinutesPreview)
       : 0;
-  const requestedLeaveHoursPreview = roundedLeaveMinutesPreview > 0 ? roundedLeaveMinutesPreview / 60 : 0;
-  const totalLeaveHours = typeof leaveBalance?.total_hours === "number" ? Math.max(0, leaveBalance.total_hours) : 0;
-  const usedLeaveHours = typeof leaveBalance?.used_hours === "number" ? Math.max(0, leaveBalance.used_hours) : 0;
+  const requestedLeaveHoursPreview =
+    roundedLeaveMinutesPreview > 0 ? roundedLeaveMinutesPreview / 60 : 0;
+  const totalLeaveHours =
+    typeof leaveBalance?.total_hours === "number" ? Math.max(0, leaveBalance.total_hours) : 0;
+  const usedLeaveHours =
+    typeof leaveBalance?.used_hours === "number" ? Math.max(0, leaveBalance.used_hours) : 0;
   const remainingLeaveHours = Math.max(0, totalLeaveHours - usedLeaveHours);
+  const remoteCheckInIso =
+    correctionDate && isRemoteRequest
+      ? combineDateAndTimeToIso(correctionDate, remoteCheckInInput)
+      : null;
+  const remoteCheckOutIso =
+    correctionDate && isRemoteRequest
+      ? combineDateAndTimeToIso(correctionDate, remoteCheckOutInput)
+      : null;
+  const computedRemoteMinutes =
+    remoteCheckInIso && remoteCheckOutIso
+      ? calculateWorkedMinutesBetweenTimestamps(remoteCheckInIso, remoteCheckOutIso)
+      : null;
 
   const resolveCurrentProfileId = async () => {
     if (currentProfileId) {
@@ -214,7 +308,54 @@ export default function CreateTimeRequestPage() {
   }, []);
 
   useEffect(() => {
-    if (!isLeaveRequest || !currentProfileId || !correctionDate) {
+    const parsedQueryDate = fromIsoDateParam(queryCorrectionDate);
+    if (!parsedQueryDate) {
+      return;
+    }
+
+    setCorrectionDate(parsedQueryDate);
+  }, [queryCorrectionDate]);
+
+  useEffect(() => {
+    if (isRemoteRequest) {
+      if (computedRemoteMinutes !== null) {
+        setMinutesInput(String(computedRemoteMinutes));
+      } else if (minutesInput) {
+        setMinutesInput("");
+      }
+      return;
+    }
+
+    setRemoteCheckInInput("");
+    setRemoteCheckOutInput("");
+  }, [computedRemoteMinutes, isRemoteRequest, minutesInput]);
+
+  useEffect(() => {
+    if (!correctionDate) {
+      setSelectedHoliday(null);
+      return;
+    }
+
+    let isActive = true;
+
+    const loadHoliday = async () => {
+      const [holiday] = await fetchHolidaysInRange(supabase, correctionDate, correctionDate);
+      if (!isActive) {
+        return;
+      }
+
+      setSelectedHoliday(holiday ?? null);
+    };
+
+    void loadHoliday();
+
+    return () => {
+      isActive = false;
+    };
+  }, [correctionDate]);
+
+  useEffect(() => {
+    if (!isApprovedLeaveRequest || !currentProfileId || !correctionDate) {
       setLeaveBalance(null);
       setLeaveBalanceError("");
       setIsLoadingLeaveBalance(false);
@@ -251,10 +392,10 @@ export default function CreateTimeRequestPage() {
     return () => {
       isActive = false;
     };
-  }, [correctionDate, currentProfileId, isLeaveRequest]);
+  }, [correctionDate, currentProfileId, isApprovedLeaveRequest]);
 
   const handleMinutesBlur = () => {
-    if (!isLeaveRequest) {
+    if (!isApprovedLeaveRequest) {
       return;
     }
 
@@ -279,11 +420,17 @@ export default function CreateTimeRequestPage() {
       requestType,
       correctionDate: correctionDate ? toIsoDate(correctionDate) : null,
       inputMinutes: minutesInput,
+      remoteCheckIn: remoteCheckInIso,
+      remoteCheckOut: remoteCheckOutIso,
       roundedLeaveMinutes: null as number | null,
       requestedLeaveHours: null as number | null,
       reason: reasonInput,
       requesterProfileId: null as string | null,
-      leaveBalance: null as null | { total_hours: number; used_hours: number; remaining_hours: number },
+      leaveBalance: null as null | {
+        total_hours: number;
+        used_hours: number;
+        remaining_hours: number;
+      },
       roles: [] as Array<{ id: string; name: string | null }>,
       memberRoleIds: [] as string[],
       leaderRoleIds: [] as string[],
@@ -307,6 +454,18 @@ export default function CreateTimeRequestPage() {
       setFormError("Vui lòng chọn ngày cần điều chỉnh.");
       return;
     }
+    if (isRemoteRequest) {
+      if (!remoteCheckInInput || !remoteCheckOutInput || !remoteCheckInIso || !remoteCheckOutIso) {
+        setFormError("Làm việc từ xa phải nhập đủ giờ bắt đầu và giờ kết thúc.");
+        return;
+      }
+
+      if (!computedRemoteMinutes) {
+        setFormError("Giờ kết thúc làm việc từ xa phải lớn hơn giờ bắt đầu.");
+        return;
+      }
+    }
+
     const parsedMinutes = parseMinutesInput(minutesInput);
     if (
       parsedMinutes !== null &&
@@ -315,10 +474,16 @@ export default function CreateTimeRequestPage() {
       setFormError("Số phút phải là số nguyên từ 0 trở lên, hoặc để trống.");
       return;
     }
-    const normalizedMinutes = isLeaveRequest ? roundLeaveMinutesUp(parsedMinutes) : parsedMinutes;
+    const normalizedMinutes = isRemoteRequest
+      ? computedRemoteMinutes
+      : isApprovedLeaveRequest
+        ? roundLeaveMinutesUp(parsedMinutes)
+        : parsedMinutes;
     reviewerDebug.roundedLeaveMinutes = normalizedMinutes;
     reviewerDebug.requestedLeaveHours =
-      isLeaveRequest && typeof normalizedMinutes === "number" ? normalizedMinutes / 60 : null;
+      isApprovedLeaveRequest && typeof normalizedMinutes === "number"
+        ? normalizedMinutes / 60
+        : null;
 
     if (requiresMinutesInput && (parsedMinutes === null || normalizedMinutes === 0)) {
       setFormError("Thiếu thời gian có phép phải nhập số phút thiếu lớn hơn 0.");
@@ -336,12 +501,20 @@ export default function CreateTimeRequestPage() {
       const requesterProfileId = await resolveCurrentProfileId();
       reviewerDebug.requesterProfileId = requesterProfileId;
 
-      if (isLeaveRequest && typeof normalizedMinutes === "number" && normalizedMinutes > 0) {
+      if (
+        isApprovedLeaveRequest &&
+        typeof normalizedMinutes === "number" &&
+        normalizedMinutes > 0
+      ) {
         const leaveBalanceRow = await fetchLeaveBalanceForMonth(requesterProfileId, correctionDate);
         const totalHours =
-          typeof leaveBalanceRow.total_hours === "number" ? Math.max(0, leaveBalanceRow.total_hours) : 0;
+          typeof leaveBalanceRow.total_hours === "number"
+            ? Math.max(0, leaveBalanceRow.total_hours)
+            : 0;
         const usedHours =
-          typeof leaveBalanceRow.used_hours === "number" ? Math.max(0, leaveBalanceRow.used_hours) : 0;
+          typeof leaveBalanceRow.used_hours === "number"
+            ? Math.max(0, leaveBalanceRow.used_hours)
+            : 0;
         const remainingHours = Math.max(0, totalHours - usedHours);
         const requestedHours = typeof normalizedMinutes === "number" ? normalizedMinutes / 60 : 0;
 
@@ -358,20 +531,24 @@ export default function CreateTimeRequestPage() {
         }
       }
 
-      const [{ data: rolesData, error: rolesError }, { data: requesterRolesData, error: requesterRolesError }] =
-        await Promise.all([
-          supabase.from("roles").select("id,name"),
-          supabase
-            .from("user_role_in_department")
-            .select("profile_id,department_id,role_id")
-            .eq("profile_id", requesterProfileId),
-        ]);
+      const [
+        { data: rolesData, error: rolesError },
+        { data: requesterRolesData, error: requesterRolesError },
+      ] = await Promise.all([
+        supabase.from("roles").select("id,name"),
+        supabase
+          .from("user_role_in_department")
+          .select("profile_id,department_id,role_id")
+          .eq("profile_id", requesterProfileId),
+      ]);
 
       if (rolesError) {
         throw new Error(rolesError.message || "Không tải được danh sách vai trò.");
       }
       if (requesterRolesError) {
-        throw new Error(requesterRolesError.message || "Không tải được vai trò của người tạo yêu cầu.");
+        throw new Error(
+          requesterRolesError.message || "Không tải được vai trò của người tạo yêu cầu.",
+        );
       }
 
       const typedRoles = (rolesData ?? []) as RoleRow[];
@@ -388,19 +565,25 @@ export default function CreateTimeRequestPage() {
       const leaderRoleIds = typedRoles
         .filter((role) => {
           const roleName = normalizeText(role.name);
-          return roleName === "leader" || roleName.includes("leader") || roleName.includes("truong nhom");
+          return (
+            roleName === "leader" || roleName.includes("leader") || roleName.includes("truong nhom")
+          );
         })
         .map((role) => String(role.id));
       const memberRoleIds = typedRoles
         .filter((role) => {
           const roleName = normalizeText(role.name);
-          return roleName === "member" || roleName.includes("member") || roleName.includes("thanh vien");
+          return (
+            roleName === "member" || roleName.includes("member") || roleName.includes("thanh vien")
+          );
         })
         .map((role) => String(role.id));
       const directorRoleIds = typedRoles
         .filter((role) => {
           const roleName = normalizeText(role.name);
-          return roleName === "giam doc" || roleName.includes("giam doc") || roleName === "director";
+          return (
+            roleName === "giam doc" || roleName.includes("giam doc") || roleName === "director"
+          );
         })
         .map((role) => String(role.id));
       reviewerDebug.leaderRoleIds = leaderRoleIds;
@@ -427,13 +610,12 @@ export default function CreateTimeRequestPage() {
         throw new Error(departmentsError.message || "Không tải được cây phòng ban.");
       }
 
-      const parentDepartmentById = ((departmentsData ?? []) as DepartmentRow[]).reduce<Record<string, string | null>>(
-        (acc, item) => {
-          acc[String(item.id)] = item.parent_department_id ? String(item.parent_department_id) : null;
-          return acc;
-        },
-        {},
-      );
+      const parentDepartmentById = ((departmentsData ?? []) as DepartmentRow[]).reduce<
+        Record<string, string | null>
+      >((acc, item) => {
+        acc[String(item.id)] = item.parent_department_id ? String(item.parent_department_id) : null;
+        return acc;
+      }, {});
 
       let reviewerProfileIds: string[] = [];
 
@@ -441,7 +623,10 @@ export default function CreateTimeRequestPage() {
         const currentDepartmentIds = [
           ...new Set(
             typedRequesterRoles
-              .filter((row) => row.department_id && row.role_id && memberRoleIds.includes(String(row.role_id)))
+              .filter(
+                (row) =>
+                  row.department_id && row.role_id && memberRoleIds.includes(String(row.role_id)),
+              )
               .map((row) => String(row.department_id)),
           ),
         ];
@@ -468,7 +653,9 @@ export default function CreateTimeRequestPage() {
             .in("role_id", leaderRoleIds);
 
           if (reviewerError) {
-            throw new Error(reviewerError.message || "Không tải được danh sách Leader duyệt yêu cầu.");
+            throw new Error(
+              reviewerError.message || "Không tải được danh sách Leader duyệt yêu cầu.",
+            );
           }
 
           reviewerProfileIds = [
@@ -485,13 +672,20 @@ export default function CreateTimeRequestPage() {
         const ownLeaderDepartmentIds = [
           ...new Set(
             typedRequesterRoles
-              .filter((row) => row.department_id && row.role_id && leaderRoleIds.includes(String(row.role_id)))
+              .filter(
+                (row) =>
+                  row.department_id && row.role_id && leaderRoleIds.includes(String(row.role_id)),
+              )
               .map((row) => String(row.department_id)),
           ),
         ];
         reviewerDebug.ownLeaderDepartmentIds = ownLeaderDepartmentIds;
 
-        const parentDepartmentIds = getAncestors(ownLeaderDepartmentIds, parentDepartmentById, false);
+        const parentDepartmentIds = getAncestors(
+          ownLeaderDepartmentIds,
+          parentDepartmentById,
+          false,
+        );
         reviewerDebug.parentDepartmentIds = parentDepartmentIds;
         let parentLeaders: string[] = [];
         if (leaderRoleIds.length > 0 && parentDepartmentIds.length > 0) {
@@ -524,7 +718,9 @@ export default function CreateTimeRequestPage() {
             .in("role_id", directorRoleIds);
 
           if (directorError) {
-            throw new Error(directorError.message || "Không tải được người duyệt vai trò Giám đốc.");
+            throw new Error(
+              directorError.message || "Không tải được người duyệt vai trò Giám đốc.",
+            );
           }
 
           directorReviewers = [
@@ -545,7 +741,10 @@ export default function CreateTimeRequestPage() {
 
       reviewerDebug.reviewerProfileIds = reviewerProfileIds;
 
-      if ((requesterScope === "member" || requesterScope === "leader") && reviewerProfileIds.length === 0) {
+      if (
+        (requesterScope === "member" || requesterScope === "leader") &&
+        reviewerProfileIds.length === 0
+      ) {
         if (requesterScope === "leader") {
           throw new Error(
             "Không tìm thấy người duyệt cho Leader. Cần có Leader phòng ban cha hoặc role Giám đốc trong user_role_in_department.",
@@ -562,6 +761,8 @@ export default function CreateTimeRequestPage() {
           type: requestType,
           minutes: normalizedMinutes,
           reason: normalizedReason,
+          remote_check_in: isRemoteRequest ? remoteCheckInIso : null,
+          remote_check_out: isRemoteRequest ? remoteCheckOutIso : null,
         })
         .select("id")
         .maybeSingle();
@@ -576,7 +777,9 @@ export default function CreateTimeRequestPage() {
           profile_id: reviewerProfileId,
         }));
 
-        const { error: insertReviewerError } = await supabase.from("time_request_reviewers").insert(reviewerPayload);
+        const { error: insertReviewerError } = await supabase
+          .from("time_request_reviewers")
+          .insert(reviewerPayload);
         if (insertReviewerError) {
           throw new Error(insertReviewerError.message || "Không thể tạo danh sách người duyệt.");
         }
@@ -602,22 +805,14 @@ export default function CreateTimeRequestPage() {
         <WorkspaceSidebar active="timesheet" />
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <header className="sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-7">
-            <div className="space-y-2">
-              <p className="text-sm text-slate-500">
-                <Link href="/timesheet" className="hover:text-slate-700">
-                  Chấm công
-                </Link>
-                <span className="px-2">›</span>
-                <span>Yêu cầu công</span>
-                <span className="px-2">›</span>
-                <span className="font-semibold text-slate-700">Tạo mới</span>
-              </p>
-              <h1 className="text-3xl font-semibold tracking-[-0.02em] text-slate-900">
-                Tạo yêu cầu điều chỉnh công
-              </h1>
-            </div>
-          </header>
+          <WorkspacePageHeader
+            title="Tạo yêu cầu điều chỉnh công"
+            items={[
+              { label: "Chấm công", href: "/timesheet" },
+              { label: "Yêu cầu công" },
+              { label: "Tạo mới" },
+            ]}
+          />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-7">
             <section className="mx-auto w-full max-w-[920px] rounded-2xl border border-slate-200 bg-white p-5 lg:p-6">
@@ -657,7 +852,9 @@ export default function CreateTimeRequestPage() {
                 </div>
 
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="mb-3 text-sm font-semibold text-slate-800">Chọn ngày cần điều chỉnh</p>
+                  <p className="mb-3 text-sm font-semibold text-slate-800">
+                    Chọn ngày cần điều chỉnh
+                  </p>
                   <div className="max-w-[280px]">
                     <Popover>
                       <PopoverTrigger asChild>
@@ -684,11 +881,25 @@ export default function CreateTimeRequestPage() {
                   </div>
                 </div>
 
-                {isLeaveRequest ? (
+                {selectedHoliday ? (
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                    <p className="font-semibold">Ngày nghỉ</p>
+                    <p className="mt-1">
+                      {selectedHoliday.name}
+                      {isApprovedLeaveRequest || isUnauthorizedLeaveRequest
+                        ? " · Yêu cầu thiếu giờ trên ngày này vẫn có thể tạo nhưng sẽ không bị tính vào thiếu giờ hoặc nghỉ không phép."
+                        : " · Ngày này không phát sinh requiredWorkingMinutes."}
+                    </p>
+                  </div>
+                ) : null}
+
+                {isApprovedLeaveRequest ? (
                   <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <p className="text-sm font-semibold text-amber-900">Quỹ phép tháng đang chọn</p>
+                        <p className="text-sm font-semibold text-amber-900">
+                          Quỹ phép tháng đang chọn
+                        </p>
                         <p className="text-xs text-amber-700">
                           Quỹ phép được cộng dồn nhưng tổng mỗi tháng không vượt quá 16 giờ.
                         </p>
@@ -707,61 +918,117 @@ export default function CreateTimeRequestPage() {
                     ) : leaveBalance ? (
                       <div className="mt-3 grid gap-3 sm:grid-cols-3">
                         <div className="rounded-xl border border-amber-200 bg-white px-4 py-3">
-                          <p className="text-xs font-semibold tracking-[0.08em] text-amber-500 uppercase">Tổng giờ phép trong tháng</p>
-                          <p className="mt-2 text-2xl font-semibold text-amber-950">{formatHoursLabel(totalLeaveHours)}</p>
+                          <p className="text-xs font-semibold tracking-[0.08em] text-amber-500 uppercase">
+                            Tổng giờ phép trong tháng
+                          </p>
+                          <p className="mt-2 text-2xl font-semibold text-amber-950">
+                            {formatHoursLabel(totalLeaveHours)}
+                          </p>
                         </div>
                         <div className="rounded-xl border border-amber-200 bg-white px-4 py-3">
-                          <p className="text-xs font-semibold tracking-[0.08em] text-amber-500 uppercase">Đã dùng</p>
-                          <p className="mt-2 text-2xl font-semibold text-amber-950">{formatHoursLabel(usedLeaveHours)}</p>
+                          <p className="text-xs font-semibold tracking-[0.08em] text-amber-500 uppercase">
+                            Đã dùng
+                          </p>
+                          <p className="mt-2 text-2xl font-semibold text-amber-950">
+                            {formatHoursLabel(usedLeaveHours)}
+                          </p>
                         </div>
                         <div className="rounded-xl border border-amber-200 bg-white px-4 py-3">
-                          <p className="text-xs font-semibold tracking-[0.08em] text-amber-500 uppercase">Còn lại</p>
-                          <p className="mt-2 text-2xl font-semibold text-amber-950">{formatHoursLabel(remainingLeaveHours)}</p>
+                          <p className="text-xs font-semibold tracking-[0.08em] text-amber-500 uppercase">
+                            Còn lại
+                          </p>
+                          <p className="mt-2 text-2xl font-semibold text-amber-950">
+                            {formatHoursLabel(remainingLeaveHours)}
+                          </p>
                         </div>
                       </div>
                     ) : null}
                   </div>
                 ) : null}
 
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold text-slate-800">
-                    Số phút điều chỉnh {requiresMinutesInput ? "*" : "(tùy chọn)"}
-                  </label>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    min={0}
-                    step={1}
-                    value={minutesInput}
-                    onChange={(event) => setMinutesInput(event.target.value)}
-                    onBlur={handleMinutesBlur}
-                    placeholder={
-                      requiresMinutesInput
-                        ? "Nhập tổng số phút thiếu"
-                        : "Ví dụ: 30 (để trống nếu không áp dụng)"
-                    }
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  />
-                  <p className="text-xs text-slate-500">
-                    {isLeaveRequest
-                      ? requiresMinutesInput
-                        ? "Nhập tổng thời gian thiếu cho trường hợp nghỉ, về sớm hoặc đi muộn."
-                        : "Có thể để trống. Nếu có nhập, hệ thống sẽ làm tròn lên theo giờ."
-                      : "Lưu trực tiếp vào cột minutes của bảng time_requests."}
-                  </p>
-                  {isLeaveRequest ? (
-                    <p className="text-xs text-amber-700">Ghi chú: thời gian thiếu sẽ được làm tròn lên mốc 60 phút gần nhất.</p>
-                  ) : null}
-                  {isLeaveRequest && parsedMinutesPreview !== null && Number.isFinite(parsedMinutesPreview) && parsedMinutesPreview > 0 ? (
-                    <p className="text-xs font-medium text-amber-700">
-                      Hệ thống sẽ làm tròn lên theo giờ: {parsedMinutesPreview} phút thành {roundedLeaveMinutesPreview} phút
-                      ({requestedLeaveHoursPreview} giờ).
-                      {leaveBalance && !isLoadingLeaveBalance && !leaveBalanceError
-                        ? ` Sau khi gửi sẽ còn ${Math.max(0, remainingLeaveHours - requestedLeaveHoursPreview)} giờ.`
-                        : ""}
+                {isRemoteRequest ? (
+                  <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <label className="text-sm font-semibold text-slate-800">
+                          Giờ bắt đầu làm việc từ xa *
+                        </label>
+                        <input
+                          type="time"
+                          step={60}
+                          value={remoteCheckInInput}
+                          onChange={(event) => setRemoteCheckInInput(event.target.value)}
+                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-semibold text-slate-800">
+                          Giờ kết thúc làm việc từ xa *
+                        </label>
+                        <input
+                          type="time"
+                          step={60}
+                          value={remoteCheckOutInput}
+                          onChange={(event) => setRemoteCheckOutInput(event.target.value)}
+                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-3 rounded-xl border border-indigo-100 bg-white px-4 py-3">
+                      <p className="text-xs font-semibold tracking-[0.08em] text-indigo-500 uppercase">
+                        Tổng thời gian làm việc từ xa
+                      </p>
+                      <p className="mt-2 text-lg font-semibold text-indigo-900">
+                        {computedRemoteMinutes !== null
+                          ? formatDurationShort(computedRemoteMinutes)
+                          : "--"}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Hệ thống tự tính `minutes` từ chênh lệch giữa giờ bắt đầu và giờ kết thúc
+                        làm việc từ xa.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <label className="text-sm font-semibold text-slate-800">
+                      Số phút điều chỉnh {requiresMinutesInput ? "*" : "(tùy chọn)"}
+                    </label>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      step={1}
+                      value={minutesInput}
+                      onChange={(event) => setMinutesInput(event.target.value)}
+                      onBlur={handleMinutesBlur}
+                      placeholder={
+                        requiresMinutesInput
+                          ? "Nhập tổng số phút thiếu"
+                          : "Ví dụ: 30 (để trống nếu không áp dụng)"
+                      }
+                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    />
+                    <p className="text-xs text-slate-500">
+                      {isApprovedLeaveRequest
+                        ? requiresMinutesInput
+                          ? "Nhập tổng thời gian thiếu cho trường hợp nghỉ, về sớm hoặc đi muộn."
+                          : "Có thể để trống. Nếu có nhập, hệ thống sẽ làm tròn lên theo giờ."
+                        : isUnauthorizedLeaveRequest
+                          ? "Nhập đúng số phút thiếu cho trường hợp nghỉ, về sớm hoặc đi muộn không phép."
+                          : "Lưu trực tiếp vào cột minutes của bảng time_requests."}
                     </p>
-                  ) : null}
-                </div>
+                    {isApprovedLeaveRequest ? (
+                      <p className="text-xs font-medium text-amber-700">
+                        {parsedMinutesPreview !== null &&
+                        Number.isFinite(parsedMinutesPreview) &&
+                        parsedMinutesPreview > 0
+                          ? `Hệ thống sẽ quy đổi ${parsedMinutesPreview} phút thành ${roundedLeaveMinutesPreview} phút (${requestedLeaveHoursPreview} giờ) theo bội số 60 phút gần nhất.${leaveBalance && !isLoadingLeaveBalance && !leaveBalanceError ? ` Sau khi gửi sẽ còn ${Math.max(0, remainingLeaveHours - requestedLeaveHoursPreview)} giờ phép.` : ""}`
+                          : "Thời gian thiếu có phép sẽ được quy đổi lên theo bội số 60 phút gần nhất."}
+                      </p>
+                    ) : null}
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <label className="text-sm font-semibold text-slate-800">Lý do</label>
@@ -783,7 +1050,7 @@ export default function CreateTimeRequestPage() {
                   </Link>
                   <button
                     type="submit"
-                    disabled={isSubmitting || (isLeaveRequest && isLoadingLeaveBalance)}
+                    disabled={isSubmitting || (isApprovedLeaveRequest && isLoadingLeaveBalance)}
                     className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
                   >
                     {isSubmitting ? "Đang gửi..." : "Gửi yêu cầu"}

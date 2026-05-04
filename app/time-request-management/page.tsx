@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import {
   getTimeRequestReason,
@@ -10,7 +10,9 @@ import {
   isMissingTimeRequestType,
   type TimeRequestType,
 } from "@/lib/constants/time-requests";
+import { buildHolidayMap, fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
+import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
 
 type RoleScope = "director" | "leader" | "member";
 
@@ -54,6 +56,8 @@ type TimeRequestRow = {
   type: TimeRequestType | null;
   minutes: number | null;
   reason: string | null;
+  remote_check_in: string | null;
+  remote_check_out: string | null;
   created_at: string | null;
   updated_at: string | null;
   time_request_reviewers?: TimeRequestReviewerRow[] | null;
@@ -66,16 +70,6 @@ const normalizeText = (value: string | null | undefined) =>
     .trim()
     .toLowerCase();
 
-const toRoleScopeLabel = (scope: RoleScope) => {
-  if (scope === "director") {
-    return "Giám đốc";
-  }
-  if (scope === "leader") {
-    return "Trưởng nhóm";
-  }
-  return "Thành viên";
-};
-
 const formatDateVi = (value: string | null) => {
   if (!value) {
     return "--";
@@ -85,6 +79,36 @@ const formatDateVi = (value: string | null) => {
     return "--";
   }
   return new Intl.DateTimeFormat("vi-VN", { dateStyle: "short" }).format(date);
+};
+
+const formatDateViLong = (value: string | null) => {
+  if (!value) {
+    return "--";
+  }
+  const date = new Date(value.includes("T") ? value : `${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return "--";
+  }
+  return new Intl.DateTimeFormat("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date);
+};
+
+const formatTimeVi = (value: string | null) => {
+  if (!value) {
+    return "--";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "--";
+  }
+  return new Intl.DateTimeFormat("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
 };
 
 const formatDateTime = (value: string | null) => {
@@ -119,6 +143,17 @@ const formatMinutesLabel = (type: TimeRequestType | null, minutes: number | null
     if (isMissingTimeRequestType(type)) {
       return `${minutes} phút thiếu`;
     }
+    if (type === "remote") {
+      const hours = Math.floor(minutes / 60);
+      const remainingMinutes = minutes % 60;
+      if (hours === 0) {
+        return `${minutes} phút làm việc từ xa`;
+      }
+      if (remainingMinutes === 0) {
+        return `${hours} giờ làm việc từ xa`;
+      }
+      return `${hours} giờ ${remainingMinutes} phút làm việc từ xa`;
+    }
     return `${minutes} phút`;
   }
 
@@ -127,6 +162,18 @@ const formatMinutesLabel = (type: TimeRequestType | null, minutes: number | null
   }
 
   return "--";
+};
+
+const resolveRequestMinutes = (request: TimeRequestRow) => {
+  if (request.type === "remote") {
+    return (
+      calculateWorkedMinutesBetweenTimestamps(request.remote_check_in, request.remote_check_out) ?? 0
+    );
+  }
+
+  return typeof request.minutes === "number" && Number.isFinite(request.minutes)
+    ? Math.max(0, request.minutes)
+    : null;
 };
 
 const getTypeBadgeClassName = (type: TimeRequestType | null) => {
@@ -174,6 +221,7 @@ export default function TimeRequestManagementPage() {
   const [currentProfileId, setCurrentProfileId] = useState<string | null>(null);
   const [roleScope, setRoleScope] = useState<RoleScope>("member");
   const [requests, setRequests] = useState<TimeRequestRow[]>([]);
+  const [holidaysByDate, setHolidaysByDate] = useState<Map<string, Holiday>>(new Map());
   const [profileNameById, setProfileNameById] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -347,7 +395,7 @@ export default function TimeRequestManagementPage() {
         const requestsQuery = supabase
           .from("time_requests")
           .select(
-            "id,profile_id,date,type,minutes,reason,created_at,updated_at,time_request_reviewers(id,profile_id,is_approved,comment,reviewed_at,created_at)",
+            "id,profile_id,date,type,minutes,reason,remote_check_in,remote_check_out,created_at,updated_at,time_request_reviewers(id,profile_id,is_approved,comment,reviewed_at,created_at)",
           )
           .order("created_at", { ascending: false });
 
@@ -374,7 +422,32 @@ export default function TimeRequestManagementPage() {
         if (!isActive) {
           return;
         }
-        setRequests(requestRows);
+        const requestDateValues = requestRows
+          .map((item) => item.date)
+          .filter((value): value is string => Boolean(value))
+          .sort((a, b) => a.localeCompare(b));
+        if (requestDateValues.length > 0) {
+          const holidayRows = await fetchHolidaysInRange(
+            supabase,
+            requestDateValues[0],
+            requestDateValues[requestDateValues.length - 1],
+          );
+
+          if (!isActive) {
+            return;
+          }
+
+          setHolidaysByDate(buildHolidayMap(holidayRows));
+        } else {
+          setHolidaysByDate(new Map());
+        }
+
+        setRequests(
+          requestRows.map((item) => ({
+            ...item,
+            minutes: resolveRequestMinutes(item),
+          })),
+        );
 
         const requesterProfileIds = [
           ...new Set(requestRows.map((row) => row.profile_id).filter(Boolean).map((item) => String(item))),
@@ -409,6 +482,7 @@ export default function TimeRequestManagementPage() {
         }
         setLoadError(error instanceof Error ? error.message : "Không tải được dữ liệu duyệt yêu cầu.");
         setRequests([]);
+        setHolidaysByDate(new Map());
         setProfileNameById({});
       } finally {
         if (isActive) {
@@ -502,26 +576,10 @@ export default function TimeRequestManagementPage() {
         <WorkspaceSidebar active="timeRequestManagement" />
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <header className="sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-7">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm text-slate-500">
-                  <Link href="/dashboard" className="hover:text-slate-700">
-                    Bảng điều khiển
-                  </Link>
-                  <span className="px-2">›</span>
-                  <span className="font-semibold text-slate-700">Quản lý yêu cầu thời gian</span>
-                </p>
-                <h1 className="mt-1 text-3xl font-semibold tracking-[-0.02em] text-slate-900">Duyệt yêu cầu thời gian</h1>
-                <p className="mt-1 text-sm text-slate-500">
-                  Vai trò hiện tại: <span className="font-semibold text-slate-700">{toRoleScopeLabel(roleScope)}</span>
-                </p>
-                <p className="mt-1 text-sm text-slate-500">
-                  Các loại yêu cầu hiện tại gồm: thiếu thời gian có phép, thiếu thời gian không phép, tăng ca và làm việc từ xa.
-                </p>
-              </div>
-            </div>
-          </header>
+          <WorkspacePageHeader
+            title="Duyệt yêu cầu thời gian"
+            items={[{ label: "Quản lý yêu cầu thời gian" }]}
+          />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-7">
             <section className="grid gap-4 md:grid-cols-4">
@@ -597,6 +655,7 @@ export default function TimeRequestManagementPage() {
                       <th className="px-5 py-3 font-semibold">Nhân sự</th>
                       <th className="px-5 py-3 font-semibold">Ngày cần sửa</th>
                       <th className="px-5 py-3 font-semibold">Loại</th>
+                      <th className="px-5 py-3 font-semibold">Giờ làm việc từ xa</th>
                       <th className="px-5 py-3 font-semibold">Thời lượng</th>
                       <th className="px-5 py-3 font-semibold">Lý do</th>
                       <th className="px-5 py-3 font-semibold">Ngày gửi</th>
@@ -608,25 +667,25 @@ export default function TimeRequestManagementPage() {
                   <tbody>
                     {isLoading ? (
                       <tr className="border-t border-slate-100">
-                        <td colSpan={9} className="px-5 py-8 text-center text-sm text-slate-500">
+                        <td colSpan={10} className="px-5 py-8 text-center text-sm text-slate-500">
                           Đang tải yêu cầu thời gian...
                         </td>
                       </tr>
                     ) : loadError ? (
                       <tr className="border-t border-slate-100">
-                        <td colSpan={9} className="px-5 py-8 text-center text-sm text-rose-600">
+                        <td colSpan={10} className="px-5 py-8 text-center text-sm text-rose-600">
                           {loadError}
                         </td>
                       </tr>
                     ) : roleScope === "member" ? (
                       <tr className="border-t border-slate-100">
-                        <td colSpan={9} className="px-5 py-8 text-center text-sm text-slate-500">
+                        <td colSpan={10} className="px-5 py-8 text-center text-sm text-slate-500">
                           Bạn chưa có phạm vi duyệt yêu cầu của cấp dưới.
                         </td>
                       </tr>
                     ) : filteredRequests.length === 0 ? (
                       <tr className="border-t border-slate-100">
-                        <td colSpan={9} className="px-5 py-8 text-center text-sm text-slate-500">
+                        <td colSpan={10} className="px-5 py-8 text-center text-sm text-slate-500">
                           Chưa có yêu cầu thời gian trong phạm vi hiện tại.
                         </td>
                       </tr>
@@ -639,12 +698,28 @@ export default function TimeRequestManagementPage() {
                         const status = toRequestStatus(reviewers);
                         const isApproving = processingRequestId === item.id;
                         const canReview = status === "pending";
+                        const holiday = item.date ? holidaysByDate.get(item.date) ?? null : null;
+                        const isHolidayRequest = Boolean(holiday);
                         return (
                           <tr key={item.id} className="border-t border-slate-100">
                             <td className="px-5 py-4 text-sm text-slate-700">
                               {item.profile_id ? profileNameById[item.profile_id] ?? item.profile_id : "--"}
                             </td>
-                            <td className="px-5 py-4 text-sm text-slate-600">{formatDateVi(item.date)}</td>
+                            <td className="px-5 py-4 text-sm text-slate-600">
+                              <div className="space-y-1">
+                                <p>{formatDateVi(item.date)}</p>
+                                {isHolidayRequest ? (
+                                  <>
+                                    <span className="inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                                      Ngày nghỉ
+                                    </span>
+                                    {holiday?.name?.trim() ? (
+                                      <p className="text-[11px] text-emerald-700">{holiday.name.trim()}</p>
+                                    ) : null}
+                                  </>
+                                ) : null}
+                              </div>
+                            </td>
                             <td className="px-5 py-4 text-sm text-slate-700">
                               <div className="space-y-1">
                                 <span
@@ -655,10 +730,34 @@ export default function TimeRequestManagementPage() {
                                 <p className="text-xs text-slate-500">{getTimeRequestTypeDescription(item.type)}</p>
                               </div>
                             </td>
+                            <td className="px-5 py-4 text-sm text-slate-700">
+                              {item.type === "remote" ? (
+                                <div className="space-y-1">
+                                  <p className="text-xs font-semibold text-slate-500">Giờ bắt đầu làm việc từ xa</p>
+                                  <p className="font-medium text-slate-800">
+                                    {formatTimeVi(item.remote_check_in)} · {formatDateViLong(item.remote_check_in)}
+                                  </p>
+                                  <p className="pt-1 text-xs font-semibold text-slate-500">Giờ kết thúc làm việc từ xa</p>
+                                  <p className="font-medium text-slate-800">
+                                    {formatTimeVi(item.remote_check_out)} · {formatDateViLong(item.remote_check_out)}
+                                  </p>
+                                </div>
+                              ) : (
+                                <span className="text-slate-400">--</span>
+                              )}
+                            </td>
                             <td className="px-5 py-4 text-sm font-semibold text-slate-700">
                               {formatMinutesLabel(item.type, item.minutes)}
                               {item.type === "unauthorized_leave" && typeof item.minutes !== "number" ? (
                                 <p className="mt-1 text-xs font-normal text-slate-500">Đơn không phép có thể không nhập phút.</p>
+                              ) : null}
+                              {item.type === "remote" ? (
+                                <p className="mt-1 text-xs font-normal text-indigo-600">Làm việc từ xa</p>
+                              ) : null}
+                              {isHolidayRequest && isMissingTimeRequestType(item.type) ? (
+                                <p className="mt-1 text-xs font-normal text-emerald-700">
+                                  {holiday?.name?.trim() || "Ngày nghỉ"}: yêu cầu này không được tính vào thiếu giờ hoặc nghỉ không phép.
+                                </p>
                               ) : null}
                             </td>
                             <td className="px-5 py-4 text-sm text-slate-600">
@@ -687,23 +786,30 @@ export default function TimeRequestManagementPage() {
                             </td>
                             <td className="px-5 py-4">
                               {canReview ? (
-                                <div className="flex items-center justify-end gap-2">
-                                  <button
-                                    type="button"
-                                    disabled={isApproving}
-                                    onClick={() => void handleReviewRequest(item.id, false)}
-                                    className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                  >
-                                    Từ chối
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={isApproving}
-                                    onClick={() => void handleReviewRequest(item.id, true)}
-                                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                  >
-                                    Duyệt
-                                  </button>
+                                <div className="space-y-2 text-right">
+                                  {isHolidayRequest && isMissingTimeRequestType(item.type) ? (
+                                    <p className="text-[11px] font-medium text-emerald-700">
+                                      Cảnh báo: đang duyệt request thiếu giờ trên ngày nghỉ.
+                                    </p>
+                                  ) : null}
+                                  <div className="flex items-center justify-end gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={isApproving}
+                                      onClick={() => void handleReviewRequest(item.id, false)}
+                                      className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                      Từ chối
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={isApproving}
+                                      onClick={() => void handleReviewRequest(item.id, true)}
+                                      className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                      Duyệt
+                                    </button>
+                                  </div>
                                 </div>
                               ) : (
                                 <span className="block text-right text-xs text-slate-400">Đã xử lý</span>

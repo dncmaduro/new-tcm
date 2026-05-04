@@ -3,26 +3,24 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
+import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
-import { ClearableNumberInput } from "@/components/ui/clearable-number-input";
+import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { supabase } from "@/lib/supabase";
-import { getKeyResultWeightHelp, isKeyResultWeightApplied } from "@/lib/constants/goals";
 import {
-  getTaskProgressByType,
-  getTaskProgressHint,
-  TASK_STATUSES,
+  getTaskPriorityOptionLabel,
+  TASK_PRIORITIES,
+  type TaskPriority,
   TASK_TYPES,
-  TaskStatusValue,
   TaskTypeValue,
 } from "@/lib/constants/tasks";
 import {
-  formatKeyResultContributionTypeLabel,
-  formatKeyResultMetric,
-  formatKeyResultTypeLabel,
-  formatKeyResultUnit,
-  getKeyResultProgressHint,
+  getAllowedKeyResultUnitsByType,
+  normalizeKeyResultTypeValue,
+  normalizeKeyResultUnitForType,
+  type KeyResultUnitValue,
 } from "@/lib/constants/key-results";
-import { buildKeyResultProgressMap } from "@/lib/okr";
+import { computeMetricProgress } from "@/lib/okr";
 import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import {
   Select,
@@ -33,7 +31,6 @@ import {
 } from "@/components/ui/select";
 import {
   formatTimelineRangeVi,
-  getTimelineMissingReason,
   getTimelineOutsideParentWarning,
   isDateRangeOrdered,
 } from "@/lib/timeline";
@@ -61,7 +58,6 @@ type KeyResultOption = {
   name: string;
   type: string | null;
   contributionType: string | null;
-  progress: number;
   startValue: number;
   target: number;
   current: number;
@@ -91,15 +87,16 @@ type TaskFormState = {
   keyResultId: string;
   profileId: string;
   type: TaskTypeValue;
+  priority: TaskPriority;
+  unit: KeyResultUnitValue;
+  target: string;
+  current: string;
   name: string;
   description: string;
-  progress: number;
-  status: TaskStatusValue;
   note: string;
   isRecurring: boolean;
   hypothesis: string;
   result: string;
-  weight: number;
   startDate: string;
   endDate: string;
 };
@@ -109,15 +106,16 @@ const defaultForm: TaskFormState = {
   keyResultId: "",
   profileId: "",
   type: "kpi",
+  priority: "medium",
+  unit: "count",
+  target: "",
+  current: "0",
   name: "",
   description: "",
-  progress: 0,
-  status: TASK_STATUSES[0].value,
   note: "",
   isRecurring: false,
   hypothesis: "",
   result: "",
-  weight: 1,
   startDate: "",
   endDate: "",
 };
@@ -136,6 +134,27 @@ function NewTaskPageContent() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [profileSearchKeyword, setProfileSearchKeyword] = useState("");
   const [isProfileSelectOpen, setIsProfileSelectOpen] = useState(false);
+
+  const buildTaskMetricDraft = (
+    taskType: TaskTypeValue,
+    keyResult?: Pick<KeyResultOption, "type" | "unit" | "target"> | null,
+  ) => {
+    const normalizedType = keyResult ? normalizeKeyResultTypeValue(keyResult.type) : taskType;
+    const effectiveType = taskType || normalizedType;
+    const unit = normalizeKeyResultUnitForType(effectiveType, keyResult?.unit ?? null);
+
+    return {
+      type: effectiveType,
+      unit,
+      target:
+        effectiveType === "okr"
+          ? "100"
+          : keyResult && Number.isFinite(keyResult.target) && Number(keyResult.target) > 0
+            ? String(Number(keyResult.target))
+            : "",
+      current: "0",
+    };
+  };
 
   const showPermissionDebug = searchParams.get("debugPermission") === "1";
   const queryGoalId = searchParams.get("goalId");
@@ -193,15 +212,15 @@ function NewTaskPageContent() {
           { data: keyResultsData, error: keyResultsError },
           { data: allDepartmentsData },
           { data: profilesData, error: profilesError },
-        ] =
-          await Promise.all([
-            supabase
-              .from("goals")
-              .select("id,name,department_id,start_date,end_date,created_at")
-              .order("created_at", { ascending: false }),
-            supabase
-              .from("key_results")
-              .select(`
+        ] = await Promise.all([
+          supabase
+            .from("goals")
+            .select("id,name,department_id,start_date,end_date,created_at")
+            .order("created_at", { ascending: false }),
+          supabase
+            .from("key_results")
+            .select(
+              `
                 id,
                 goal_id,
                 name,
@@ -223,20 +242,24 @@ function NewTaskPageContent() {
                   start_date,
                   end_date
                 )
-              `)
-              .order("created_at", { ascending: false }),
-            supabase.from("departments").select("id,name"),
-            supabase.from("profiles").select("id,name,email").order("name", { ascending: true }),
-          ]);
+              `,
+            )
+            .order("created_at", { ascending: false }),
+          supabase.from("departments").select("id,name"),
+          supabase.from("profiles").select("id,name,email").order("name", { ascending: true }),
+        ]);
 
         if (!isActive) {
           return;
         }
 
-        const departmentsById = (allDepartmentsData ?? []).reduce<Record<string, string>>((acc, department) => {
-          acc[String(department.id)] = String(department.name);
-          return acc;
-        }, {});
+        const departmentsById = (allDepartmentsData ?? []).reduce<Record<string, string>>(
+          (acc, department) => {
+            acc[String(department.id)] = String(department.name);
+            return acc;
+          },
+          {},
+        );
 
         const mappedGoals: GoalOption[] = (goalsData ?? []).map((goal) => {
           const departmentId = goal.department_id ? String(goal.department_id) : null;
@@ -244,48 +267,50 @@ function NewTaskPageContent() {
             id: String(goal.id),
             name: String(goal.name),
             departmentId,
-            departmentName: departmentId ? departmentsById[departmentId] ?? null : null,
+            departmentName: departmentId ? (departmentsById[departmentId] ?? null) : null,
             startDate: goal.start_date ? String(goal.start_date) : null,
             endDate: goal.end_date ? String(goal.end_date) : null,
           };
         });
-        const baseKeyResults = ((keyResultsData ?? []) as Array<Record<string, unknown>>).map((keyResult) => {
-          const goalRow = Array.isArray(keyResult.goal) ? keyResult.goal[0] ?? null : keyResult.goal ?? null;
-          return {
-            id: String(keyResult.id),
-            goalId: keyResult.goal_id ? String(keyResult.goal_id) : null,
-            goalName: goalRow?.name ? String(goalRow.name) : "Chưa có mục tiêu",
-            goalType: goalRow?.type ? String(goalRow.type) : null,
-            name: String(keyResult.name),
-            type: keyResult.type ? String(keyResult.type) : null,
-            contributionType: keyResult.contribution_type ? String(keyResult.contribution_type) : null,
-            startValue:
-              typeof keyResult.start_value === "number"
-                ? keyResult.start_value
-                : Number(keyResult.start_value ?? 0),
-            target: typeof keyResult.target === "number" ? keyResult.target : Number(keyResult.target ?? 0),
-            current: typeof keyResult.current === "number" ? keyResult.current : Number(keyResult.current ?? 0),
-            unit: keyResult.unit ? String(keyResult.unit) : null,
-            weight: typeof keyResult.weight === "number" ? keyResult.weight : Number(keyResult.weight ?? 1),
-            startDate: keyResult.start_date ? String(keyResult.start_date) : null,
-            endDate: keyResult.end_date ? String(keyResult.end_date) : null,
-          };
-        });
-
-        const keyResultProgressById = buildKeyResultProgressMap(
-          baseKeyResults.map((keyResult) => ({
-            id: keyResult.id,
-            goal_id: keyResult.goalId,
-            start_value: keyResult.startValue,
-            current: keyResult.current,
-            target: keyResult.target,
-          })),
+        const baseKeyResults = ((keyResultsData ?? []) as Array<Record<string, unknown>>).map(
+          (keyResult) => {
+            const goalRow = Array.isArray(keyResult.goal)
+              ? (keyResult.goal[0] ?? null)
+              : (keyResult.goal ?? null);
+            return {
+              id: String(keyResult.id),
+              goalId: keyResult.goal_id ? String(keyResult.goal_id) : null,
+              goalName: goalRow?.name ? String(goalRow.name) : "Chưa có mục tiêu",
+              goalType: goalRow?.type ? String(goalRow.type) : null,
+              name: String(keyResult.name),
+              type: keyResult.type ? String(keyResult.type) : null,
+              contributionType: keyResult.contribution_type
+                ? String(keyResult.contribution_type)
+                : null,
+              startValue:
+                typeof keyResult.start_value === "number"
+                  ? keyResult.start_value
+                  : Number(keyResult.start_value ?? 0),
+              target:
+                typeof keyResult.target === "number"
+                  ? keyResult.target
+                  : Number(keyResult.target ?? 0),
+              current:
+                typeof keyResult.current === "number"
+                  ? keyResult.current
+                  : Number(keyResult.current ?? 0),
+              unit: keyResult.unit ? String(keyResult.unit) : null,
+              weight:
+                typeof keyResult.weight === "number"
+                  ? keyResult.weight
+                  : Number(keyResult.weight ?? 1),
+              startDate: keyResult.start_date ? String(keyResult.start_date) : null,
+              endDate: keyResult.end_date ? String(keyResult.end_date) : null,
+            };
+          },
         );
-        const mappedKeyResults: KeyResultOption[] = baseKeyResults.map((keyResult) => ({
-          ...keyResult,
-          progress: keyResultProgressById[keyResult.id] ?? 0,
-        }));
-        setKeyResultOptions(mappedKeyResults);
+
+        setKeyResultOptions(baseKeyResults);
 
         setGoalOptions(mappedGoals);
 
@@ -316,36 +341,43 @@ function NewTaskPageContent() {
         }
 
         const preselectedKeyResult = queryKeyResultId
-          ? mappedKeyResults.find((item) => item.id === queryKeyResultId) ?? null
+          ? (baseKeyResults.find((item) => item.id === queryKeyResultId) ?? null)
           : null;
 
-        const preselectedGoal =
-          (preselectedKeyResult
-            ? mappedGoals.find((item) => item.id === preselectedKeyResult.goalId) ?? null
-            : null) ??
-          (queryGoalId ? mappedGoals.find((item) => item.id === queryGoalId) : null) ??
-          (queryDepartmentId
-            ? mappedGoals.find((item) => item.departmentId === queryDepartmentId)
-            : null) ??
-          null;
+        const goalFromKeyResult = preselectedKeyResult
+          ? (mappedGoals.find((item) => item.id === preselectedKeyResult.goalId) ?? null)
+          : null;
+        const goalFromQuery = queryGoalId
+          ? (mappedGoals.find((item) => item.id === queryGoalId) ?? null)
+          : null;
+        const goalFromDepartment = queryDepartmentId
+          ? (mappedGoals.find((item) => item.departmentId === queryDepartmentId) ?? null)
+          : null;
+        const preselectedGoal = goalFromKeyResult ?? goalFromQuery ?? goalFromDepartment;
 
         const preselectedGoalId = preselectedGoal?.id ?? "";
         const preselectedGoalKeyResult =
           preselectedKeyResult && preselectedKeyResult.goalId === preselectedGoalId
             ? preselectedKeyResult
-            : mappedKeyResults.find((item) => item.goalId === preselectedGoalId) ?? null;
+            : (baseKeyResults.find((item) => item.goalId === preselectedGoalId) ?? null);
 
         setForm((prev) => ({
           ...prev,
           goalId: preselectedGoalId,
           keyResultId: preselectedGoalKeyResult?.id ?? "",
-        profileId: mappedProfiles[0]?.id ?? "",
-        startDate: preselectedGoalKeyResult?.startDate ?? "",
-        endDate: preselectedGoalKeyResult?.endDate ?? "",
-        isRecurring: false,
-        hypothesis: "",
-        result: "",
-      }));
+          profileId: mappedProfiles[0]?.id ?? "",
+          startDate: preselectedGoalKeyResult?.startDate ?? "",
+          endDate: preselectedGoalKeyResult?.endDate ?? "",
+          isRecurring: false,
+          hypothesis: "",
+          result: "",
+          ...buildTaskMetricDraft(
+            preselectedGoalKeyResult
+              ? normalizeKeyResultTypeValue(preselectedGoalKeyResult.type)
+              : prev.type,
+            preselectedGoalKeyResult,
+          ),
+        }));
       } catch {
         if (isActive) {
           setGoalOptions([]);
@@ -368,9 +400,11 @@ function NewTaskPageContent() {
       form.name.trim().length > 0 &&
       form.keyResultId.trim().length > 0 &&
       form.profileId.trim().length > 0 &&
-      form.status.trim().length > 0 &&
-      Number.isFinite(form.weight) &&
-      form.weight > 0,
+      form.unit.trim().length > 0 &&
+      Number.isFinite(Number(form.target)) &&
+      Number(form.target) > 0 &&
+      Number.isFinite(Number(form.current)) &&
+      Number(form.current) >= 0,
     [form],
   );
   const filteredProfileOptions = useMemo(() => {
@@ -391,15 +425,18 @@ function NewTaskPageContent() {
     [form.goalId, keyResultOptions],
   );
 
-  const selectedGoal = useMemo(
-    () => goalOptions.find((goal) => goal.id === form.goalId) ?? null,
-    [form.goalId, goalOptions],
-  );
-
   const selectedKeyResult = useMemo(
     () => keyResultOptions.find((keyResult) => keyResult.id === form.keyResultId) ?? null,
     [form.keyResultId, keyResultOptions],
   );
+  const derivedProgress = (() => {
+    const safeCurrent = Number(form.current);
+    const safeTarget = Number(form.target);
+    if (!Number.isFinite(safeCurrent) || !Number.isFinite(safeTarget) || safeTarget <= 0) {
+      return 0;
+    }
+    return computeMetricProgress(safeCurrent, 0, safeTarget);
+  })();
   const taskTimelineInputError = useMemo(() => {
     if ((form.startDate && !form.endDate) || (!form.startDate && form.endDate)) {
       return "Vui lòng nhập đủ ngày bắt đầu và ngày kết thúc hoặc để trống cả hai.";
@@ -445,6 +482,17 @@ function NewTaskPageContent() {
       return;
     }
 
+    const safeTarget = Number(form.target);
+    if (!Number.isFinite(safeTarget) || safeTarget <= 0) {
+      setSubmitError("Chỉ tiêu cần đạt phải lớn hơn 0.");
+      return;
+    }
+    const safeCurrent = Number(form.current);
+    if (!Number.isFinite(safeCurrent) || safeCurrent < 0) {
+      setSubmitError("Giá trị hiện tại phải lớn hơn hoặc bằng 0.");
+      return;
+    }
+
     setSubmitError(null);
     setIsSubmitting(true);
 
@@ -455,20 +503,34 @@ function NewTaskPageContent() {
         profile_id: form.profileId,
         creator_profile_id: creatorProfileId,
         type: form.type,
+        priority: form.priority,
+        unit: form.unit,
+        target: safeTarget,
+        current: safeCurrent,
         name: form.name.trim(),
         description: form.description.trim() || null,
-        progress: getTaskProgressByType(form.type, form.status, form.progress),
-        status: form.status,
         note: form.note.trim() || null,
         is_recurring: form.isRecurring,
         hypothesis: form.hypothesis.trim() || null,
         result: form.result.trim() || null,
-        weight: Math.round(form.weight),
+        weight: 1,
         start_date: form.startDate.trim() || null,
         end_date: form.endDate.trim() || null,
       };
 
-      const { error } = await supabase.from("tasks").insert(payload);
+      let { error } = await supabase.from("tasks").insert(payload);
+      if (
+        error &&
+        typeof error.message === "string" &&
+        (error.message.includes("column") || error.message.includes("schema")) &&
+        error.message.includes("current")
+      ) {
+        const retry = await supabase.from("tasks").insert({
+          ...payload,
+          current: undefined,
+        });
+        error = retry.error;
+      }
       if (error) {
         if (error.code === "42501") {
           setSubmitError(
@@ -499,17 +561,10 @@ function NewTaskPageContent() {
         <WorkspaceSidebar active="tasks" />
 
         <div className="flex h-screen w-full flex-1 flex-col overflow-hidden lg:pl-[var(--workspace-sidebar-width)]">
-          <header className="border-b border-slate-200 bg-[#f3f5fa] px-4 py-4 lg:px-7">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm text-slate-500">
-                <Link href="/tasks" className="hover:text-slate-700">
-                  Công việc
-                </Link>
-                <span className="px-2">›</span>
-                <span className="font-semibold text-slate-700">Tạo công việc mới</span>
-              </div>
-            </div>
-          </header>
+          <WorkspacePageHeader
+            title="Tạo công việc mới"
+            items={[{ label: "Quản lý công việc", href: "/tasks" }, { label: "Tạo công việc mới" }]}
+          />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-7">
             {showPermissionDebug && permissionDebug ? (
@@ -566,7 +621,9 @@ function NewTaskPageContent() {
                     <input
                       id="task-name"
                       value={form.name}
-                      onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
+                      onChange={(event) =>
+                        setForm((prev) => ({ ...prev, name: event.target.value }))
+                      }
                       className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       placeholder="Ví dụ: Hoàn thành mục tiêu Media"
                     />
@@ -579,31 +636,31 @@ function NewTaskPageContent() {
                         value={form.goalId || undefined}
                         onValueChange={(value) => {
                           const nextGoalId = value;
-                          const nextGoalKeyResults = keyResultOptions.filter((keyResult) => keyResult.goalId === nextGoalId);
+                          const nextGoalKeyResults = keyResultOptions.filter(
+                            (keyResult) => keyResult.goalId === nextGoalId,
+                          );
+                          const resolvedKeyResult =
+                            nextGoalId && form.keyResultId
+                              ? (keyResultOptions.find(
+                                  (keyResult) =>
+                                    keyResult.id === form.keyResultId &&
+                                    keyResult.goalId === nextGoalId,
+                                ) ??
+                                nextGoalKeyResults[0] ??
+                                null)
+                              : (nextGoalKeyResults[0] ?? null);
                           setForm((prev) => ({
                             ...prev,
                             goalId: nextGoalId,
-                            keyResultId:
-                              nextGoalId && prev.keyResultId
-                                ? keyResultOptions.find(
-                                    (keyResult) =>
-                                      keyResult.id === prev.keyResultId && keyResult.goalId === nextGoalId,
-                                  )?.id ?? nextGoalKeyResults[0]?.id ?? ""
-                                : nextGoalKeyResults[0]?.id ?? "",
-                            startDate:
-                              (nextGoalId && prev.keyResultId
-                                ? keyResultOptions.find(
-                                    (keyResult) =>
-                                      keyResult.id === prev.keyResultId && keyResult.goalId === nextGoalId,
-                                  )?.startDate
-                                : nextGoalKeyResults[0]?.startDate) ?? "",
-                            endDate:
-                              (nextGoalId && prev.keyResultId
-                                ? keyResultOptions.find(
-                                    (keyResult) =>
-                                      keyResult.id === prev.keyResultId && keyResult.goalId === nextGoalId,
-                                  )?.endDate
-                                : nextGoalKeyResults[0]?.endDate) ?? "",
+                            keyResultId: resolvedKeyResult?.id ?? "",
+                            startDate: resolvedKeyResult?.startDate ?? "",
+                            endDate: resolvedKeyResult?.endDate ?? "",
+                            ...buildTaskMetricDraft(
+                              resolvedKeyResult
+                                ? normalizeKeyResultTypeValue(resolvedKeyResult.type)
+                                : prev.type,
+                              resolvedKeyResult,
+                            ),
                           }));
                         }}
                       >
@@ -634,6 +691,12 @@ function NewTaskPageContent() {
                             keyResultId: value,
                             startDate: matchedKeyResult?.startDate ?? "",
                             endDate: matchedKeyResult?.endDate ?? "",
+                            ...buildTaskMetricDraft(
+                              matchedKeyResult
+                                ? normalizeKeyResultTypeValue(matchedKeyResult.type)
+                                : prev.type,
+                              matchedKeyResult,
+                            ),
                           }));
                         }}
                       >
@@ -650,78 +713,6 @@ function NewTaskPageContent() {
                       </Select>
                     </div>
                   </div>
-
-                  {selectedGoal ? (
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                      <p className="font-semibold text-slate-800">{selectedGoal.name}</p>
-                      <p className="mt-1">
-                        {selectedGoal.departmentName
-                          ? `Đơn vị chính: ${selectedGoal.departmentName}.`
-                          : "Mục tiêu này chưa có thông tin phòng ban."}
-                        {" "}
-                        {availableKeyResults.length > 0
-                          ? `Có ${availableKeyResults.length} key result để gắn công việc.`
-                          : "Mục tiêu này chưa có key result nên chưa thể tạo task theo schema mới."}
-                        {" "}
-                        {selectedGoal.startDate || selectedGoal.endDate
-                          ? `Khung thời gian mục tiêu: ${formatTimelineRangeVi(selectedGoal.startDate, selectedGoal.endDate, {
-                              fallback: "Chưa đặt khung thời gian",
-                            })}.`
-                          : "Mục tiêu này chưa có ngày bắt đầu/kết thúc."}
-                      </p>
-                    </div>
-                  ) : null}
-
-                  {selectedKeyResult ? (
-                    <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">{selectedKeyResult.name}</p>
-                          <p className="mt-1 text-xs text-slate-600">
-                            {formatKeyResultTypeLabel(selectedKeyResult.type)} /{" "}
-                            {formatKeyResultContributionTypeLabel(selectedKeyResult.contributionType)}
-                            {" · "}
-                            Start {formatKeyResultMetric(selectedKeyResult.startValue, selectedKeyResult.unit)}
-                            {" · "}
-                            Tiến độ {selectedKeyResult.progress}% · {formatKeyResultMetric(selectedKeyResult.current, selectedKeyResult.unit)}
-                            {" / "}
-                            {formatKeyResultMetric(selectedKeyResult.target, selectedKeyResult.unit)} · {formatKeyResultUnit(selectedKeyResult.unit)}
-                          </p>
-                          <p className="mt-1 text-xs text-slate-600">
-                            Khung thời gian của KR:{" "}
-                            {formatTimelineRangeVi(selectedKeyResult.startDate, selectedKeyResult.endDate, {
-                              fallback: "KR chưa có mốc thời gian",
-                            })}
-                          </p>
-                          <p className="mt-1 text-[11px] text-slate-500">
-                            {getTimelineMissingReason(
-                              selectedKeyResult.startDate,
-                              selectedKeyResult.endDate,
-                              "KR chưa có mốc thời gian",
-                              "Mốc thời gian KR không hợp lệ",
-                            ) ?? "Ngày của công việc được autofill từ KR nhưng vẫn có thể chỉnh riêng."}
-                          </p>
-                        </div>
-                        <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-blue-700">
-                          {isKeyResultWeightApplied(
-                            selectedKeyResult.goalType,
-                            selectedKeyResult.contributionType,
-                          )
-                            ? `Trọng số KR ${Math.round(Number(selectedKeyResult.weight ?? 1))}%`
-                            : "Trọng số KR không áp dụng"}
-                        </span>
-                      </div>
-                      <p className="mt-3 text-[11px] text-slate-500">
-                        {getKeyResultProgressHint(selectedKeyResult.unit)}
-                      </p>
-                      <p className="mt-1 text-[11px] text-slate-500">
-                        {getKeyResultWeightHelp(
-                          selectedKeyResult.goalType,
-                          selectedKeyResult.contributionType,
-                        )}
-                      </p>
-                    </div>
-                  ) : null}
 
                   {selectedKeyResult ? (
                     <div className="grid gap-4 md:grid-cols-2">
@@ -740,7 +731,9 @@ function NewTaskPageContent() {
                         />
                       </div>
                       <div className="space-y-1.5">
-                        <label className="text-sm font-semibold text-slate-700">Ngày kết thúc</label>
+                        <label className="text-sm font-semibold text-slate-700">
+                          Ngày kết thúc
+                        </label>
                         <input
                           type="date"
                           min={form.startDate || undefined}
@@ -755,29 +748,34 @@ function NewTaskPageContent() {
                         />
                       </div>
                       <p className="md:col-span-2 text-[11px] text-slate-500">
-                        Giá trị ban đầu được autofill từ Key Result đã chọn. Khi lưu, mốc thời gian này thuộc riêng công việc và không làm thay đổi KR.
+                        Giá trị ban đầu được autofill từ Key Result đã chọn. Khi lưu, mốc thời gian
+                        này thuộc riêng công việc và không làm thay đổi KR.
                       </p>
                     </div>
                   ) : null}
 
                   {taskTimelineInputError ? (
-                    <p className="-mt-2 text-xs text-rose-600">
-                      {taskTimelineInputError}
-                    </p>
+                    <p className="-mt-2 text-xs text-rose-600">{taskTimelineInputError}</p>
                   ) : null}
 
                   {selectedKeyResult && !taskTimelineInputError && taskTimelineAlignmentWarning ? (
                     <p className="-mt-2 text-xs text-amber-600">
                       {taskTimelineAlignmentWarning} Khung thời gian của KR:{" "}
-                      {formatTimelineRangeVi(selectedKeyResult.startDate, selectedKeyResult.endDate, {
-                        fallback: "KR chưa có mốc thời gian",
-                      })}
+                      {formatTimelineRangeVi(
+                        selectedKeyResult.startDate,
+                        selectedKeyResult.endDate,
+                        {
+                          fallback: "KR chưa có mốc thời gian",
+                        },
+                      )}
                     </p>
                   ) : null}
 
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">Người phụ trách *</label>
+                      <label className="text-sm font-semibold text-slate-700">
+                        Người phụ trách *
+                      </label>
                       <Select
                         open={isProfileSelectOpen}
                         onOpenChange={(open) => {
@@ -828,26 +826,7 @@ function NewTaskPageContent() {
                     </div>
                   </div>
 
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <label htmlFor="task-weight" className="text-sm font-semibold text-slate-700">
-                        Trọng số task *
-                      </label>
-                      <ClearableNumberInput
-                        id="task-weight"
-                        min={1}
-                        value={form.weight}
-                        onValueChange={(value) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            weight: value,
-                          }))
-                        }
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                      />
-                      <p className="text-xs text-slate-500">Nhập theo phần trăm, ví dụ `15` nghĩa là 15%.</p>
-                    </div>
-
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                     <div className="space-y-1.5">
                       <label className="text-sm font-semibold text-slate-700">Loại task</label>
                       <Select
@@ -856,7 +835,8 @@ function NewTaskPageContent() {
                           setForm((prev) => ({
                             ...prev,
                             type: value,
-                            progress: getTaskProgressByType(value, prev.status, prev.progress),
+                            unit: normalizeKeyResultUnitForType(value, prev.unit),
+                            target: value === "okr" ? "100" : prev.target,
                           }))
                         }
                       >
@@ -874,89 +854,101 @@ function NewTaskPageContent() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">Trạng thái</label>
+                      <label className="text-sm font-semibold text-slate-700">Độ ưu tiên *</label>
                       <Select
-                        value={form.status}
-                        onValueChange={(value: TaskStatusValue) =>
+                        value={form.priority}
+                        onValueChange={(value: TaskPriority) =>
                           setForm((prev) => ({
                             ...prev,
-                            status: value,
-                            progress: getTaskProgressByType(prev.type, value, prev.progress),
+                            priority: value,
                           }))
                         }
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="Chọn trạng thái" />
+                          <SelectValue placeholder="Chọn độ ưu tiên" />
                         </SelectTrigger>
                         <SelectContent>
-                          {TASK_STATUSES.map((status) => (
-                            <SelectItem key={status.value} value={status.value}>
-                              {status.label}
+                          {TASK_PRIORITIES.map((priority) => (
+                            <SelectItem key={priority.value} value={priority.value}>
+                              {getTaskPriorityOptionLabel(priority.value)}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
-                  </div>
 
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                    {getTaskProgressHint(form.type)}
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-1.5">
-                      <label htmlFor="task-progress" className="text-sm font-semibold text-slate-700">
-                        Tiến độ (%)
+                      <label className="text-sm font-semibold text-slate-700">
+                        Phân loại chỉ tiêu
                       </label>
-                      <ClearableNumberInput
-                        id="task-progress"
-                        value={getTaskProgressByType(form.type, form.status, form.progress)}
+                      <Select
+                        value={form.unit}
+                        disabled={form.type === "okr"}
+                        onValueChange={(value: KeyResultUnitValue) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            unit: normalizeKeyResultUnitForType(prev.type, value),
+                          }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue
+                            placeholder={
+                              form.type === "okr" ? "Task OKR dùng phần trăm" : "Chọn loại chỉ tiêu"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {getAllowedKeyResultUnitsByType(form.type).map((unit) => (
+                            <SelectItem key={unit.value} value={unit.value}>
+                              {unit.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-semibold text-slate-700">
+                        Chỉ tiêu cần đạt *
+                      </label>
+                      <FormattedNumberInput
+                        value={form.target}
                         disabled={form.type === "okr"}
                         onValueChange={(value) =>
                           setForm((prev) => ({
                             ...prev,
-                            progress: value,
+                            target: value,
                           }))
                         }
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-slate-100 px-3 text-sm font-semibold text-slate-600 outline-none disabled:cursor-not-allowed"
+                        className={`h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
+                          form.type === "okr"
+                            ? "cursor-not-allowed bg-slate-50 text-slate-400"
+                            : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        }`}
+                        placeholder={form.type === "okr" ? "Task OKR luôn là 100%" : "Ví dụ: 40"}
                       />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">Cách tính tiến độ</label>
-                      <div className="flex h-11 items-center rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700">
-                        {form.type === "okr"
-                          ? `${TASK_STATUSES.find((item) => item.value === form.status)?.label ?? "Cần làm"} = ${getTaskProgressByType(form.type, form.status, form.progress)}%`
-                          : "Nhập trực tiếp theo % hoàn thành của task. Giá trị này chỉ phản ánh execution progress và không tự cập nhật current của KR."}
-                      </div>
                     </div>
                   </div>
 
                   <div className="space-y-1.5">
-                    <label htmlFor="task-description" className="text-sm font-semibold text-slate-700">Mô tả</label>
+                    <label
+                      htmlFor="task-description"
+                      className="text-sm font-semibold text-slate-700"
+                    >
+                      Mô tả
+                    </label>
                     <textarea
                       id="task-description"
                       rows={4}
                       value={form.description}
-                      onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
+                      onChange={(event) =>
+                        setForm((prev) => ({ ...prev, description: event.target.value }))
+                      }
                       className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       placeholder="Mô tả công việc"
                     />
                   </div>
-
-                  {!form.description.trim() ? (
-                    <div className="space-y-1.5">
-                      <label htmlFor="task-note" className="text-sm font-semibold text-slate-700">Ghi chú</label>
-                      <textarea
-                        id="task-note"
-                        rows={3}
-                        value={form.note}
-                        onChange={(event) => setForm((prev) => ({ ...prev, note: event.target.value }))}
-                        className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                        placeholder="Ghi chú nội bộ"
-                      />
-                    </div>
-                  ) : null}
 
                   <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
                     <Link

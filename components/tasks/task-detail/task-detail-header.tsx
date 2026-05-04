@@ -2,14 +2,11 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ProgressSummary } from "./progress-summary";
-import { TaskStatusBadge } from "./task-status-badge";
 import type { TaskDetailBreadcrumb, TaskHeaderAction } from "./types";
-import { getTaskStatusMeta } from "./utils";
 
 type TaskDetailHeaderProps = {
   breadcrumbs: TaskDetailBreadcrumb[];
   title: string;
-  status: string | null | undefined;
   progress: number;
   assigneeName: string;
   taskTypeLabel: string;
@@ -22,7 +19,6 @@ type TaskDetailHeaderProps = {
 export function TaskDetailHeader({
   breadcrumbs,
   title,
-  status,
   progress,
   assigneeName,
   taskTypeLabel,
@@ -31,8 +27,6 @@ export function TaskDetailHeader({
   primaryAction,
   secondaryAction,
 }: TaskDetailHeaderProps) {
-  const statusMeta = getTaskStatusMeta(status);
-
   return (
     <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-[#f3f5fa]/95 backdrop-blur">
       <div className="px-4 py-4 lg:px-7">
@@ -55,7 +49,6 @@ export function TaskDetailHeader({
           <div className="mt-4 grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <TaskStatusBadge status={status} />
                 <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700">
                   {taskTypeLabel}
                 </span>
@@ -76,13 +69,7 @@ export function TaskDetailHeader({
             </div>
 
             <div className="space-y-3">
-              <ProgressSummary
-                progress={progress}
-                label="Tiến độ task"
-                statusLabel={statusMeta.label}
-                tone={statusMeta.tone}
-                variant="hero"
-              />
+              <ProgressSummary progress={progress} label="Tiến độ task" variant="hero" />
 
               {(secondaryAction || primaryAction) ? (
                 <div className="flex flex-wrap gap-2 xl:justify-end">

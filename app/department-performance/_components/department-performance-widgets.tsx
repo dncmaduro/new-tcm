@@ -571,8 +571,8 @@ export function DepartmentSummaryCards({
         value={summary.businessPerformance}
         unit="%"
         note={`${summary.directKrCount} KR trực tiếp trong phạm vi`}
-        helper="Tổng hợp có trọng số từ các KR trực tiếp, là tín hiệu gần nhất với kết quả kinh doanh."
-        info="Lấy tiến độ của các KR trực tiếp và tính trung bình có trọng số. Với KR direct dạng OKR, hệ số weight sẽ được dùng; nếu không có thì mặc định là 1."
+        helper="Tổng hợp trung bình từ các KR trực tiếp, là tín hiệu gần nhất với kết quả kinh doanh."
+        info="Lấy tiến độ của các KR trực tiếp và tính trung bình. Mỗi KR trực tiếp đóng góp như nhau vào card này."
         badgeLabel="Tín hiệu chính"
         tone="emerald"
         loading={loading}

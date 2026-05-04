@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { isKeyResultWeightApplied } from "@/lib/constants/goals";
 import {
   formatKeyResultContributionTypeLabel,
   formatKeyResultMetric,
@@ -35,8 +34,6 @@ export function LinkedKRCard({
       </article>
     );
   }
-
-  const weightApplied = isKeyResultWeightApplied(keyResult.goal?.type, keyResult.contribution_type);
 
   return (
     <article className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_12px_30px_-24px_rgba(15,23,42,0.35)]">
@@ -89,11 +86,6 @@ export function LinkedKRCard({
           value={formatTimelineRangeVi(keyResult.start_date, keyResult.end_date, {
             fallback: "KR chưa có timeline",
           })}
-        />
-        <StatItem
-          label="Trọng số KR"
-          value={weightApplied ? `${Math.round(Number(keyResult.weight ?? 1))}%` : "Không áp dụng"}
-          hint={weightApplied ? "Tỷ trọng của KR trong mục tiêu." : "Không dùng trong cách tính hiện tại."}
         />
         <StatItem
           label="Goal"

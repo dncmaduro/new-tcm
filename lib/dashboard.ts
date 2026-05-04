@@ -1,65 +1,69 @@
-import { formatGoalTypeLabel, getGoalProgressHelp } from "@/lib/constants/goals";
-import { formatKeyResultMetric, formatKeyResultUnit } from "@/lib/constants/key-results";
-import { buildGoalProgressMap, buildKeyResultProgressMap, getComputedTaskProgress } from "@/lib/okr";
+import { formatGoalTypeLabel } from "@/lib/constants/goals";
+import {
+  getTaskPriorityBadgeClassName,
+  getTaskPriorityLabel,
+  getTaskPriorityScore,
+} from "@/lib/constants/tasks";
+import { getComputedTaskProgress, buildGoalProgressMap, buildKeyResultProgressMap } from "@/lib/okr";
 
-export type DashboardTaskStatus = "todo" | "doing" | "done" | "blocked" | "cancelled";
+export type DashboardRoleScope = "member" | "leader" | "director";
 
-export type DashboardBaseTask = {
+export type DashboardTaskStatus =
+  | "not_started"
+  | "in_progress"
+  | "completed"
+  | "overdue"
+  | "paused";
+
+export type DashboardSummaryCard = {
+  title: string;
+  value: string;
+  note: string;
+  helper?: string | null;
+  tone: "slate" | "blue" | "amber" | "emerald";
+  ctaLabel?: string | null;
+  ctaHref?: string | null;
+};
+
+export type DashboardPriorityTaskItem = {
   id: string;
   name: string;
-  keyResultId: string | null;
-  keyResultName: string;
-  goalId: string | null;
-  goalName: string;
-  assigneeId: string | null;
-  assigneeName: string;
   status: DashboardTaskStatus;
-  progress: number;
-  executionStartAt: string | null;
-  executionEndAt: string | null;
-  createdAt: string | null;
-  updatedAt: string | null;
-};
-
-export type DashboardMyTaskItem = DashboardBaseTask & {
   statusLabel: string;
   statusClassName: string;
-  urgencyRank: number;
+  priorityLabel: string;
+  priorityClassName: string;
+  dueDateAt: string | null;
+  dueLabel: string;
+  dueClassName: string;
+  relationLabel: string | null;
 };
 
-export type DashboardUpcomingTaskItem = {
+export type DashboardDeadlineItem = {
   id: string;
-  title: string;
-  goalName: string;
-  keyResultName: string;
-  endDateAt: string;
-  tag: string;
-  tagClassName: string;
+  name: string;
+  statusLabel: string;
+  statusClassName: string;
+  priorityLabel: string;
+  priorityClassName: string;
+  dueDateAt: string;
+  dueLabel: string;
+  dueClassName: string;
 };
 
 export type DashboardGoalItem = {
   id: string;
   label: string;
-  team: string;
+  scopeLabel: string;
+  typeLabel: string;
   progress: number;
-  goalTypeLabel: string;
-  metricLabel: string;
-  progressHelp: string;
-  statusLabel: string;
-};
-
-export type DashboardTeamPerformanceItem = {
-  id: string;
-  name: string;
-  tasks: number;
-  progress: number;
-  completedRate: number;
+  endDateAt: string | null;
+  timeLabel: string;
+  href: string | null;
 };
 
 export type DashboardActivityItem = {
   id: string;
-  actorName: string;
-  actorInitial: string;
   message: string;
   when: string;
 };
@@ -67,137 +71,133 @@ export type DashboardActivityItem = {
 export type DashboardTrendPoint = {
   key: string;
   label: string;
-  createdCount: number;
   completedCount: number;
 };
 
+export type DashboardAttendanceBadge = {
+  label: string;
+  className: string;
+};
+
 export type DashboardTimeTrackerData = {
+  statusLabel: string;
   checkInAt: string | null;
   checkOutAt: string | null;
   workedMinutes: number;
   isRunning: boolean;
   empty: boolean;
+  isHoliday: boolean;
+  holidayName: string | null;
+  badges: DashboardAttendanceBadge[];
 };
 
-export type DashboardSummaryCard = {
+export type DashboardWeeklyPerformance = {
   title: string;
-  value: string;
-  badge: string;
-  badgeClass: string;
-  note: string;
-  iconClass: string;
+  completedTasks: number;
+  totalTasks: number;
+  progress: number;
+  note: string | null;
+  ctaLabel: string;
+  ctaHref: string;
 };
 
 export type DashboardProfileSummary = {
   profileId: string;
   profileName: string;
   departmentName: string | null;
+  roleScope: DashboardRoleScope;
 };
 
 export type DashboardPayload = {
   profile: DashboardProfileSummary | null;
   summaryCards: DashboardSummaryCard[];
+  priorityTasks: DashboardPriorityTaskItem[];
+  goalProgress: DashboardGoalItem[];
   taskTrend: DashboardTrendPoint[];
   timeTracker: DashboardTimeTrackerData;
-  myTasks: DashboardMyTaskItem[];
-  upcomingDeadlines: DashboardUpcomingTaskItem[];
-  goalProgress: DashboardGoalItem[];
-  teamPerformance: DashboardTeamPerformanceItem[];
+  upcomingDeadlines: DashboardDeadlineItem[];
   recentActivities: DashboardActivityItem[];
+  weeklyPerformance: DashboardWeeklyPerformance;
 };
 
 export const dashboardStatusMeta: Record<
   DashboardTaskStatus,
   { label: string; badgeClassName: string }
 > = {
-  todo: {
-    label: "Cần làm",
-    badgeClassName: "bg-slate-100 text-slate-600",
+  not_started: {
+    label: "Chưa bắt đầu",
+    badgeClassName: "bg-slate-100 text-slate-700",
   },
-  doing: {
+  in_progress: {
     label: "Đang làm",
-    badgeClassName: "bg-blue-50 text-blue-600",
+    badgeClassName: "bg-blue-50 text-blue-700",
   },
-  done: {
+  completed: {
     label: "Hoàn thành",
-    badgeClassName: "bg-emerald-50 text-emerald-600",
+    badgeClassName: "bg-emerald-50 text-emerald-700",
   },
-  blocked: {
-    label: "Bị chặn",
-    badgeClassName: "bg-rose-50 text-rose-600",
+  overdue: {
+    label: "Quá hạn",
+    badgeClassName: "bg-rose-50 text-rose-700",
   },
-  cancelled: {
-    label: "Đã hủy",
-    badgeClassName: "bg-slate-200 text-slate-600",
+  paused: {
+    label: "Tạm dừng",
+    badgeClassName: "bg-amber-50 text-amber-700",
   },
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-const toStartOfDay = (value: Date) => {
-  const date = new Date(value);
-  date.setHours(0, 0, 0, 0);
-  return date;
+const normalizeProgress = (value: number | null | undefined) => {
+  const safe = Number.isFinite(value) ? Number(value) : 0;
+  return Math.min(100, Math.max(0, Math.round(safe)));
+};
+
+export const formatDateKey = (value: Date) => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 };
 
 const toValidDate = (value: string | null | undefined) => {
   if (!value) {
     return null;
   }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split("-").map((item) => Number(item));
+    const localDate = new Date(year, (month ?? 1) - 1, day ?? 1);
+    return Number.isNaN(localDate.getTime()) ? null : localDate;
+  }
+
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
-};
-
-export const normalizeDashboardStatus = (value: string | null | undefined): DashboardTaskStatus => {
-  const raw = (value ?? "").trim().toLowerCase();
-  if (raw === "blocked") {
-    return "blocked";
-  }
-  if (raw === "doing" || raw === "in_progress" || raw === "inprogress" || raw === "review") {
-    return "doing";
-  }
-  if (raw === "done" || raw === "completed") {
-    return "done";
-  }
-  if (raw === "cancelled" || raw === "canceled") {
-    return "cancelled";
-  }
-  return "todo";
-};
-
-export const getInitial = (name: string) => {
-  const parts = name
-    .split(" ")
-    .map((item) => item.trim())
-    .filter(Boolean);
-  if (!parts.length) {
-    return "•";
-  }
-  if (parts.length === 1) {
-    return parts[0].slice(0, 1).toUpperCase();
-  }
-  return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
 };
 
 export const formatDateShortVi = (value: string | null) => {
   if (!value) {
     return "Chưa đặt";
   }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
+
+  const date = toValidDate(value);
+  if (!date) {
     return "Không hợp lệ";
   }
+
   return new Intl.DateTimeFormat("vi-VN", { dateStyle: "short" }).format(date);
 };
 
 export const formatTimeVi = (value: string | null) => {
   if (!value) {
-    return "-:--";
+    return "--:--";
   }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "-:--";
+
+  const date = toValidDate(value);
+  if (!date) {
+    return "--:--";
   }
+
   return new Intl.DateTimeFormat("vi-VN", {
     hour: "2-digit",
     minute: "2-digit",
@@ -215,8 +215,15 @@ export const formatHoursShort = (minutes: number) => {
   if (minutes <= 0) {
     return "0h";
   }
-  const hours = minutes / 60;
-  return `${hours.toFixed(hours >= 10 ? 0 : 1)}h`;
+
+  const hourPart = Math.floor(minutes / 60);
+  const minutePart = minutes % 60;
+
+  if (minutePart === 0) {
+    return `${hourPart}h`;
+  }
+
+  return `${hourPart}h ${minutePart}p`;
 };
 
 export const getWorkedMinutes = (
@@ -228,39 +235,17 @@ export const getWorkedMinutes = (
     return 0;
   }
 
-  const checkIn = new Date(checkInAt);
-  if (Number.isNaN(checkIn.getTime())) {
+  const checkIn = toValidDate(checkInAt);
+  if (!checkIn) {
     return 0;
   }
 
-  const end = checkOutAt ? new Date(checkOutAt) : now;
-  if (Number.isNaN(end.getTime())) {
+  const end = checkOutAt ? toValidDate(checkOutAt) : now;
+  if (!end) {
     return 0;
   }
 
   return Math.max(0, Math.round((end.getTime() - checkIn.getTime()) / 60000));
-};
-
-export const buildTaskTrend = (tasks: Array<{ createdAt: string | null; updatedAt: string | null; status: DashboardTaskStatus }>) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  return Array.from({ length: 7 }, (_, offset) => {
-    const day = new Date(today);
-    day.setDate(today.getDate() - (6 - offset));
-    const dayKey = day.toISOString().slice(0, 10);
-    const createdCount = tasks.filter((task) => task.createdAt?.slice(0, 10) === dayKey).length;
-    const completedCount = tasks.filter(
-      (task) => task.status === "done" && task.updatedAt?.slice(0, 10) === dayKey,
-    ).length;
-
-    return {
-      key: dayKey,
-      label: new Intl.DateTimeFormat("vi-VN", { weekday: "short" }).format(day),
-      createdCount,
-      completedCount,
-    } satisfies DashboardTrendPoint;
-  });
 };
 
 export const getDateDiffFromToday = (value: string | null | undefined, now = new Date()) => {
@@ -269,18 +254,18 @@ export const getDateDiffFromToday = (value: string | null | undefined, now = new
     return null;
   }
 
-  const today = toStartOfDay(now);
-  targetDate.setHours(0, 0, 0, 0);
-  return Math.round((targetDate.getTime() - today.getTime()) / DAY_MS);
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const target = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+  return Math.round((target.getTime() - today.getTime()) / DAY_MS);
 };
 
 export const getDateUrgencyMeta = (value: string | null | undefined, now = new Date()) => {
   const diffDays = getDateDiffFromToday(value, now);
   if (diffDays === null) {
     return {
-      rank: 5,
-      label: "Chưa đặt",
-      className: "text-slate-400",
+      rank: 4,
+      label: "Chưa đặt hạn",
+      className: "bg-slate-100 text-slate-600",
     };
   }
 
@@ -288,63 +273,58 @@ export const getDateUrgencyMeta = (value: string | null | undefined, now = new D
     return {
       rank: 0,
       label: "Quá hạn",
-      className: "text-rose-500",
+      className: "bg-rose-50 text-rose-700",
     };
   }
+
   if (diffDays === 0) {
     return {
       rank: 1,
       label: "Hôm nay",
-      className: "text-rose-500",
+      className: "bg-amber-50 text-amber-700",
     };
   }
+
   if (diffDays <= 3) {
     return {
       rank: 2,
-      label: "Cao",
-      className: "text-rose-500",
+      label: `${diffDays} ngày nữa`,
+      className: "bg-amber-50 text-amber-700",
     };
   }
-  if (diffDays <= 7) {
-    return {
-      rank: 3,
-      label: "Trung bình",
-      className: "text-amber-500",
-    };
-  }
+
   return {
-    rank: 4,
-    label: "Thấp",
-    className: "text-emerald-500",
+    rank: 3,
+    label: formatDateShortVi(value ?? null),
+    className: "bg-slate-100 text-slate-600",
   };
 };
 
 export const formatRelativeTimeVi = (value: string | null, now = new Date()) => {
-  if (!value) {
-    return "Vừa xong";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Không rõ";
+  const date = toValidDate(value);
+  if (!date) {
+    return "Vừa cập nhật";
   }
 
   const diffMs = now.getTime() - date.getTime();
   const diffMinutes = Math.max(0, Math.round(diffMs / 60000));
   if (diffMinutes < 1) {
-    return "Vừa xong";
+    return "Vừa cập nhật";
   }
   if (diffMinutes < 60) {
     return `${diffMinutes} phút trước`;
   }
+
   const diffHours = Math.round(diffMinutes / 60);
   if (diffHours < 24) {
     return `${diffHours} giờ trước`;
   }
+
   const diffDays = Math.round(diffHours / 24);
   if (diffDays < 7) {
     return `${diffDays} ngày trước`;
   }
+
   return formatDateShortVi(value);
 };
 
@@ -358,31 +338,37 @@ const toEntityLabel = (entityType: string | null) => {
   if (entityType === "task") {
     return "công việc";
   }
+  if (entityType === "time_request") {
+    return "yêu cầu thời gian";
+  }
   return "bản ghi";
 };
 
-const toStatusLabel = (status: string | null) => {
-  const normalized = status?.trim().toLowerCase() ?? "";
-  if (normalized === "draft") {
+const toRawStatusLabel = (status: string | null) => {
+  const raw = (status ?? "").trim().toLowerCase();
+  if (!raw) {
+    return "Không rõ";
+  }
+  if (raw === "draft") {
     return "Nháp";
   }
-  if (normalized === "active") {
+  if (raw === "active") {
     return "Đang hoạt động";
   }
-  if (normalized === "completed" || normalized === "done") {
+  if (raw === "completed" || raw === "done") {
     return "Hoàn thành";
   }
-  if (normalized === "cancelled") {
+  if (raw === "cancelled" || raw === "canceled") {
     return "Đã hủy";
   }
-  if (normalized === "todo") {
-    return "Cần làm";
+  if (raw === "todo") {
+    return "Chưa bắt đầu";
   }
-  if (normalized === "doing" || normalized === "in_progress") {
+  if (raw === "doing" || raw === "in_progress" || raw === "review") {
     return "Đang làm";
   }
-  if (normalized === "blocked") {
-    return "Bị chặn";
+  if (raw === "paused" || raw === "blocked" || raw === "on_hold") {
+    return "Tạm dừng";
   }
   return status ?? "Không rõ";
 };
@@ -393,13 +379,11 @@ const getEntityName = (oldValue: Record<string, unknown> | null, newValue: Recor
 };
 
 export const formatActivityMessage = ({
-  actorName,
   action,
   entityType,
   oldValue,
   newValue,
 }: {
-  actorName: string;
   action: string | null;
   entityType: string | null;
   oldValue: Record<string, unknown> | null;
@@ -407,24 +391,111 @@ export const formatActivityMessage = ({
 }) => {
   const entityLabel = toEntityLabel(entityType);
   const entityName = getEntityName(oldValue, newValue);
-  const oldProgress = typeof oldValue?.progress === "number" ? Math.round(oldValue.progress) : null;
-  const newProgress = typeof newValue?.progress === "number" ? Math.round(newValue.progress) : null;
+  const oldProgress =
+    typeof oldValue?.progress === "number" ? Math.round(oldValue.progress) : null;
+  const newProgress =
+    typeof newValue?.progress === "number" ? Math.round(newValue.progress) : null;
   const oldStatus = oldValue?.status ? String(oldValue.status) : null;
   const newStatus = newValue?.status ? String(newValue.status) : null;
 
+  if (action?.includes("approved")) {
+    return `${entityName ?? "Yêu cầu"} đã được duyệt`;
+  }
+  if (action?.includes("rejected")) {
+    return `${entityName ?? "Yêu cầu"} đã bị từ chối`;
+  }
   if (action?.includes("created")) {
-    return `${actorName} đã tạo ${entityLabel}${entityName ? ` ${entityName}` : ""}`;
+    return `Đã tạo ${entityLabel}${entityName ? ` ${entityName}` : ""}`;
   }
   if (action?.includes("deleted")) {
-    return `${actorName} đã xóa ${entityLabel}${entityName ? ` ${entityName}` : ""}`;
+    return `Đã xóa ${entityLabel}${entityName ? ` ${entityName}` : ""}`;
   }
   if (oldProgress !== null && newProgress !== null && oldProgress !== newProgress) {
-    return `${actorName} đã cập nhật tiến độ ${entityLabel} từ ${oldProgress}% lên ${newProgress}%`;
+    return `Đã cập nhật tiến độ ${entityLabel}${entityName ? ` ${entityName}` : ""} từ ${oldProgress}% lên ${newProgress}%`;
   }
   if (oldStatus && newStatus && oldStatus !== newStatus) {
-    return `${actorName} đã đổi trạng thái ${entityLabel} từ ${toStatusLabel(oldStatus)} sang ${toStatusLabel(newStatus)}`;
+    return `Đã đổi trạng thái ${entityLabel}${entityName ? ` ${entityName}` : ""} từ ${toRawStatusLabel(oldStatus)} sang ${toRawStatusLabel(newStatus)}`;
   }
-  return `${actorName} đã cập nhật ${entityLabel}${entityName ? ` ${entityName}` : ""}`;
+  return `Đã cập nhật ${entityLabel}${entityName ? ` ${entityName}` : ""}`;
+};
+
+export const getDashboardTaskProgress = (task: {
+  current?: number | null;
+  target?: number | null;
+  progress?: number | null;
+  type?: string | null;
+}) =>
+  normalizeProgress(
+    getComputedTaskProgress({
+      current: task.current ?? null,
+      target: task.target ?? null,
+      progress: task.progress ?? null,
+      type: task.type ?? null,
+    }),
+  );
+
+export const normalizeDashboardTaskStatus = ({
+  rawStatus,
+  progress,
+  dueDateAt,
+  now = new Date(),
+}: {
+  rawStatus?: string | null;
+  progress: number;
+  dueDateAt?: string | null;
+  now?: Date;
+}): DashboardTaskStatus => {
+  const normalizedRaw = (rawStatus ?? "").trim().toLowerCase();
+
+  if (normalizedRaw === "paused" || normalizedRaw === "blocked" || normalizedRaw === "on_hold") {
+    return "paused";
+  }
+
+  if (normalizedRaw === "done" || normalizedRaw === "completed" || progress >= 100) {
+    return "completed";
+  }
+
+  const dueDiff = getDateDiffFromToday(dueDateAt ?? null, now);
+  if (dueDiff !== null && dueDiff < 0) {
+    return "overdue";
+  }
+
+  if (normalizedRaw === "doing" || normalizedRaw === "in_progress" || normalizedRaw === "review") {
+    return "in_progress";
+  }
+
+  if (progress > 0) {
+    return "in_progress";
+  }
+
+  return "not_started";
+};
+
+export const buildCompletedTrend = (
+  tasks: Array<{ updatedAt: string | null; status: DashboardTaskStatus }>,
+  now = new Date(),
+) => {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  return Array.from({ length: 7 }, (_, offset) => {
+    const day = new Date(today);
+    day.setDate(today.getDate() - (6 - offset));
+    const dayKey = formatDateKey(day);
+    const completedCount = tasks.filter((task) => {
+      if (task.status !== "completed" || !task.updatedAt) {
+        return false;
+      }
+
+      const updatedAt = toValidDate(task.updatedAt);
+      return updatedAt ? formatDateKey(updatedAt) === dayKey : false;
+    }).length;
+
+    return {
+      key: dayKey,
+      label: new Intl.DateTimeFormat("vi-VN", { weekday: "short" }).format(day),
+      completedCount,
+    } satisfies DashboardTrendPoint;
+  });
 };
 
 export const buildGoalProgressItems = ({
@@ -432,6 +503,7 @@ export const buildGoalProgressItems = ({
   goalDepartments,
   keyResults,
   departmentNamesById,
+  now = new Date(),
 }: {
   goals: Array<{
     id: string;
@@ -441,6 +513,7 @@ export const buildGoalProgressItems = ({
     department_id: string | null;
     target: number | null;
     unit: string | null;
+    end_date: string | null;
   }>;
   goalDepartments: Array<{
     goal_id: string | null;
@@ -457,6 +530,7 @@ export const buildGoalProgressItems = ({
     weight?: number | null;
   }>;
   departmentNamesById: Record<string, string>;
+  now?: Date;
 }) => {
   const keyResultProgressMap = buildKeyResultProgressMap(keyResults);
   const goalProgressMap = buildGoalProgressMap(
@@ -464,80 +538,102 @@ export const buildGoalProgressItems = ({
     keyResults,
     keyResultProgressMap,
   );
+
   const participantDepartmentIdsByGoalId = goalDepartments.reduce<Record<string, string[]>>((acc, item) => {
     const goalId = item.goal_id ? String(item.goal_id) : null;
     const departmentId = item.department_id ? String(item.department_id) : null;
     if (!goalId || !departmentId) {
       return acc;
     }
+
     if (!acc[goalId]) {
       acc[goalId] = [];
     }
+
     if (!acc[goalId].includes(departmentId)) {
       acc[goalId].push(departmentId);
     }
+
     return acc;
   }, {});
 
-  return goals.map((goal) => ({
-    id: goal.id,
-    label: goal.name,
-    team: (() => {
-      const participantIds = participantDepartmentIdsByGoalId[goal.id] ?? [];
-      const primaryDepartmentName = goal.department_id
-        ? departmentNamesById[goal.department_id] ?? "Không rõ phòng ban"
-        : null;
-      const participantNames = participantIds
-        .map((departmentId) => departmentNamesById[departmentId] ?? "Không rõ phòng ban")
-        .filter((name, index, array) => array.indexOf(name) === index);
+  return goals.map((goal) => {
+    const participantIds = participantDepartmentIdsByGoalId[goal.id] ?? [];
+    const scopeNames = [
+      goal.department_id ? departmentNamesById[goal.department_id] ?? null : null,
+      ...participantIds.map((departmentId) => departmentNamesById[departmentId] ?? null),
+    ].filter((item, index, array): item is string => Boolean(item) && array.indexOf(item) === index);
 
-      if (primaryDepartmentName && participantNames.length === 0) {
-        return primaryDepartmentName;
-      }
-      if (!primaryDepartmentName && participantNames.length === 0) {
-        return "Chưa gán phòng ban";
-      }
-      if (primaryDepartmentName && participantNames.length > 0) {
-        return `${primaryDepartmentName} + ${Math.max(0, participantNames.length - 1)} phòng ban`;
-      }
-      return participantNames.join(", ");
-    })(),
-    progress: goalProgressMap[goal.id] ?? 0,
-    goalTypeLabel: formatGoalTypeLabel(goal.type),
-    metricLabel:
-      goal.target !== null || goal.unit
-        ? `${formatKeyResultMetric(goal.target, goal.unit)} · ${formatKeyResultUnit(goal.unit)}`
-        : "Chưa đặt chỉ tiêu mục tiêu",
-    progressHelp: getGoalProgressHelp(goal.type),
-    statusLabel: goal.status ? String(goal.status) : "Không rõ",
-  }));
-};
+    const diffDays = getDateDiffFromToday(goal.end_date, now);
+    const timeLabel =
+      diffDays === null
+        ? "Chưa đặt ngày kết thúc"
+        : diffDays < 0
+          ? `Quá ${Math.abs(diffDays)} ngày`
+          : diffDays === 0
+            ? "Kết thúc hôm nay"
+            : `${diffDays} ngày còn lại`;
 
-export const sortMyTasks = (tasks: DashboardMyTaskItem[]) => {
-  return tasks
-    .slice()
-    .sort((a, b) => {
-      if (a.urgencyRank !== b.urgencyRank) {
-        return a.urgencyRank - b.urgencyRank;
-      }
-      if (a.status !== b.status) {
-        const aPriority = a.status === "doing" ? 0 : a.status === "blocked" ? 1 : a.status === "todo" ? 2 : 3;
-        const bPriority = b.status === "doing" ? 0 : b.status === "blocked" ? 1 : b.status === "todo" ? 2 : 3;
-        return aPriority - bPriority;
-      }
-      const aSchedule = toValidDate(a.executionEndAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
-      const bSchedule = toValidDate(b.executionEndAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
-      return aSchedule - bSchedule;
-    });
-};
-
-export const toDashboardTaskProgress = (task: {
-  type?: string | null;
-  status?: string | null;
-  progress?: number | null;
-}) =>
-  getComputedTaskProgress({
-    type: task.type ?? null,
-    status: task.status ?? null,
-    progress: task.progress ?? null,
+    return {
+      id: goal.id,
+      label: goal.name,
+      scopeLabel: scopeNames.join(" · ") || "Chưa gán phòng ban",
+      typeLabel: formatGoalTypeLabel(goal.type),
+      progress: goalProgressMap[goal.id] ?? 0,
+      endDateAt: goal.end_date,
+      timeLabel,
+      href: `/goals/${goal.id}`,
+    } satisfies DashboardGoalItem;
   });
+};
+
+export const sortPriorityTasks = <
+  TTask extends {
+    status: DashboardTaskStatus;
+    dueDateAt: string | null;
+    priority: string | null;
+  },
+>(
+  tasks: TTask[],
+  now = new Date(),
+) => {
+  return tasks.slice().sort((left, right) => {
+    const priorityDiff = getTaskPriorityScore(right.priority) - getTaskPriorityScore(left.priority);
+    if (priorityDiff !== 0) {
+      return priorityDiff;
+    }
+
+    const leftDue = getDateDiffFromToday(left.dueDateAt, now);
+    const rightDue = getDateDiffFromToday(right.dueDateAt, now);
+
+    const leftGroup = left.status === "overdue" ? 0 : leftDue === 0 ? 1 : 2;
+    const rightGroup = right.status === "overdue" ? 0 : rightDue === 0 ? 1 : 2;
+
+    if (leftGroup !== rightGroup) {
+      return leftGroup - rightGroup;
+    }
+
+    const leftDueTs = toValidDate(left.dueDateAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+    const rightDueTs = toValidDate(right.dueDateAt)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+    return leftDueTs - rightDueTs;
+  });
+};
+
+export const toTaskBadgeMeta = ({
+  status,
+  priority,
+  dueDateAt,
+  now = new Date(),
+}: {
+  status: DashboardTaskStatus;
+  priority: string | null;
+  dueDateAt: string | null;
+  now?: Date;
+}) => ({
+  statusLabel: dashboardStatusMeta[status].label,
+  statusClassName: dashboardStatusMeta[status].badgeClassName,
+  priorityLabel: getTaskPriorityLabel(priority),
+  priorityClassName: getTaskPriorityBadgeClassName(priority),
+  dueLabel: getDateUrgencyMeta(dueDateAt, now).label,
+  dueClassName: getDateUrgencyMeta(dueDateAt, now).className,
+});

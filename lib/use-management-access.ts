@@ -27,7 +27,7 @@ const buildDepartmentPathLabel = (
     }
 
     visitedDepartmentIds.add(currentDepartmentId);
-    const department = departmentsById[currentDepartmentId];
+    const department: ManagedDepartment | undefined = departmentsById[currentDepartmentId];
     if (!department) {
       break;
     }

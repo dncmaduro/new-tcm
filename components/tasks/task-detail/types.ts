@@ -1,4 +1,5 @@
-import type { TaskStatusValue, TaskTypeValue } from "@/lib/constants/tasks";
+import type { KeyResultUnitValue } from "@/lib/constants/key-results";
+import type { TaskPriority, TaskStatusValue, TaskTypeValue } from "@/lib/constants/tasks";
 
 export type GoalLiteRow = {
   id: string;
@@ -33,15 +34,19 @@ export type TaskRow = {
   type: string | null;
   name: string;
   description: string | null;
+  current: number | null;
   progress: number | null;
   weight: number | null;
   status: string | null;
+  unit: string | null;
+  target: number | null;
   note: string | null;
   is_recurring: boolean | null;
   hypothesis: string | null;
   result: string | null;
   start_date: string | null;
   end_date: string | null;
+  priority: string | null;
   created_at: string | null;
   updated_at: string | null;
   key_result?: KeyResultLiteRow | null;
@@ -61,7 +66,10 @@ export type TaskFormState = {
   hypothesis: string;
   result: string;
   type: TaskTypeValue;
+  priority: TaskPriority;
   status: TaskStatusValue;
+  unit: KeyResultUnitValue;
+  target: string;
   progress: number;
   weight: number;
 };

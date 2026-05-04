@@ -1,22 +1,48 @@
 "use client";
 
 import Link from "next/link";
+import { ActionIcon, Tooltip } from "@mantine/core";
+import { Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   getTimeRequestReason,
   getTimeRequestTypeLabel,
   type TimeRequestType,
 } from "@/lib/constants/time-requests";
+import {
+  collectAttendanceIds,
+  mergeAttendanceRowsByDate,
+  normalizeAttendanceId,
+  type AttendanceTimeRow,
+} from "@/lib/attendance";
+import {
+  calculateAttendanceMetrics,
+  type AttendanceStatus,
+} from "@/lib/attendance-metrics";
+import {
+  buildHolidayMap,
+  fetchHolidaysInRange,
+  type Holiday,
+} from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
-
-type AttendanceStatus = "ontime" | "late" | "missing";
+import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
 
 type CalendarDay = {
   day: number;
   status?: AttendanceStatus;
   checkIn?: string;
   checkOut?: string;
+  dateIso?: string;
+  workingMinutes?: number;
+  requiredWorkingMinutes?: number;
+  lateMinutes?: number;
+  earlyLeaveMinutes?: number;
   missingMinutes?: number;
+  overtimeMinutes?: number;
+  isHoliday?: boolean;
+  holiday?: Holiday | null;
+  sourceType?: "machine" | "remote";
+  sourceNote?: string;
 };
 
 type CorrectionRequest = {
@@ -28,6 +54,8 @@ type CorrectionRequest = {
   minutes: number;
   reason: string;
   status: "pending" | "approved" | "rejected";
+  remoteCheckIn: string | null;
+  remoteCheckOut: string | null;
 };
 
 type TimeRequestReviewerRow = {
@@ -43,24 +71,33 @@ type TimeRequestRow = {
   minutes: number | null;
   reason: string | null;
   created_at: string | null;
+  remote_check_in: string | null;
+  remote_check_out: string | null;
   time_request_reviewers?: TimeRequestReviewerRow[] | null;
 };
 
-type TimesRow = {
+type ProfileAttendanceRow = {
   id: string;
-  profile_id: string | null;
-  date: string;
-  check_in: string | null;
-  check_out: string | null;
-  created_at: string | null;
-  updated_at: string | null;
+  attendance_id: number | null;
+};
+
+type TimesProfileLinkRow = {
+  attendance_id: number | null;
+  created_at?: string | null;
 };
 
 type AttendanceStats = {
   totalWorkDays: number;
+  requiredWorkDays: number;
   absentDays: number;
   missingMinutes: number;
   overtimeMinutes: number;
+};
+
+type AttendanceBinding = {
+  directAttendanceId: number | null;
+  attendanceIds: number[];
+  linkedAttendanceIds: number[];
 };
 
 type TimesheetOverviewProps = {
@@ -74,12 +111,6 @@ type TimesheetOverviewProps = {
 };
 
 const weekDayLabels = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
-const WORK_START_MINUTES = 8 * 60 + 10;
-const WORK_END_MINUTES = 17 * 60 + 30;
-const BREAK_START_MINUTES = 12 * 60;
-const BREAK_END_MINUTES = 13 * 60 + 30;
-const REQUIRED_WORK_MINUTES =
-  WORK_END_MINUTES - WORK_START_MINUTES - (BREAK_END_MINUTES - BREAK_START_MINUTES);
 const ABSENT_NO_DATA_MISSING_MINUTES = 8 * 60;
 const REQUESTS_PAGE_SIZE = 10;
 
@@ -104,71 +135,6 @@ function toLocalTimeHHmm(value: string | null | undefined) {
   const hh = String(date.getHours()).padStart(2, "0");
   const mm = String(date.getMinutes()).padStart(2, "0");
   return `${hh}:${mm}`;
-}
-
-function toMinutesFromTimestamp(value: string | null | undefined) {
-  if (!value) {
-    return null;
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-  return date.getHours() * 60 + date.getMinutes();
-}
-
-function overlapMinutes(start: number, end: number, windowStart: number, windowEnd: number) {
-  const overlapStart = Math.max(start, windowStart);
-  const overlapEnd = Math.min(end, windowEnd);
-  return Math.max(0, overlapEnd - overlapStart);
-}
-
-function workedMinutesExcludingBreak(startMinutes: number, endMinutes: number) {
-  if (endMinutes <= startMinutes) {
-    return 0;
-  }
-
-  const raw = endMinutes - startMinutes;
-  const breakOverlap = overlapMinutes(
-    startMinutes,
-    endMinutes,
-    BREAK_START_MINUTES,
-    BREAK_END_MINUTES,
-  );
-  return Math.max(0, raw - breakOverlap);
-}
-
-function calculateAttendanceMetrics(checkIn: string | null, checkOut: string | null) {
-  if (!checkIn || !checkOut) {
-    return {
-      status: "missing" as AttendanceStatus,
-      missingMinutes: REQUIRED_WORK_MINUTES,
-      overtimeMinutes: 0,
-    };
-  }
-
-  const checkInMinutes = toMinutesFromTimestamp(checkIn);
-  const checkOutMinutes = toMinutesFromTimestamp(checkOut);
-  if (checkInMinutes === null || checkOutMinutes === null || checkOutMinutes <= checkInMinutes) {
-    return {
-      status: "missing" as AttendanceStatus,
-      missingMinutes: REQUIRED_WORK_MINUTES,
-      overtimeMinutes: 0,
-    };
-  }
-
-  const inScheduleStart = Math.max(checkInMinutes, WORK_START_MINUTES);
-  const inScheduleEnd = Math.min(checkOutMinutes, WORK_END_MINUTES);
-  const inScheduleWorkedMinutes = workedMinutesExcludingBreak(inScheduleStart, inScheduleEnd);
-  const actualWorkedMinutes = workedMinutesExcludingBreak(checkInMinutes, checkOutMinutes);
-
-  const missingMinutes = Math.max(0, REQUIRED_WORK_MINUTES - inScheduleWorkedMinutes);
-  const overtimeMinutes = Math.max(0, actualWorkedMinutes - REQUIRED_WORK_MINUTES);
-  return {
-    status: missingMinutes > 0 ? ("late" as AttendanceStatus) : ("ontime" as AttendanceStatus),
-    missingMinutes,
-    overtimeMinutes,
-  };
 }
 
 function formatMonthLabel(value: Date) {
@@ -208,9 +174,33 @@ function formatWeekdayVi(isoDate: string) {
   return new Intl.DateTimeFormat("vi-VN", { weekday: "long" }).format(date);
 }
 
+function hasValidRemoteWindow(startValue: string | null, endValue: string | null) {
+  if (!startValue || !endValue) {
+    return false;
+  }
+
+  const startDate = new Date(startValue);
+  const endDate = new Date(endValue);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+    return false;
+  }
+
+  return endDate.getTime() > startDate.getTime();
+}
+
+function resolveRequestMinutes(item: TimeRequestRow) {
+  if (item.type === "remote") {
+    return calculateWorkedMinutesBetweenTimestamps(item.remote_check_in, item.remote_check_out) ?? 0;
+  }
+
+  return typeof item.minutes === "number" && Number.isFinite(item.minutes)
+    ? Math.max(0, item.minutes)
+    : 0;
+}
+
 function escapeCsvValue(value: string | number | null | undefined) {
   const normalized = value == null ? "" : String(value);
-  const escaped = normalized.replace(/"/g, "\"\"");
+  const escaped = normalized.replace(/"/g, '""');
   return `"${escaped}"`;
 }
 
@@ -223,16 +213,6 @@ function sanitizeFileSegment(value: string | null | undefined) {
     .toLowerCase();
 }
 
-function StatusDot({ status }: { status: AttendanceStatus }) {
-  if (status === "missing") {
-    return <span className="h-2.5 w-2.5 rounded-full bg-rose-500" />;
-  }
-  if (status === "late") {
-    return <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />;
-  }
-  return <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />;
-}
-
 function toDateOnlyIso(value: string | null | undefined) {
   if (!value) {
     return "";
@@ -240,7 +220,9 @@ function toDateOnlyIso(value: string | null | undefined) {
   return value.slice(0, 10);
 }
 
-function toRequestStatus(reviewers: TimeRequestReviewerRow[] | null | undefined): CorrectionRequest["status"] {
+function toRequestStatus(
+  reviewers: TimeRequestReviewerRow[] | null | undefined,
+): CorrectionRequest["status"] {
   if (!reviewers || reviewers.length === 0) {
     return "pending";
   }
@@ -291,17 +273,15 @@ export function TimesheetOverview({
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
+  const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
-  const [attendanceStats, setAttendanceStats] = useState<AttendanceStats>({
-    totalWorkDays: 0,
-    absentDays: 0,
-    missingMinutes: 0,
-    overtimeMinutes: 0,
-  });
   const [isLoadingAttendance, setIsLoadingAttendance] = useState<boolean>(false);
   const [attendanceError, setAttendanceError] = useState<string>("");
+  const [attendanceBinding, setAttendanceBinding] = useState<AttendanceBinding | null>(null);
   const [correctionRequests, setCorrectionRequests] = useState<CorrectionRequest[]>([]);
-  const [requestFilter, setRequestFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
+  const [requestFilter, setRequestFilter] = useState<"all" | "pending" | "approved" | "rejected">(
+    "all",
+  );
   const [requestPage, setRequestPage] = useState(1);
   const [isLoadingRequests, setIsLoadingRequests] = useState<boolean>(false);
   const [requestsError, setRequestsError] = useState<string>("");
@@ -311,6 +291,28 @@ export function TimesheetOverview({
   useEffect(() => {
     setOpenedFormDateIso(null);
   }, [profileId]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadHolidays = async () => {
+      const { start, end } = getMonthDateRange(selectedMonth);
+      const endInclusive = new Date(end.getFullYear(), end.getMonth(), 0);
+      const data = await fetchHolidaysInRange(supabase, start, endInclusive);
+
+      if (!isActive) {
+        return;
+      }
+
+      setHolidays(data);
+    };
+
+    void loadHolidays();
+
+    return () => {
+      isActive = false;
+    };
+  }, [selectedMonth]);
 
   useEffect(() => {
     if (!profileId) {
@@ -333,7 +335,9 @@ export function TimesheetOverview({
 
         const { data, error } = await supabase
           .from("time_requests")
-          .select("id,date,type,minutes,reason,created_at,time_request_reviewers(is_approved,reviewed_at,created_at)")
+          .select(
+            "id,date,type,minutes,reason,remote_check_in,remote_check_out,created_at,time_request_reviewers(is_approved,reviewed_at,created_at)",
+          )
           .eq("profile_id", profileId)
           .gte("date", startIso)
           .lt("date", endIso)
@@ -347,24 +351,32 @@ export function TimesheetOverview({
           return;
         }
 
-        const mapped = ((data ?? []) as TimeRequestRow[]).map((item) => ({
-          id: item.id,
-          requestDateISO: toDateOnlyIso(item.created_at),
-          correctionDateISO: toDateOnlyIso(item.date),
-          type: getTimeRequestTypeLabel(item.type),
-          typeValue: item.type ?? null,
-          minutes:
-            typeof item.minutes === "number" && Number.isFinite(item.minutes) ? Math.max(0, item.minutes) : 0,
-          reason: item.reason?.trim() ? item.reason.trim() : getTimeRequestReason(item.type, item.minutes),
-          status: toRequestStatus(item.time_request_reviewers),
-        }));
+        const mapped = ((data ?? []) as TimeRequestRow[]).map((item) => {
+          const resolvedMinutes = resolveRequestMinutes(item);
+
+          return {
+            id: item.id,
+            requestDateISO: toDateOnlyIso(item.created_at),
+            correctionDateISO: toDateOnlyIso(item.date),
+            type: getTimeRequestTypeLabel(item.type),
+            typeValue: item.type ?? null,
+            minutes: resolvedMinutes,
+            reason: item.reason?.trim()
+              ? item.reason.trim()
+              : getTimeRequestReason(item.type, resolvedMinutes),
+            status: toRequestStatus(item.time_request_reviewers),
+            remoteCheckIn: item.remote_check_in ?? null,
+            remoteCheckOut: item.remote_check_out ?? null,
+          };
+        });
 
         setCorrectionRequests(mapped);
       } catch (error) {
         if (!isActive) {
           return;
         }
-        const message = error instanceof Error ? error.message : "Không thể tải yêu cầu điều chỉnh công.";
+        const message =
+          error instanceof Error ? error.message : "Không thể tải yêu cầu điều chỉnh công.";
         setRequestsError(message);
         setCorrectionRequests([]);
       } finally {
@@ -385,13 +397,8 @@ export function TimesheetOverview({
     if (!profileId) {
       setIsLoadingAttendance(false);
       setAttendanceError(profileError ?? "");
+      setAttendanceBinding(null);
       setCalendarDays([]);
-      setAttendanceStats({
-        totalWorkDays: 0,
-        absentDays: 0,
-        missingMinutes: 0,
-        overtimeMinutes: 0,
-      });
       return;
     }
 
@@ -406,13 +413,61 @@ export function TimesheetOverview({
         const startIso = toIsoDate(start.getFullYear(), start.getMonth() + 1, start.getDate());
         const endIso = toIsoDate(end.getFullYear(), end.getMonth() + 1, end.getDate());
 
+        const [
+          { data: profileAttendanceData, error: profileAttendanceError },
+          { data: attendanceLinkRows, error: attendanceLinkError },
+        ] = await Promise.all([
+          supabase.from("profiles").select("id,attendance_id").eq("id", profileId).maybeSingle(),
+          supabase
+            .from("times_profiles")
+            .select("attendance_id,created_at")
+            .eq("profile_id", profileId),
+        ]);
+
+        if (profileAttendanceError) {
+          throw profileAttendanceError;
+        }
+
+        if (attendanceLinkError) {
+          throw attendanceLinkError;
+        }
+
+        const directAttendanceId = normalizeAttendanceId(
+          (profileAttendanceData as ProfileAttendanceRow | null)?.attendance_id,
+        );
+        const linkedAttendanceIds = collectAttendanceIds(
+          (attendanceLinkRows ?? []) as TimesProfileLinkRow[],
+        );
+        const attendanceIds = collectAttendanceIds([
+          directAttendanceId,
+          ...((attendanceLinkRows ?? []) as TimesProfileLinkRow[]),
+        ]);
+
+        if (!isActive) {
+          return;
+        }
+
+        setAttendanceBinding({
+          directAttendanceId,
+          attendanceIds,
+          linkedAttendanceIds,
+        });
+
+        if (attendanceIds.length === 0) {
+          setAttendanceError("");
+          setCalendarDays([]);
+          return;
+        }
+
         const { data, error } = await supabase
           .from("times")
-          .select("id,profile_id,date,check_in,check_out,created_at,updated_at")
-          .eq("profile_id", profileId)
+          .select("id,attendance_id,date,check_in,check_out,created_at,updated_at")
+          .in("attendance_id", attendanceIds)
           .gte("date", startIso)
           .lt("date", endIso)
-          .order("date", { ascending: true });
+          .order("date", { ascending: true })
+          .order("updated_at", { ascending: false })
+          .order("created_at", { ascending: false });
 
         if (error) {
           throw error;
@@ -422,13 +477,9 @@ export function TimesheetOverview({
           return;
         }
 
-        const typedRows = (data ?? []) as TimesRow[];
+        const typedRows = mergeAttendanceRowsByDate((data ?? []) as AttendanceTimeRow[]);
+        const holidayMap = buildHolidayMap(holidays);
         const byDay = new Map<number, CalendarDay>();
-        let totalWorkDays = 0;
-        let absentDays = 0;
-        let missingMinutes = 0;
-        let overtimeMinutes = 0;
-
         typedRows.forEach((row) => {
           const dateValue = new Date(`${row.date}T00:00:00`);
           if (Number.isNaN(dateValue.getTime())) {
@@ -436,33 +487,44 @@ export function TimesheetOverview({
           }
           const day = dateValue.getDate();
           const isSunday = dateValue.getDay() === 0;
+          const holiday = holidayMap.get(row.date) ?? null;
 
           if (isSunday) {
             byDay.set(day, {
               day,
+              dateIso: row.date,
               checkIn: toLocalTimeHHmm(row.check_in),
               checkOut: toLocalTimeHHmm(row.check_out),
+              workingMinutes: calculateWorkedMinutesBetweenTimestamps(row.check_in, row.check_out) ?? 0,
+              requiredWorkingMinutes: 0,
+              lateMinutes: 0,
+              earlyLeaveMinutes: 0,
               missingMinutes: 0,
+              overtimeMinutes: 0,
+              isHoliday: Boolean(holiday),
+              holiday,
+              sourceType: "machine",
             });
             return;
           }
 
-          const metrics = calculateAttendanceMetrics(row.check_in, row.check_out);
+          const metrics = calculateAttendanceMetrics(row.date, row.check_in, row.check_out, holidays);
           byDay.set(day, {
             day,
+            dateIso: row.date,
             status: metrics.status,
             checkIn: toLocalTimeHHmm(row.check_in),
             checkOut: toLocalTimeHHmm(row.check_out),
+            workingMinutes: metrics.workingMinutes,
+            requiredWorkingMinutes: metrics.requiredWorkingMinutes,
+            lateMinutes: metrics.lateMinutes,
+            earlyLeaveMinutes: metrics.earlyLeaveMinutes,
             missingMinutes: metrics.missingMinutes,
+            overtimeMinutes: metrics.overtimeMinutes,
+            isHoliday: metrics.isHoliday,
+            holiday: metrics.holiday,
+            sourceType: "machine",
           });
-
-          if (metrics.status === "missing") {
-            absentDays += 1;
-          } else {
-            totalWorkDays += 1;
-          }
-          missingMinutes += metrics.missingMinutes;
-          overtimeMinutes += metrics.overtimeMinutes;
         });
 
         const totalDaysInMonth = new Date(
@@ -485,42 +547,63 @@ export function TimesheetOverview({
           if (byDay.has(day)) {
             continue;
           }
-          const isSunday = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), day).getDay() === 0;
+          const dateValue = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), day);
+          const dateIso = toIsoDate(
+            selectedMonth.getFullYear(),
+            selectedMonth.getMonth() + 1,
+            day,
+          );
+          const isSunday = dateValue.getDay() === 0;
+          const holiday = holidayMap.get(dateIso) ?? null;
           if (isSunday) {
+            continue;
+          }
+
+          if (holiday) {
+            byDay.set(day, {
+              day,
+              dateIso,
+              status: "holiday",
+              checkIn: "--:--",
+              checkOut: "--:--",
+              workingMinutes: 0,
+              requiredWorkingMinutes: 0,
+              lateMinutes: 0,
+              earlyLeaveMinutes: 0,
+              missingMinutes: 0,
+              overtimeMinutes: 0,
+              isHoliday: true,
+              holiday,
+            });
             continue;
           }
 
           byDay.set(day, {
             day,
+            dateIso,
             status: "missing",
             checkIn: "--:--",
             checkOut: "--:--",
+            workingMinutes: 0,
+            requiredWorkingMinutes: ABSENT_NO_DATA_MISSING_MINUTES,
+            lateMinutes: 0,
+            earlyLeaveMinutes: 0,
             missingMinutes: ABSENT_NO_DATA_MISSING_MINUTES,
+            overtimeMinutes: 0,
+            isHoliday: false,
+            holiday: null,
           });
-          absentDays += 1;
-          missingMinutes += ABSENT_NO_DATA_MISSING_MINUTES;
         }
 
         setCalendarDays(Array.from(byDay.values()));
-        setAttendanceStats({
-          totalWorkDays,
-          absentDays,
-          missingMinutes,
-          overtimeMinutes,
-        });
       } catch (error) {
         if (!isActive) {
           return;
         }
         const message = error instanceof Error ? error.message : "Không thể tải dữ liệu chấm công.";
         setAttendanceError(message);
+        setAttendanceBinding(null);
         setCalendarDays([]);
-        setAttendanceStats({
-          totalWorkDays: 0,
-          absentDays: 0,
-          missingMinutes: 0,
-          overtimeMinutes: 0,
-        });
       } finally {
         if (isActive) {
           setIsLoadingAttendance(false);
@@ -533,17 +616,22 @@ export function TimesheetOverview({
     return () => {
       isActive = false;
     };
-  }, [profileError, profileId, selectedMonth]);
+  }, [holidays, profileError, profileId, selectedMonth]);
 
   const calendarYear = selectedMonth.getFullYear();
   const calendarMonth = selectedMonth.getMonth() + 1;
   const firstWeekdayIndex = new Date(calendarYear, calendarMonth - 1, 1).getDay();
   const totalDays = new Date(calendarYear, calendarMonth, 0).getDate();
   const cellCount = Math.ceil((firstWeekdayIndex + totalDays) / 7) * 7;
+  const holidayByDate = useMemo(() => buildHolidayMap(holidays), [holidays]);
 
   const approvedLeaveMinutesByDate = useMemo(() => {
     return correctionRequests.reduce<Record<string, number>>((acc, item) => {
-      if (item.status !== "approved" || item.typeValue !== "approved_leave" || !item.correctionDateISO) {
+      if (
+        item.status !== "approved" ||
+        item.typeValue !== "approved_leave" ||
+        !item.correctionDateISO
+      ) {
         return acc;
       }
 
@@ -552,24 +640,110 @@ export function TimesheetOverview({
     }, {});
   }, [correctionRequests]);
 
+  const approvedRemoteRequestByDate = useMemo(() => {
+    return correctionRequests.reduce<Record<string, CorrectionRequest>>((acc, item) => {
+      if (
+        item.status !== "approved" ||
+        item.typeValue !== "remote" ||
+        !item.correctionDateISO ||
+        !hasValidRemoteWindow(item.remoteCheckIn, item.remoteCheckOut)
+      ) {
+        return acc;
+      }
+
+      if (!acc[item.correctionDateISO]) {
+        acc[item.correctionDateISO] = item;
+      }
+
+      return acc;
+    }, {});
+  }, [correctionRequests]);
+
   const adjustedCalendarDays = useMemo(() => {
-    return calendarDays.map((day) => {
-      const dateIso = toIsoDate(calendarYear, calendarMonth, day.day);
+    const calendarByDay = calendarDays.reduce<Map<number, CalendarDay>>((acc, day) => {
+      acc.set(day.day, day);
+      return acc;
+    }, new Map());
+
+    holidays.forEach((holiday) => {
+      const date = new Date(`${holiday.date}T00:00:00`);
+      if (Number.isNaN(date.getTime())) {
+        return;
+      }
+
+      const day = date.getDate();
+      const existingDay = calendarByDay.get(day);
+      const existingHasAttendance =
+        (existingDay?.checkIn && existingDay.checkIn !== "--:--") ||
+        (existingDay?.checkOut && existingDay.checkOut !== "--:--");
+      calendarByDay.set(day, {
+        ...(existingDay ?? { day }),
+        day,
+        dateIso: holiday.date,
+        status: existingHasAttendance ? "ontime" : ("holiday" as AttendanceStatus),
+        checkIn: existingDay?.checkIn ?? "--:--",
+        checkOut: existingDay?.checkOut ?? "--:--",
+        workingMinutes: existingDay?.workingMinutes ?? 0,
+        requiredWorkingMinutes: 0,
+        lateMinutes: 0,
+        earlyLeaveMinutes: 0,
+        missingMinutes: 0,
+        overtimeMinutes: existingDay?.overtimeMinutes ?? 0,
+        isHoliday: true,
+        holiday,
+        sourceType: existingDay?.sourceType,
+        sourceNote: existingDay?.sourceNote,
+      });
+    });
+
+    Object.entries(approvedRemoteRequestByDate).forEach(([dateIso, request]) => {
+      const date = new Date(`${dateIso}T00:00:00`);
+      if (Number.isNaN(date.getTime())) {
+        return;
+      }
+
+      const day = date.getDate();
+      const metrics = calculateAttendanceMetrics(
+        dateIso,
+        request.remoteCheckIn,
+        request.remoteCheckOut,
+        holidays,
+      );
+      calendarByDay.set(day, {
+        ...(calendarByDay.get(day) ?? { day }),
+        day,
+        dateIso,
+        status: metrics.status,
+        checkIn: toLocalTimeHHmm(request.remoteCheckIn),
+        checkOut: toLocalTimeHHmm(request.remoteCheckOut),
+        workingMinutes: metrics.workingMinutes,
+        requiredWorkingMinutes: metrics.requiredWorkingMinutes,
+        lateMinutes: metrics.lateMinutes,
+        earlyLeaveMinutes: metrics.earlyLeaveMinutes,
+        missingMinutes: metrics.missingMinutes,
+        overtimeMinutes: metrics.overtimeMinutes,
+        isHoliday: metrics.isHoliday,
+        holiday: metrics.holiday,
+        sourceType: "remote",
+        sourceNote: "Dữ liệu từ đơn làm việc từ xa",
+      });
+    });
+
+    return Array.from(calendarByDay.values()).map((day) => {
+      const dateIso = day.dateIso ?? toIsoDate(calendarYear, calendarMonth, day.day);
       const approvedLeaveMinutes = approvedLeaveMinutesByDate[dateIso] ?? 0;
       const originalMissingMinutes =
         typeof day.missingMinutes === "number" && Number.isFinite(day.missingMinutes)
           ? Math.max(0, day.missingMinutes)
           : 0;
 
-      if (approvedLeaveMinutes <= 0 || originalMissingMinutes <= 0) {
+      if (day.isHoliday || approvedLeaveMinutes <= 0 || originalMissingMinutes <= 0) {
         return day;
       }
 
       const adjustedMissingMinutes = Math.max(0, originalMissingMinutes - approvedLeaveMinutes);
       const adjustedStatus =
-        day.status && adjustedMissingMinutes === 0
-          ? ("ontime" as AttendanceStatus)
-          : day.status;
+        day.status && adjustedMissingMinutes === 0 ? ("ontime" as AttendanceStatus) : day.status;
 
       return {
         ...day,
@@ -577,15 +751,34 @@ export function TimesheetOverview({
         missingMinutes: adjustedMissingMinutes,
       };
     });
-  }, [approvedLeaveMinutesByDate, calendarDays, calendarMonth, calendarYear]);
+  }, [
+    approvedLeaveMinutesByDate,
+    approvedRemoteRequestByDate,
+    calendarDays,
+    calendarMonth,
+    calendarYear,
+    holidays,
+  ]);
 
   const adjustedAttendanceStats = useMemo(() => {
     return adjustedCalendarDays.reduce<AttendanceStats>(
       (acc, day) => {
+        if (day.isHoliday) {
+          return acc;
+        }
+
         const missingMinutes =
           typeof day.missingMinutes === "number" && Number.isFinite(day.missingMinutes)
             ? Math.max(0, day.missingMinutes)
             : 0;
+        const requiredWorkingMinutes =
+          typeof day.requiredWorkingMinutes === "number" && Number.isFinite(day.requiredWorkingMinutes)
+            ? Math.max(0, day.requiredWorkingMinutes)
+            : 0;
+
+        if (requiredWorkingMinutes > 0) {
+          acc.requiredWorkDays += 1;
+        }
 
         if (day.status === "missing") {
           acc.absentDays += 1;
@@ -595,16 +788,21 @@ export function TimesheetOverview({
         }
 
         acc.missingMinutes += missingMinutes;
+        acc.overtimeMinutes +=
+          typeof day.overtimeMinutes === "number" && Number.isFinite(day.overtimeMinutes)
+            ? Math.max(0, day.overtimeMinutes)
+            : 0;
         return acc;
       },
       {
         totalWorkDays: 0,
+        requiredWorkDays: 0,
         absentDays: 0,
         missingMinutes: 0,
-        overtimeMinutes: attendanceStats.overtimeMinutes,
+        overtimeMinutes: 0,
       },
     );
-  }, [adjustedCalendarDays, attendanceStats.overtimeMinutes]);
+  }, [adjustedCalendarDays]);
 
   const dayMap = useMemo(() => {
     return adjustedCalendarDays.reduce<Record<number, CalendarDay>>((acc, day) => {
@@ -664,13 +862,18 @@ export function TimesheetOverview({
       if (date.getFullYear() !== selectedYear || date.getMonth() !== selectedMonthIndex) {
         return;
       }
+      const isHolidayDate = holidayByDate.has(item.correctionDateISO);
 
       if (item.typeValue === "approved_leave") {
-        approvedLeaveMinutes += item.minutes;
+        if (!isHolidayDate) {
+          approvedLeaveMinutes += item.minutes;
+        }
         return;
       }
       if (item.typeValue === "unauthorized_leave") {
-        unauthorizedLeaveMinutes += item.minutes;
+        if (!isHolidayDate) {
+          unauthorizedLeaveMinutes += item.minutes;
+        }
         return;
       }
       if (item.typeValue === "remote") {
@@ -682,8 +885,13 @@ export function TimesheetOverview({
       }
     });
 
-    return { approvedLeaveMinutes, unauthorizedLeaveMinutes, remoteMinutes, requestedOvertimeMinutes };
-  }, [correctionRequests, selectedMonth]);
+    return {
+      approvedLeaveMinutes,
+      unauthorizedLeaveMinutes,
+      remoteMinutes,
+      requestedOvertimeMinutes,
+    };
+  }, [correctionRequests, holidayByDate, selectedMonth]);
 
   const requestsByDate = useMemo(() => {
     return correctionRequests.reduce<Record<string, CorrectionRequest[]>>((acc, item) => {
@@ -708,12 +916,19 @@ export function TimesheetOverview({
       const isSunday = date.getDay() === 0;
       const meta = dayMap[day];
       const dayRequests = requestsByDate[dateIso] ?? [];
+      const holiday = holidayByDate.get(dateIso) ?? null;
+      const hasAttendanceData =
+        (meta?.checkIn && meta.checkIn !== "--:--") || (meta?.checkOut && meta.checkOut !== "--:--");
 
       let statusLabel = "Chưa có dữ liệu";
-      if (meta?.status === "ontime") {
-        statusLabel = "Đúng giờ";
+      if (holiday && !hasAttendanceData) {
+        statusLabel = "Ngày nghỉ";
+      } else if (meta?.sourceType === "remote") {
+        statusLabel = "Làm việc từ xa";
+      } else if (meta?.status === "ontime") {
+        statusLabel = holiday ? "Đúng giờ (Ngày nghỉ)" : "Đúng giờ";
       } else if (meta?.status === "late") {
-        statusLabel = "Trễ/Sớm";
+        statusLabel = holiday ? "Chấm công ngày nghỉ" : "Trễ/Sớm";
       } else if (meta?.status === "missing") {
         statusLabel = "Thiếu công";
       } else if (isSunday) {
@@ -741,7 +956,7 @@ export function TimesheetOverview({
         requestSummary,
       };
     });
-  }, [calendarMonth, calendarYear, dayMap, requestsByDate, totalDays]);
+  }, [calendarMonth, calendarYear, dayMap, holidayByDate, requestsByDate, totalDays]);
 
   const handleExportCsv = async () => {
     if (isExportingCsv) {
@@ -806,79 +1021,46 @@ export function TimesheetOverview({
   };
 
   const statCards = [
-    { label: "Tổng ngày làm việc", value: String(adjustedAttendanceStats.totalWorkDays), accent: "text-blue-600" },
-    { label: "Ngày vắng mặt", value: String(adjustedAttendanceStats.absentDays), accent: "text-rose-500" },
-    { label: "Thiếu giờ", value: formatDurationLabel(adjustedAttendanceStats.missingMinutes), accent: "text-amber-500" },
-    { label: "Tổng tăng ca", value: formatDurationLabel(adjustedAttendanceStats.overtimeMinutes), accent: "text-emerald-500" },
-    { label: "Thiếu có phép", value: formatDurationLabel(requestDurationSummary.approvedLeaveMinutes), accent: "text-orange-500" },
-    { label: "Thiếu không phép", value: formatDurationLabel(requestDurationSummary.unauthorizedLeaveMinutes), accent: "text-red-500" },
-    { label: "Tổng remote", value: formatDurationLabel(requestDurationSummary.remoteMinutes), accent: "text-indigo-500" },
-    { label: "Tăng ca đã duyệt", value: formatDurationLabel(requestDurationSummary.requestedOvertimeMinutes), accent: "text-cyan-600" },
+    {
+      label: "Thiếu giờ",
+      value: formatDurationLabel(adjustedAttendanceStats.missingMinutes),
+      accent: "text-amber-500",
+    },
+    {
+      label: "Nghỉ không phép",
+      value: formatDurationLabel(requestDurationSummary.unauthorizedLeaveMinutes),
+      accent: "text-red-500",
+    },
+    {
+      label: "Nghỉ có phép",
+      value: formatDurationLabel(requestDurationSummary.approvedLeaveMinutes),
+      accent: "text-orange-500",
+    },
+    {
+      label: "Tổng tăng ca",
+      value: formatDurationLabel(adjustedAttendanceStats.overtimeMinutes),
+      accent: "text-emerald-500",
+    },
+    {
+      label: "Ngày vắng mặt",
+      value: String(adjustedAttendanceStats.absentDays),
+      accent: "text-rose-500",
+    },
   ];
-
   return (
     <>
-      <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-4">
-        <div className="flex items-center gap-2">
-          {createRequestHref ? (
-            <Link
-              href={createRequestHref}
-              className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-            >
-              Tạo yêu cầu
-            </Link>
-          ) : null}
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() =>
-              setSelectedMonth(
-                (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1),
-              )
-            }
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            ‹
-          </button>
-          <button
-            type="button"
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            {formatMonthLabel(selectedMonth)}
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              setSelectedMonth(
-                (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1),
-              )
-            }
-            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            ›
-          </button>
-          {showExportButton ? (
-            <button
-              type="button"
-              onClick={handleExportCsv}
-              disabled={
-                isExportingCsv ||
-                (!onExportCsv && (isProfileLoading || isLoadingAttendance || !profileId))
-              }
-              className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
-            >
-              {isExportingCsv ? "Đang xuất..." : "Xuất CSV"}
-            </button>
-          ) : null}
-        </div>
-      </section>
-
-      <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         {statCards.map((item) => (
-          <article key={item.label} className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
-            <p className="text-xs font-bold tracking-[0.08em] text-slate-400 uppercase">{item.label}</p>
-            <p className={`mt-2 text-4xl font-semibold tracking-[-0.02em] ${item.accent}`}>{item.value}</p>
+          <article
+            key={item.label}
+            className="rounded-2xl border border-slate-200 bg-white px-5 py-4"
+          >
+            <p className="text-xs font-bold tracking-[0.08em] text-slate-400 uppercase">
+              {item.label}
+            </p>
+            <p className={`mt-2 text-4xl font-semibold tracking-[-0.02em] ${item.accent}`}>
+              {item.value}
+            </p>
           </article>
         ))}
       </section>
@@ -897,20 +1079,45 @@ export function TimesheetOverview({
 
       <section className="mt-5 rounded-2xl border border-slate-200 bg-white">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-4">
-          <h2 className="text-2xl font-semibold text-slate-900">Nhật ký chấm công theo tháng</h2>
-          <div className="flex items-center gap-4 text-xs">
-            <span className="inline-flex items-center gap-1.5 text-slate-500">
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-              Đúng giờ
-            </span>
-            <span className="inline-flex items-center gap-1.5 text-slate-500">
-              <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
-              Trễ/Sớm
-            </span>
-            <span className="inline-flex items-center gap-1.5 text-slate-500">
-              <span className="h-2.5 w-2.5 rounded-full bg-rose-500" />
-              Thiếu công
-            </span>
+          <h2 className="text-2xl font-semibold text-slate-900">Chấm công tháng</h2>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              ‹
+            </button>
+            <button
+              type="button"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              {formatMonthLabel(selectedMonth)}
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              ›
+            </button>
+            {showExportButton ? (
+              <button
+                type="button"
+                onClick={handleExportCsv}
+                disabled={
+                  isExportingCsv ||
+                  (!onExportCsv &&
+                    (isProfileLoading ||
+                      isLoadingAttendance ||
+                      !profileId ||
+                      attendanceBinding?.attendanceIds.length === 0))
+                }
+                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
+              >
+                {isExportingCsv ? "Đang xuất..." : "Xuất CSV"}
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -937,9 +1144,7 @@ export function TimesheetOverview({
                 <div
                   key={`empty-${index}`}
                   className={`h-28 border-l border-t first:border-l-0 ${
-                    isSundayColumn
-                      ? "border-slate-200 bg-slate-50"
-                      : "border-slate-100"
+                    isSundayColumn ? "border-slate-200 bg-slate-50" : "border-slate-100"
                   }`}
                 />
               );
@@ -947,9 +1152,13 @@ export function TimesheetOverview({
 
             const meta = cell.meta;
             const dateIso = toIsoDate(calendarYear, calendarMonth, cell.day);
-            const dayRequests = correctionRequests.filter((item) => item.correctionDateISO === dateIso);
+            const dayRequests = requestsByDate[dateIso] ?? [];
             const hasDayRequests = dayRequests.length > 0;
-            const hasMissingHours = typeof meta?.missingMinutes === "number" && meta.missingMinutes > 0;
+            const hasMissingHours =
+              typeof meta?.missingMinutes === "number" && meta.missingMinutes > 0;
+            const isRemoteSource = meta?.sourceType === "remote";
+            const holiday = meta?.holiday ?? holidayByDate.get(dateIso) ?? null;
+            const isHolidayDate = Boolean(holiday);
             const missingHoursLabel =
               typeof meta?.missingMinutes === "number"
                 ? formatDurationLabel(meta.missingMinutes)
@@ -959,32 +1168,67 @@ export function TimesheetOverview({
               <div
                 key={`day-${cell.day}`}
                 className={`relative h-28 border-l border-t px-2.5 py-2 first:border-l-0 ${
-                  isSundayColumn
-                    ? "border-slate-200 bg-slate-50"
-                    : "border-slate-100"
+                  isSundayColumn ? "border-slate-200 bg-slate-50" : "border-slate-100"
                 }`}
               >
                 <div className="flex items-start justify-between">
-                  <span
-                    className={`text-base font-semibold ${
-                      isSundayColumn ? "text-slate-400" : "text-slate-800"
-                    }`}
-                  >
-                    {cell.day}
-                  </span>
-                  <span className={meta?.status ? "inline-flex" : "hidden"}>
-                    {meta?.status ? <StatusDot status={meta.status} /> : null}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`block text-base font-semibold ${
+                        isSundayColumn ? "text-slate-400" : "text-slate-800"
+                      }`}
+                    >
+                      {cell.day}
+                    </span>
+                    {isHolidayDate ? (
+                      <Tooltip
+                        label={holiday?.name?.trim() || "Ngày nghỉ"}
+                        withArrow
+                        position="top-start"
+                        openDelay={120}
+                      >
+                        <span className="inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                          Ngày nghỉ
+                        </span>
+                      </Tooltip>
+                    ) : null}
+                  </div>
+                  {createRequestHref && hasMissingHours && !isSundayColumn ? (
+                    <Tooltip
+                      label={`Tạo yêu cầu điều chỉnh cho ngày ${formatDateVi(dateIso)}`}
+                      withArrow
+                      position="left"
+                      openDelay={120}
+                    >
+                      <ActionIcon
+                        component={Link}
+                        href={`${createRequestHref}?date=${dateIso}`}
+                        variant="light"
+                        color="blue"
+                        size="sm"
+                        radius="xl"
+                        aria-label={`Tạo yêu cầu cho ngày ${formatDateVi(dateIso)}`}
+                      >
+                        <Plus size={14} strokeWidth={2.4} />
+                      </ActionIcon>
+                    </Tooltip>
+                  ) : (
+                    <span className="h-7 w-7" />
+                  )}
                 </div>
 
-                <div className="absolute inset-x-2.5 top-1/2 h-10 -translate-y-1/2 space-y-1">
+                <div className="mt-3 space-y-1 pr-0">
                   <div className="grid grid-cols-2 gap-1">
                     <p
                       className={`rounded-md border px-1.5 py-0.5 text-center text-[11px] font-semibold ${
                         isSundayColumn
                           ? "border-slate-200 bg-slate-100 text-slate-400"
+                          : isRemoteSource
+                            ? "border-indigo-200 bg-indigo-50 text-indigo-700"
                           : hasMissingHours
                             ? "border-rose-200 bg-rose-50 text-rose-700"
+                          : isHolidayDate
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                             : "border-slate-200 bg-slate-50 text-slate-700"
                       }`}
                     >
@@ -994,17 +1238,29 @@ export function TimesheetOverview({
                       className={`rounded-md border px-1.5 py-0.5 text-center text-[11px] font-semibold ${
                         isSundayColumn
                           ? "border-slate-200 bg-slate-100 text-slate-400"
+                          : isRemoteSource
+                            ? "border-indigo-200 bg-indigo-50 text-indigo-700"
                           : hasMissingHours
                             ? "border-rose-200 bg-rose-50 text-rose-700"
+                          : isHolidayDate
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                             : "border-slate-200 bg-slate-50 text-slate-700"
                       }`}
                     >
                       {meta?.checkOut ?? "--:--"}
                     </p>
                   </div>
+                  {isRemoteSource ? (
+                    <div className="space-y-0.5">
+                      <p className="text-center text-[11px] font-semibold text-indigo-600">
+                        Làm việc từ xa
+                      </p>
+                      <p className="text-center text-[10px] text-indigo-500">{meta?.sourceNote}</p>
+                    </div>
+                  ) : null}
                   <p
                     className={`text-center text-[11px] font-semibold text-rose-600 ${
-                      hasMissingHours && !isSundayColumn ? "" : "hidden"
+                      hasMissingHours && !isSundayColumn && !isHolidayDate ? "" : "hidden"
                     }`}
                   >
                     Thiếu giờ: {missingHoursLabel}
@@ -1015,7 +1271,9 @@ export function TimesheetOverview({
                   type="button"
                   onClick={() => setOpenedFormDateIso(dateIso)}
                   className={`absolute bottom-2 left-2 right-2 h-6 rounded-md border border-blue-200 bg-blue-50 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 ${
-                    hasDayRequests && !isSundayColumn ? "inline-flex items-center justify-center" : "hidden"
+                    hasDayRequests && !isSundayColumn
+                      ? "inline-flex items-center justify-center"
+                      : "hidden"
                   }`}
                 >
                   Xem form ({dayRequests.length})
@@ -1106,7 +1364,23 @@ export function TimesheetOverview({
                     <td className="px-5 py-4 text-sm font-medium text-slate-700">
                       {formatDateVi(item.requestDateISO)}
                     </td>
-                    <td className="px-5 py-4 text-sm text-slate-600">{formatDateVi(item.correctionDateISO)}</td>
+                    <td className="px-5 py-4 text-sm text-slate-600">
+                      <div className="space-y-1">
+                        <p>{formatDateVi(item.correctionDateISO)}</p>
+                        {holidayByDate.has(item.correctionDateISO) ? (
+                          <>
+                            <span className="inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                              Ngày nghỉ
+                            </span>
+                            {holidayByDate.get(item.correctionDateISO)?.name?.trim() ? (
+                              <p className="text-[11px] text-emerald-700">
+                                {holidayByDate.get(item.correctionDateISO)?.name?.trim()}
+                              </p>
+                            ) : null}
+                          </>
+                        ) : null}
+                      </div>
+                    </td>
                     <td className="px-5 py-4">
                       <span className="rounded bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">
                         {item.type}
@@ -1128,7 +1402,8 @@ export function TimesheetOverview({
         {filteredCorrectionRequests.length > 0 ? (
           <div className="flex items-center justify-between border-t border-slate-100 px-5 py-3 text-sm">
             <p className="text-slate-500">
-              Trang {safeRequestPage}/{totalRequestPages} · {filteredCorrectionRequests.length} yêu cầu
+              Trang {safeRequestPage}/{totalRequestPages} · {filteredCorrectionRequests.length} yêu
+              cầu
             </p>
             <div className="flex items-center gap-2">
               <button
@@ -1178,16 +1453,29 @@ export function TimesheetOverview({
             <div className="max-h-[60vh] space-y-3 overflow-y-auto px-5 py-4">
               {activeRequests.length > 0 ? (
                 activeRequests.map((item) => (
-                  <article key={item.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <article
+                    key={item.id}
+                    className="rounded-xl border border-slate-200 bg-slate-50 p-3"
+                  >
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div>
                         <p className="text-sm font-semibold text-slate-800">{item.type}</p>
                         <p className="mt-0.5 text-xs text-slate-500">
                           Ngày gửi: {formatDateVi(item.requestDateISO)}
                         </p>
+                        {holidayByDate.has(item.correctionDateISO) ? (
+                          <span className="mt-2 inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                            Ngày nghỉ
+                          </span>
+                        ) : null}
                       </div>
                       <RequestStatus status={item.status} />
                     </div>
+                    {item.typeValue === "remote" && hasValidRemoteWindow(item.remoteCheckIn, item.remoteCheckOut) ? (
+                      <p className="mt-2 text-xs font-medium text-indigo-600">
+                        Làm việc từ xa: {toLocalTimeHHmm(item.remoteCheckIn)} - {toLocalTimeHHmm(item.remoteCheckOut)}
+                      </p>
+                    ) : null}
                     <p className="mt-2 text-sm text-slate-700">{item.reason}</p>
                   </article>
                 ))

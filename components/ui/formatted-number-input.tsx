@@ -14,12 +14,19 @@ type FormattedNumberInputProps = Omit<
 export function FormattedNumberInput({
   value,
   onValueChange,
+  defaultValue,
   ...props
 }: FormattedNumberInputProps) {
+  const normalizedDefaultValue =
+    typeof defaultValue === "string" || typeof defaultValue === "number"
+      ? defaultValue
+      : undefined;
+
   return (
     <NumericFormat
       {...props}
       value={value === null || value === undefined ? "" : String(value)}
+      defaultValue={normalizedDefaultValue}
       valueIsNumericString
       inputMode="decimal"
       thousandSeparator="."

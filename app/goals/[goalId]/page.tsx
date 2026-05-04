@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
+import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import {
@@ -10,18 +11,17 @@ import {
   formatGoalParticipationRoleLabel,
   formatGoalTypeLabel,
   getGoalProgressHelp,
-  getKeyResultWeightHelp,
-  isKeyResultWeightApplied,
   normalizeGoalTypeValue,
 } from "@/lib/constants/goals";
 import {
+  getAllowedKeyResultUnitsByType,
   KEY_RESULT_CONTRIBUTION_TYPES,
   KEY_RESULT_TYPES,
-  KEY_RESULT_UNITS,
   formatKeyResultContributionTypeLabel,
   formatKeyResultMetric,
   formatKeyResultTypeLabel,
   formatKeyResultUnit,
+  normalizeKeyResultUnitForType,
   normalizeKeyResultContributionTypeValue,
   normalizeKeyResultTypeValue,
   type KeyResultUnitValue,
@@ -123,7 +123,6 @@ type KeyResultScaleFormState = {
   current: string;
   target: string;
   unit: KeyResultUnitValue;
-  weight: string;
   startDate: string;
   endDate: string;
 };
@@ -159,9 +158,6 @@ const formatQuarterYear = (quarter: number | null, year: number | null) => {
   return "Chưa đặt kỳ";
 };
 
-const toKeyResultUnitValue = (value: string | null): KeyResultUnitValue =>
-  KEY_RESULT_UNITS.find((unit) => unit.value === value)?.value ?? KEY_RESULT_UNITS[0].value;
-
 const normalizeKeyResultRow = (keyResult: KeyResultRow): KeyResultRow => ({
   ...keyResult,
   id: String(keyResult.id),
@@ -190,9 +186,11 @@ const createKeyResultScaleForm = (keyResult: KeyResultRow): KeyResultScaleFormSt
   responsibleDepartmentId: keyResult.responsible_department_id ?? "",
   startValue: String(Number.isFinite(keyResult.start_value) ? Number(keyResult.start_value) : 0),
   current: String(Number.isFinite(keyResult.current) ? Number(keyResult.current) : 0),
-  target: String(Number.isFinite(keyResult.target) ? Number(keyResult.target) : 0),
-  unit: toKeyResultUnitValue(keyResult.unit),
-  weight: String(Math.round(Number(keyResult.weight ?? 1))),
+  target:
+    normalizeKeyResultTypeValue(keyResult.type) === "okr"
+      ? "100"
+      : String(Number.isFinite(keyResult.target) ? Number(keyResult.target) : 0),
+  unit: normalizeKeyResultUnitForType(keyResult.type, keyResult.unit),
   startDate: keyResult.start_date ?? "",
   endDate: keyResult.end_date ?? "",
 });
@@ -668,12 +666,7 @@ function GoalDetailPageContent() {
 
     const safeCurrent = Number(keyResultScaleForm.current);
     const safeTarget = Number(keyResultScaleForm.target);
-    const safeWeight = Number(keyResultScaleForm.weight);
     const safeStartValue = Number(keyResultScaleForm.startValue);
-    const shouldUseKeyResultWeight = isKeyResultWeightApplied(
-      goalType,
-      keyResultScaleForm.contributionType,
-    );
 
     if (!Number.isFinite(safeCurrent) || safeCurrent < 0) {
       setKeyResultScaleError("Hiện tại không được nhỏ hơn 0.");
@@ -687,8 +680,8 @@ function GoalDetailPageContent() {
       setKeyResultScaleError("Chỉ tiêu phải lớn hơn 0.");
       return;
     }
-    if (shouldUseKeyResultWeight && (!Number.isFinite(safeWeight) || safeWeight <= 0)) {
-      setKeyResultScaleError("Trọng số KR phải lớn hơn 0.");
+    if (keyResultScaleForm.type === "okr" && safeTarget !== 100) {
+      setKeyResultScaleError("KR kiểu OKR luôn có chỉ tiêu cố định là 100%.");
       return;
     }
     if (!keyResultScaleForm.responsibleDepartmentId) {
@@ -718,16 +711,9 @@ function GoalDetailPageContent() {
         end_date: keyResultScaleForm.endDate || null,
       };
 
-      const nextPayload = shouldUseKeyResultWeight
-        ? {
-            ...payload,
-            weight: Math.round(safeWeight),
-          }
-        : payload;
-
       const { error: updateError } = await supabase
         .from("key_results")
-        .update(nextPayload)
+        .update(payload)
         .eq("id", keyResult.id);
 
       if (updateError) {
@@ -753,7 +739,6 @@ function GoalDetailPageContent() {
                 current: safeCurrent,
                 target: safeTarget,
                 unit: keyResultScaleForm.unit,
-                weight: shouldUseKeyResultWeight ? Math.round(safeWeight) : item.weight,
                 start_date: keyResultScaleForm.startDate || null,
                 end_date: keyResultScaleForm.endDate || null,
                 updated_at: new Date().toISOString(),
@@ -915,70 +900,57 @@ function GoalDetailPageContent() {
     ? keyResultScaleError ||
       (!isModalDateRangeValid ? "Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu." : null)
     : null;
-  const isEditingKeyResultWeightApplied = keyResultScaleForm
-    ? isKeyResultWeightApplied(goalType, keyResultScaleForm.contributionType)
-    : false;
-  const editingKeyResultWeightHelp = keyResultScaleForm
-    ? getKeyResultWeightHelp(goalType, keyResultScaleForm.contributionType)
-    : "";
-
   return (
     <div className="h-screen overflow-hidden bg-[#f3f5fa] text-slate-900">
       <div className="flex h-full w-full">
         <WorkspaceSidebar active="goals" />
 
         <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden lg:pl-[var(--workspace-sidebar-width)]">
-          <header className="border-b border-slate-200 bg-[#f3f5fa] px-4 py-4 lg:px-7">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm text-slate-500">
-                <Link href="/goals" className="hover:text-slate-700">
-                  Mục tiêu
-                </Link>
-                <span className="px-2">›</span>
-                <span className="font-semibold text-slate-700">
-                  Mục tiêu: {goal?.name ?? "Chi tiết mục tiêu"}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                {workspaceAccess.canManage && !workspaceAccess.error && hasValidGoalId ? (
-                  <Link
-                    href={`/goals/new?editGoalId=${goalId}`}
-                    className="inline-flex h-9 items-center rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm font-semibold text-amber-800 hover:bg-amber-100"
-                  >
-                    Sửa mục tiêu
-                  </Link>
-                ) : null}
-                {workspaceAccess.canManage && !workspaceAccess.error && hasValidGoalId ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleDeleteGoal()}
-                    disabled={isDeletingGoal}
-                    className="inline-flex h-9 items-center rounded-xl border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {isDeletingGoal ? "Đang xóa mục tiêu..." : "Xóa mục tiêu"}
-                  </button>
-                ) : null}
-                {createKeyResultHref && !isCreateKeyResultButtonDisabled ? (
-                  <Link
-                    href={createKeyResultHref}
-                    className="inline-flex h-9 items-center rounded-xl border border-blue-600 bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
-                  >
-                    + Thêm KR
-                  </Link>
-                ) : (
-                  <button
-                    type="button"
-                    disabled
-                    className="inline-flex h-9 items-center rounded-xl border border-blue-300 bg-blue-300 px-4 text-sm font-semibold text-white opacity-60"
-                  >
-                    + Thêm KR
-                  </button>
-                )}
-              </div>
-            </div>
-          </header>
+          <WorkspacePageHeader
+            title={goal?.name ?? "Chi tiết mục tiêu"}
+            items={[
+              { label: "Mục tiêu", href: "/goals" },
+              { label: goal?.name ?? "Chi tiết mục tiêu" },
+            ]}
+          />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-7">
+            <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+              {workspaceAccess.canManage && !workspaceAccess.error && hasValidGoalId ? (
+                <Link
+                  href={`/goals/new?editGoalId=${goalId}`}
+                  className="inline-flex h-9 items-center rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm font-semibold text-amber-800 hover:bg-amber-100"
+                >
+                  Sửa mục tiêu
+                </Link>
+              ) : null}
+              {workspaceAccess.canManage && !workspaceAccess.error && hasValidGoalId ? (
+                <button
+                  type="button"
+                  onClick={() => void handleDeleteGoal()}
+                  disabled={isDeletingGoal}
+                  className="inline-flex h-9 items-center rounded-xl border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isDeletingGoal ? "Đang xóa mục tiêu..." : "Xóa mục tiêu"}
+                </button>
+              ) : null}
+              {createKeyResultHref && !isCreateKeyResultButtonDisabled ? (
+                <Link
+                  href={createKeyResultHref}
+                  className="inline-flex h-9 items-center rounded-xl border border-blue-600 bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
+                >
+                  + Thêm KR
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  className="inline-flex h-9 items-center rounded-xl border border-blue-300 bg-blue-300 px-4 text-sm font-semibold text-white opacity-60"
+                >
+                  + Thêm KR
+                </button>
+              )}
+            </div>
             {!hasValidGoalId ? (
               <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-5 text-sm text-rose-700">
                 Thiếu mã mục tiêu.
@@ -1519,8 +1491,8 @@ function GoalDetailPageContent() {
                             </p>
                             <p className="mt-1 text-xs text-slate-500">
                               {goalType === "kpi"
-                                ? "Mục tiêu KPI không dùng trọng số KR để tính tiến độ. Mục tiêu chỉ cộng dồn giá trị hiện tại của KR trực tiếp."
-                                : "Mục tiêu OKR chỉ dùng trọng số cho KR trực tiếp. KR hỗ trợ không được cộng vào tiến độ mục tiêu."}
+                                ? "Mục tiêu KPI cộng dồn giá trị hiện tại của KR trực tiếp."
+                                : "Mục tiêu OKR lấy trung bình tiến độ của các KR trực tiếp. KR hỗ trợ không được cộng vào tiến độ mục tiêu."}
                             </p>
                           </div>
                           <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
@@ -1535,7 +1507,6 @@ function GoalDetailPageContent() {
                                 <th className="px-4 py-3 font-semibold">Phân loại</th>
                                 <th className="px-4 py-3 font-semibold">Phòng ban</th>
                                 <th className="px-4 py-3 font-semibold">Chỉ số</th>
-                                <th className="px-4 py-3 text-right font-semibold">Trọng số</th>
                                 <th className="px-4 py-3 font-semibold">Thời gian</th>
                                 <th className="px-4 py-3 font-semibold">Tiến độ</th>
                                 <th className="px-4 py-3 text-right font-semibold">Thao tác</th>
@@ -1548,10 +1519,6 @@ function GoalDetailPageContent() {
                                 const responsibleDepartmentName =
                                   goalDepartmentsById[keyResult.responsible_department_id ?? ""]?.name ??
                                   "Chưa gán phòng ban";
-                                const isWeightApplied = isKeyResultWeightApplied(
-                                  goalType,
-                                  keyResult.contribution_type,
-                                );
 
                                 return (
                                   <Fragment key={keyResult.id}>
@@ -1589,15 +1556,8 @@ function GoalDetailPageContent() {
                                           {formatKeyResultMetric(keyResult.target, keyResult.unit)}
                                         </p>
                                         <p className="mt-1 text-xs text-slate-500">
-                                          Bắt đầu {formatKeyResultMetric(keyResult.start_value, keyResult.unit)}
-                                          {" · "}
-                                          {formatKeyResultUnit(keyResult.unit)}
+                                          Hiện tại / KPI · {formatKeyResultUnit(keyResult.unit)}
                                         </p>
-                                      </td>
-                                      <td className="px-4 py-4 text-right font-medium text-slate-900">
-                                        {isWeightApplied
-                                          ? `${Math.round(Number(keyResult.weight ?? 1))}%`
-                                          : "Không áp dụng"}
                                       </td>
                                       <td className="px-4 py-4">
                                         <p className="font-medium text-slate-900">
@@ -1745,7 +1705,7 @@ function GoalDetailPageContent() {
                         <span className="text-slate-500">Chỉ tiêu mục tiêu</span>
                         <span className="text-right font-medium text-slate-800">
                           {hasGoalMetric
-                            ? `${formatKeyResultMetric(goalMetricTarget, goalMetricUnit)} · ${formatKeyResultUnit(goalMetricUnit)}`
+                            ? `${formatKeyResultMetric(goalMetricTarget, goalMetricUnit)}`
                             : "Chưa đặt"}
                         </span>
                       </div>
@@ -1834,7 +1794,7 @@ function GoalDetailPageContent() {
                                       kpiDirectSummary.targetGap,
                                       goalMetricUnit,
                                     )} chỉ tiêu để đủ KPI của mục tiêu`
-                                  : "Tổng chỉ tiêu KR trực tiếp đã đạt đủ KPI của mục tiêu"}
+                                  : "Tổng chỉ tiêu KR trực tiếp đã phủ đủ KPI của mục tiêu"}
                             </p>
                           </div>
                         </>
@@ -1947,6 +1907,14 @@ function GoalDetailPageContent() {
                                 ? {
                                     ...prev,
                                     type: normalizeKeyResultTypeValue(event.target.value),
+                                    unit: normalizeKeyResultUnitForType(
+                                      event.target.value,
+                                      prev.unit,
+                                    ),
+                                    target:
+                                      normalizeKeyResultTypeValue(event.target.value) === "okr"
+                                        ? "100"
+                                        : prev.target,
                                   }
                                 : prev,
                             )
@@ -2015,19 +1983,23 @@ function GoalDetailPageContent() {
                         <span className="text-sm font-medium text-slate-700">Đơn vị</span>
                         <select
                           value={keyResultScaleForm.unit}
+                          disabled={keyResultScaleForm.type === "okr"}
                           onChange={(event) =>
                             setKeyResultScaleForm((prev) =>
                               prev
                                 ? {
                                     ...prev,
-                                    unit: toKeyResultUnitValue(event.target.value),
+                                    unit: normalizeKeyResultUnitForType(
+                                      prev.type,
+                                      event.target.value,
+                                    ),
                                   }
                                 : prev,
                             )
                           }
-                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                         >
-                          {KEY_RESULT_UNITS.map((unit) => (
+                          {getAllowedKeyResultUnitsByType(keyResultScaleForm.type).map((unit) => (
                             <option key={unit.value} value={unit.value}>
                               {unit.label}
                             </option>
@@ -2077,6 +2049,7 @@ function GoalDetailPageContent() {
                         <span className="text-sm font-medium text-slate-700">Chỉ tiêu</span>
                         <FormattedNumberInput
                           value={keyResultScaleForm.target}
+                          disabled={keyResultScaleForm.type === "okr"}
                           onValueChange={(value) =>
                             setKeyResultScaleForm((prev) =>
                               prev
@@ -2088,38 +2061,9 @@ function GoalDetailPageContent() {
                             )
                           }
                           placeholder="Nhập chỉ tiêu"
-                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                         />
                       </label>
-
-                      {isEditingKeyResultWeightApplied ? (
-                        <label className="grid gap-2">
-                          <span className="text-sm font-medium text-slate-700">Trọng số KR</span>
-                          <input
-                            type="number"
-                            min={1}
-                            step="1"
-                            value={keyResultScaleForm.weight}
-                            onChange={(event) =>
-                              setKeyResultScaleForm((prev) =>
-                                prev
-                                  ? {
-                                      ...prev,
-                                      weight: event.target.value,
-                                    }
-                                  : prev,
-                              )
-                            }
-                            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                          />
-                          <span className="text-xs text-slate-500">{editingKeyResultWeightHelp}</span>
-                        </label>
-                      ) : (
-                        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                          <p className="font-semibold">Trọng số KR không áp dụng</p>
-                          <p className="mt-1">{editingKeyResultWeightHelp}</p>
-                        </div>
-                      )}
 
                       <label className="grid gap-2">
                         <span className="text-sm font-medium text-slate-700">Ngày bắt đầu</span>

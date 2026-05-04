@@ -1,12 +1,12 @@
 export const TIME_REQUEST_TYPES = [
   {
     value: "approved_leave",
-    label: "Thiếu thời gian có phép",
+    label: "Nghỉ có phép / thiếu công có phép",
     description: "Dùng cho nghỉ, về sớm hoặc đi muộn có phép.",
   },
   {
     value: "unauthorized_leave",
-    label: "Thiếu thời gian không phép",
+    label: "Nghỉ không phép / thiếu công không phép",
     description: "Dùng cho nghỉ, về sớm hoặc đi muộn không phép.",
   },
   {
@@ -17,7 +17,7 @@ export const TIME_REQUEST_TYPES = [
   {
     value: "remote",
     label: "Làm việc từ xa",
-    description: "Dùng cho ngày hoặc khoảng thời gian làm việc remote.",
+    description: "Dùng cho ngày hoặc khoảng thời gian làm việc từ xa.",
   },
 ] as const;
 
@@ -56,7 +56,9 @@ export function getTimeRequestReason(type: TimeRequestType | null | undefined, m
     return `Điều chỉnh tăng ca ${safeMinutes} phút.`;
   }
   if (type === "remote") {
-    return "Điều chỉnh hình thức làm việc từ xa.";
+    return safeMinutes > 0
+      ? `Đăng ký làm việc từ xa ${safeMinutes} phút.`
+      : "Đăng ký làm việc từ xa.";
   }
 
   return "Yêu cầu điều chỉnh thời gian làm việc.";

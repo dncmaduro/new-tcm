@@ -1,12 +1,13 @@
 import { normalizeGoalTypeValue } from "@/lib/constants/goals";
 import { normalizeKeyResultContributionTypeValue } from "@/lib/constants/key-results";
-import { getTaskProgressByType, normalizeTaskStatus } from "@/lib/constants/tasks";
 
 type ProgressTaskLike = {
   key_result_id?: string | null;
   keyResultId?: string | null;
   type?: string | null;
   status?: string | null;
+  current?: number | null;
+  target?: number | null;
   progress?: number | null;
   weight?: number | null;
 };
@@ -50,11 +51,6 @@ const normalizeProgress = (value: number | null | undefined) => {
   return Math.max(0, Math.min(100, Math.round(safe)));
 };
 
-const normalizeWeight = (value: number | null | undefined) => {
-  const safe = Number.isFinite(value) ? Number(value) : 0;
-  return safe > 0 ? safe : 1;
-};
-
 const isDirectKeyResult = <TKeyResult extends ProgressKeyResultLike>(keyResult: TKeyResult) =>
   normalizeKeyResultContributionTypeValue(
     keyResult.contributionType ?? keyResult.contribution_type ?? null,
@@ -95,7 +91,6 @@ const computeGoalKeyResultProgress = <TKeyResult extends ProgressKeyResultLike>(
   return computeWeightedProgress(
     directKeyResults.map((keyResult) => ({
       progress: keyResultProgressMap[keyResult.id] ?? 0,
-      weight: keyResult.weight ?? null,
     })),
   );
 };
@@ -135,13 +130,20 @@ const computeDepartmentKeyResultProgress = <TKeyResult extends ProgressKeyResult
   return computeWeightedProgress(
     directKeyResults.map((keyResult) => ({
       progress: keyResultProgressMap[keyResult.id] ?? 0,
-      weight: keyResult.weight ?? null,
     })),
   );
 };
 
-export const getComputedTaskProgress = (task: ProgressTaskLike) =>
-  getTaskProgressByType(task.type ?? null, normalizeTaskStatus(task.status ?? null), task.progress ?? 0);
+export const getComputedTaskProgress = (task: ProgressTaskLike) => {
+  const safeCurrent = Number.isFinite(task.current) ? Number(task.current) : null;
+  const safeTarget = Number.isFinite(task.target) ? Number(task.target) : null;
+
+  if (safeCurrent !== null && safeTarget !== null && safeTarget > 0) {
+    return computeMetricProgress(safeCurrent, 0, safeTarget);
+  }
+
+  return normalizeProgress(task.progress);
+};
 
 export const computeWeightedProgress = (
   rows: Array<{ progress: number | null | undefined; weight?: number | null }>,
@@ -150,21 +152,8 @@ export const computeWeightedProgress = (
     return 0;
   }
 
-  const { totalWeight, weightedProgress } = rows.reduce(
-    (acc, row) => {
-      const weight = normalizeWeight(row.weight);
-      acc.totalWeight += weight;
-      acc.weightedProgress += normalizeProgress(row.progress) * weight;
-      return acc;
-    },
-    { totalWeight: 0, weightedProgress: 0 },
-  );
-
-  if (totalWeight <= 0) {
-    return 0;
-  }
-
-  return normalizeProgress(weightedProgress / totalWeight);
+  const totalProgress = rows.reduce((sum, row) => sum + normalizeProgress(row.progress), 0);
+  return normalizeProgress(totalProgress / rows.length);
 };
 
 export const computeMetricProgress = (

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -12,7 +13,6 @@ import {
   buildPerformanceReportPeriodKey,
   formatReportDateRange,
   formatReportPeriodTypeLabel,
-  formatReportScopeLabel,
   getSuggestedPeriodEnd,
   loadReportingScopeDirectory,
   normalizePerformanceReportRow,
@@ -273,29 +273,13 @@ export default function CreatePerformanceReportPage() {
         <WorkspaceSidebar active="reports" />
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <header className="sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-7">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm text-slate-500">
-                  <Link href="/reports" className="hover:text-slate-700">
-                    Báo cáo hiệu suất
-                  </Link>
-                  <span className="px-2">›</span>
-                  <span className="font-semibold text-slate-700">Tạo báo cáo mới</span>
-                </p>
-                <h1 className="mt-1 text-3xl font-semibold tracking-[-0.02em] text-slate-900">Tạo báo cáo hiệu suất</h1>
-                <p className="mt-1 text-sm text-slate-500">
-                  Chọn nhân sự, kỳ đánh giá và ghi chú ban đầu để tạo một báo cáo mới.
-                </p>
-                <p className="mt-1 text-sm text-slate-500">
-                  Phạm vi hiện tại:{" "}
-                  <span className="font-semibold text-slate-700">
-                    {scopeDirectory ? formatReportScopeLabel(scopeDirectory.roleScope) : "Đang xác định"}
-                  </span>
-                </p>
-              </div>
-            </div>
-          </header>
+          <WorkspacePageHeader
+            title="Tạo báo cáo hiệu suất"
+            items={[
+              { label: "Báo cáo hiệu suất", href: "/reports" },
+              { label: "Tạo báo cáo mới" },
+            ]}
+          />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-7">
             <section className="mx-auto grid w-full max-w-[1120px] gap-6 xl:grid-cols-[1.4fr_0.9fr]">

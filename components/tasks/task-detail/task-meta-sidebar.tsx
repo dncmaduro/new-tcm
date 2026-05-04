@@ -1,12 +1,18 @@
 import Link from "next/link";
 import { ProgressSummary } from "./progress-summary";
 import { StatItem } from "./stat-item";
-import { TaskStatusBadge } from "./task-status-badge";
-import { getTaskStatusMeta } from "./utils";
+import {
+  formatTaskPriorityPoints,
+  getTaskEarnedPoints,
+  getTaskPriorityBadgeClassName,
+  getTaskPriorityLabel,
+  getTaskPriorityScore,
+} from "./utils";
 
 type TaskMetaSidebarProps = {
-  status: string | null | undefined;
   progress: number;
+  priority: string;
+  showTaskPoints: boolean;
   assigneeName: string;
   timelineLabel: string;
   goalName: string;
@@ -19,8 +25,9 @@ type TaskMetaSidebarProps = {
 };
 
 export function TaskMetaSidebar({
-  status,
   progress,
+  priority,
+  showTaskPoints,
   assigneeName,
   timelineLabel,
   goalName,
@@ -31,7 +38,8 @@ export function TaskMetaSidebar({
   createdAtLabel,
   updatedAtLabel,
 }: TaskMetaSidebarProps) {
-  const statusMeta = getTaskStatusMeta(status);
+  const totalPoints = getTaskPriorityScore(priority);
+  const earnedPoints = getTaskEarnedPoints(priority, progress);
 
   return (
     <aside className="self-start space-y-4 xl:sticky xl:top-6">
@@ -41,19 +49,29 @@ export function TaskMetaSidebar({
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Quick Glance</p>
             <h2 className="mt-2 text-lg font-semibold tracking-[-0.03em] text-slate-950">Thông tin nhanh</h2>
           </div>
-          <TaskStatusBadge status={status} className="px-2.5 py-1 text-xs" />
         </div>
 
-        <ProgressSummary
-          progress={progress}
-          label="Progress"
-          statusLabel={statusMeta.label}
-          tone={statusMeta.tone}
-          variant="compact"
-          className="mt-4"
-        />
+        <ProgressSummary progress={progress} label="Progress" variant="compact" className="mt-4" />
 
         <div className="mt-4 space-y-3">
+          <StatItem
+            label="Độ ưu tiên"
+            value={
+              <span
+                className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getTaskPriorityBadgeClassName(priority)}`}
+              >
+                {getTaskPriorityLabel(priority)}
+              </span>
+            }
+            compact
+          />
+          {showTaskPoints ? (
+            <StatItem
+              label="Điểm task"
+              value={`${formatTaskPriorityPoints(earnedPoints)} / ${formatTaskPriorityPoints(totalPoints)} điểm`}
+              compact
+            />
+          ) : null}
           <StatItem label="Assignee" value={assigneeName} compact />
           <StatItem label="Timeline" value={timelineLabel} compact />
           <StatItem

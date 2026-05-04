@@ -5,20 +5,25 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { KeyResultContributionInfo } from "@/components/key-result-contribution-info";
+import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  formatKeyResultContributionTypeLabel,
+  formatKeyResultMetric,
+  formatMetricValue,
+  getAllowedKeyResultUnitsByType,
   KEY_RESULT_CONTRIBUTION_TYPES,
   KEY_RESULT_TYPES,
-  KEY_RESULT_UNITS,
+  normalizeKeyResultUnitForType,
   normalizeKeyResultContributionTypeValue,
   normalizeKeyResultTypeValue,
   type KeyResultContributionTypeValue,
   type KeyResultTypeValue,
   type KeyResultUnitValue,
+  usesPercentSupportAllocation,
 } from "@/lib/constants/key-results";
+import { formatGoalTypeLabel, normalizeGoalTypeValue } from "@/lib/constants/goals";
 import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
 import {
@@ -33,6 +38,7 @@ import { formatTimelineRangeVi, isDateRangeOrdered } from "@/lib/timeline";
 type GoalDetailRow = {
   id: string;
   name: string;
+  type: string | null;
   department_id: string | null;
   start_date: string | null;
   end_date: string | null;
@@ -225,26 +231,97 @@ const normalizeSupportLinkRow = (value: Record<string, unknown>): SupportLinkRow
 });
 
 const toKeyResultFormState = (keyResult: ExistingKeyResultRow): KeyResultFormState => ({
+  type: normalizeKeyResultTypeValue(keyResult.type),
   name: keyResult.name,
   description: keyResult.description ?? "",
-  type: normalizeKeyResultTypeValue(keyResult.type),
   contributionType: normalizeKeyResultContributionTypeValue(keyResult.contribution_type),
-  unit: (KEY_RESULT_UNITS.some((item) => item.value === keyResult.unit) ? keyResult.unit : "count") as KeyResultUnitValue,
-  target: toFormNumber(keyResult.target, 100),
+  unit: normalizeKeyResultUnitForType(keyResult.type, keyResult.unit),
+  target: normalizeKeyResultTypeValue(keyResult.type) === "okr" ? 100 : toFormNumber(keyResult.target, 100),
   responsibleDepartmentId: keyResult.responsible_department_id ?? "",
   startDate: keyResult.start_date ?? "",
   endDate: keyResult.end_date ?? "",
 });
 
-function SupportAllocationInfo({ type }: { type: KeyResultTypeValue }) {
-  const isOkr = type === "okr";
+const getKeyResultNamePlaceholder = (departmentName: string | null | undefined) => {
+  const normalizedDepartmentName = (departmentName ?? "").trim().toLowerCase();
+
+  if (
+    normalizedDepartmentName.includes("media") ||
+    normalizedDepartmentName.includes("content") ||
+    normalizedDepartmentName.includes("video")
+  ) {
+    return "Ví dụ: Sản xuất 40 video/tháng";
+  }
+
+  if (
+    normalizedDepartmentName.includes("sale") ||
+    normalizedDepartmentName.includes("sales") ||
+    normalizedDepartmentName.includes("kinh doanh") ||
+    normalizedDepartmentName.includes("doanh thu")
+  ) {
+    return "Ví dụ: Đạt doanh thu 2 tỉ từ TikTok Shop";
+  }
+
+  return "Ví dụ: Đạt 40 video/tháng";
+};
+
+const getKeyResultRoleSummary = (
+  type: KeyResultTypeValue,
+  contributionType: KeyResultContributionTypeValue,
+) => {
+  if (type === "kpi" && contributionType === "support") {
+    return {
+      title: "KR này là KPI hỗ trợ",
+      description:
+        "KR hỗ trợ không cộng trực tiếp vào tiến độ mục tiêu. Hãy phân bổ chỉ tiêu của KR này sang một hoặc nhiều KR trực tiếp.",
+    };
+  }
+
+  if (type === "kpi" && contributionType === "direct") {
+    return {
+      title: "KR này là KPI trực tiếp",
+      description:
+        "Tiến độ của KR này được dùng để đóng góp trực tiếp vào tiến độ mục tiêu.",
+    };
+  }
+
+  if (type === "okr" && contributionType === "support") {
+    return {
+      title: "KR này là OKR hỗ trợ",
+      description:
+        "KR hỗ trợ không cộng trực tiếp vào tiến độ mục tiêu. Hãy phân bổ mức đóng góp của KR này sang một hoặc nhiều KR trực tiếp.",
+    };
+  }
+
+  return {
+    title: "KR này là OKR trực tiếp",
+    description: "Tiến độ của KR này được dùng để đóng góp trực tiếp vào tiến độ mục tiêu.",
+  };
+};
+
+const getSupportLinkCountLabel = (count: number) => {
+  if (count <= 0) {
+    return "Chưa có liên kết";
+  }
+
+  if (count === 1) {
+    return "1 liên kết";
+  }
+
+  return `${count} liên kết`;
+};
+
+function SupportAllocationInfo({ unit }: { unit: KeyResultUnitValue }) {
+  const usesPercentAllocation = usesPercentSupportAllocation(unit);
 
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label={isOkr ? "Giải thích phần trăm phân bổ" : "Giải thích lượng phân bổ"}
+          aria-label={
+            usesPercentAllocation ? "Giải thích phần trăm phân bổ" : "Giải thích lượng phân bổ"
+          }
           className="inline-flex h-4 w-4 items-center justify-center rounded-full text-slate-400 transition hover:text-slate-600"
         >
           <InfoCircledIcon className="h-4 w-4" />
@@ -252,13 +329,11 @@ function SupportAllocationInfo({ type }: { type: KeyResultTypeValue }) {
       </PopoverTrigger>
       <PopoverContent className="w-[280px] space-y-2 p-3 text-xs text-slate-600" align="start">
         <div>
-          <p className="font-semibold text-slate-800">
-            {isOkr ? "Phần trăm phân bổ" : "Lượng phân bổ"}
-          </p>
+          <p className="font-semibold text-slate-800">Giá trị phân bổ</p>
           <p className="mt-1">
-            {isOkr
-              ? "Dùng cho KR hỗ trợ loại OKR. Nhập tỷ lệ phần trăm phạm vi đóng góp của KR này vào KR trực tiếp, trong khoảng 0 đến 100."
-              : "Dùng cho KR hỗ trợ loại KPI. Nhập lượng tuyệt đối mà KR này phân bổ sang KR trực tiếp, theo đúng đơn vị đo của KR."}
+            {usesPercentAllocation
+              ? "Áp dụng cho KR hỗ trợ kiểu phần trăm. Tổng phân bổ cần khớp với chỉ tiêu của KR hỗ trợ."
+              : "Áp dụng cho KR hỗ trợ kiểu số lượng hoặc doanh thu. Tổng phân bổ cần khớp với chỉ tiêu của KR hỗ trợ."}
           </p>
         </div>
       </PopoverContent>
@@ -290,6 +365,8 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
   const [supportTargetLoadError, setSupportTargetLoadError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const requiredKeyResultType = goal ? normalizeGoalTypeValue(goal.type) : null;
+  const requiredKeyResultTypeLabel = goal ? formatGoalTypeLabel(goal.type) : null;
 
   const showPermissionDebug = searchParams.get("debugPermission") === "1";
   const supportSyncError = searchParams.get("supportSyncError");
@@ -335,9 +412,22 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
       setLoadError(null);
       setSupportTargetLoadError(null);
 
-      const [goalResult, goalDepartmentResult, keyResultResult, directKeyResultResult, supportLinkResult] = await Promise.all([
-        supabase.from("goals").select("id,name,department_id,start_date,end_date").eq("id", goalId).maybeSingle(),
-        supabase.from("goal_departments").select("department_id,role,goal_weight,kr_weight").eq("goal_id", goalId),
+      const [
+        goalResult,
+        goalDepartmentResult,
+        keyResultResult,
+        directKeyResultResult,
+        supportLinkResult,
+      ] = await Promise.all([
+        supabase
+          .from("goals")
+          .select("id,name,type,department_id,start_date,end_date")
+          .eq("id", goalId)
+          .maybeSingle(),
+        supabase
+          .from("goal_departments")
+          .select("department_id,role,goal_weight,kr_weight")
+          .eq("goal_id", goalId),
         isEditMode
           ? supabase
               .from("key_results")
@@ -567,8 +657,15 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
       setGoalDepartments(nextGoalDepartments);
 
       if (typedKeyResult) {
+        const goalScopedType = normalizeGoalTypeValue(typedGoal.type);
         const nextForm = {
           ...toKeyResultFormState(typedKeyResult),
+          type: goalScopedType,
+          unit: normalizeKeyResultUnitForType(goalScopedType, typedKeyResult.unit),
+          target:
+            goalScopedType === "okr"
+              ? 100
+              : toKeyResultFormState(typedKeyResult).target,
           responsibleDepartmentId:
             typedKeyResult.responsible_department_id || nextGoalDepartments[0]?.departmentId || "",
           startDate: typedKeyResult.start_date || typedGoal.start_date || "",
@@ -578,12 +675,19 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
         setForm(nextForm);
         setTargetInputValue(String(nextForm.target));
       } else {
+        const nextGoalType = normalizeGoalTypeValue(typedGoal.type);
         setForm((prev) => ({
           ...prev,
+          type: nextGoalType,
+          unit: normalizeKeyResultUnitForType(nextGoalType, prev.unit),
+          target: nextGoalType === "okr" ? 100 : prev.target,
           responsibleDepartmentId: prev.responsibleDepartmentId || nextGoalDepartments[0]?.departmentId || "",
           startDate: prev.startDate || typedGoal.start_date || "",
           endDate: prev.endDate || typedGoal.end_date || "",
         }));
+        if (nextGoalType === "okr") {
+          setTargetInputValue("100");
+        }
         setSupportLinkDrafts([]);
         setInitialSupportLinkIds([]);
       }
@@ -608,8 +712,40 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
   }, [form.contributionType, isLoading, supportLinkDrafts.length]);
 
   const isSupportContribution = form.contributionType === "support";
-  const isSupportKpi = isSupportContribution && form.type === "kpi";
-  const isSupportOkr = isSupportContribution && form.type === "okr";
+  const isOkrType = form.type === "okr";
+  const usesPercentAllocation = isSupportContribution && usesPercentSupportAllocation(form.unit);
+  const usesValueAllocation = isSupportContribution && !usesPercentAllocation;
+  const supportAllocationExpectedTotal = usesPercentAllocation ? 100 : Number(form.target) || 0;
+  const selectedResponsibleDepartmentName = useMemo(
+    () =>
+      goalDepartments.find((department) => department.departmentId === form.responsibleDepartmentId)?.name ??
+      goalDepartments[0]?.name ??
+      null,
+    [form.responsibleDepartmentId, goalDepartments],
+  );
+  const keyResultNamePlaceholder = useMemo(
+    () => getKeyResultNamePlaceholder(selectedResponsibleDepartmentName),
+    [selectedResponsibleDepartmentName],
+  );
+  const keyResultRoleSummary = useMemo(
+    () => getKeyResultRoleSummary(form.type, form.contributionType),
+    [form.contributionType, form.type],
+  );
+  const activeSupportLinkDrafts = useMemo(
+    () => supportLinkDrafts.filter(isSupportLinkDraftFilled),
+    [supportLinkDrafts],
+  );
+  const supportAllocationTotal = useMemo(
+    () =>
+      activeSupportLinkDrafts.reduce((sum, item) => {
+        const rawValue = usesPercentAllocation ? item.allocatedPercent.trim() : item.allocatedValue.trim();
+        const numericValue = rawValue ? Number(rawValue) : 0;
+        return Number.isFinite(numericValue) ? sum + numericValue : sum;
+      }, 0),
+    [activeSupportLinkDrafts, usesPercentAllocation],
+  );
+  const supportAllocationDelta = supportAllocationExpectedTotal - supportAllocationTotal;
+  const isSupportAllocationBalanced = Math.abs(supportAllocationDelta) < 0.0001;
 
   useEffect(() => {
     if (!isSupportContribution) {
@@ -619,12 +755,12 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
     setSupportLinkDrafts((prev) => {
       let didChange = false;
       const next = prev.map((item) => {
-        if (form.type === "okr" && item.allocatedValue) {
+        if (usesPercentAllocation && item.allocatedValue) {
           didChange = true;
           return { ...item, allocatedValue: "" };
         }
 
-        if (form.type === "kpi" && item.allocatedPercent) {
+        if (usesValueAllocation && item.allocatedPercent) {
           didChange = true;
           return { ...item, allocatedPercent: "" };
         }
@@ -634,7 +770,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
 
       return didChange ? next : prev;
     });
-  }, [form.type, isSupportContribution]);
+  }, [isSupportContribution, usesPercentAllocation, usesValueAllocation]);
 
   const getSupportTargetChoices = (currentRowId: string, currentTargetId: string) => {
     const usedTargetIds = new Set(
@@ -697,12 +833,20 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
       const safeAllocatedValue = item.allocatedValue.trim() ? Number(item.allocatedValue) : null;
       const safeAllocatedPercent = item.allocatedPercent.trim() ? Number(item.allocatedPercent) : null;
 
-      if (isSupportKpi && safeAllocatedValue !== null && !Number.isFinite(safeAllocatedValue)) {
+      if (usesValueAllocation && safeAllocatedValue === null) {
+        return "Vui lòng nhập lượng phân bổ cho mọi liên kết hỗ trợ.";
+      }
+
+      if (usesValueAllocation && safeAllocatedValue !== null && !Number.isFinite(safeAllocatedValue)) {
         return "Lượng phân bổ phải là số hợp lệ.";
       }
 
+      if (usesPercentAllocation && safeAllocatedPercent === null) {
+        return "Vui lòng nhập phần trăm phân bổ cho mọi liên kết hỗ trợ.";
+      }
+
       if (
-        isSupportOkr &&
+        usesPercentAllocation &&
         safeAllocatedPercent !== null &&
         (!Number.isFinite(safeAllocatedPercent) || safeAllocatedPercent < 0 || safeAllocatedPercent > 100)
       ) {
@@ -716,6 +860,22 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
       linkedTargetIds.add(item.targetKeyResultId);
     }
 
+    const totalAllocated = activeDrafts.reduce((sum, item) => {
+      const numericValue = usesPercentAllocation
+        ? Number(item.allocatedPercent.trim())
+        : Number(item.allocatedValue.trim());
+      return sum + numericValue;
+    }, 0);
+
+    if (usesPercentAllocation && Math.abs(totalAllocated - 100) >= 0.0001) {
+      return `Tổng phần trăm phân bổ phải bằng 100%. Hiện tại là ${formatMetricValue(totalAllocated)}%.`;
+    }
+
+    const currentTarget = Number(form.target);
+    if (!usesPercentAllocation && Math.abs(totalAllocated - currentTarget) >= 0.0001) {
+      return `Tổng lượng phân bổ phải bằng chỉ tiêu KR (${formatKeyResultMetric(currentTarget, form.unit)}). Hiện tại là ${formatKeyResultMetric(totalAllocated, form.unit)}.`;
+    }
+
     return null;
   };
 
@@ -723,8 +883,8 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
     const activeDrafts = isSupportContribution
       ? supportLinkDrafts.filter(isSupportLinkDraftFilled)
       : [];
-    const shouldSaveAllocatedValue = form.type === "kpi";
-    const shouldSaveAllocatedPercent = form.type === "okr";
+    const shouldSaveAllocatedValue = !usesPercentSupportAllocation(form.unit);
+    const shouldSaveAllocatedPercent = usesPercentSupportAllocation(form.unit);
 
     const retainedIds = new Set(
       activeDrafts
@@ -821,6 +981,16 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
       setSubmitError("Chỉ tiêu phải lớn hơn 0.");
       return;
     }
+    if (form.type === "okr" && safeTarget !== 100) {
+      setSubmitError("KR kiểu OKR luôn có chỉ tiêu cố định là 100%.");
+      return;
+    }
+    if (requiredKeyResultType && form.type !== requiredKeyResultType) {
+      setSubmitError(
+        `Loại KR phải giống loại mục tiêu hiện tại: ${requiredKeyResultTypeLabel ?? requiredKeyResultType.toUpperCase()}.`,
+      );
+      return;
+    }
     if (!form.responsibleDepartmentId) {
       setSubmitError("Vui lòng chọn phòng ban phụ trách.");
       return;
@@ -851,7 +1021,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
         goal_id: goal.id,
         name: form.name.trim(),
         description: form.description.trim() || null,
-        type: form.type,
+        type: requiredKeyResultType ?? form.type,
         contribution_type: form.contributionType,
         unit: form.unit,
         target: safeTarget,
@@ -927,27 +1097,14 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
         <WorkspaceSidebar active="goals" />
 
         <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-[#f3f5fa] lg:pl-[var(--workspace-sidebar-width)]">
-          <header className="border-b border-slate-200 bg-[#f3f5fa] px-4 py-4 lg:px-7">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm text-slate-500">
-                <Link href="/goals" className="hover:text-slate-700">
-                  Mục tiêu
-                </Link>
-                <span className="px-2">›</span>
-                {goal ? (
-                  <>
-                    <Link href={`/goals/${goal.id}`} className="hover:text-slate-700">
-                      {goal.name}
-                    </Link>
-                    <span className="px-2">›</span>
-                  </>
-                ) : null}
-                <span className="font-semibold text-slate-700">
-                  {isEditMode ? "Chỉnh sửa KR" : "Tạo KR mới"}
-                </span>
-              </div>
-            </div>
-          </header>
+          <WorkspacePageHeader
+            title={isEditMode ? "Chỉnh sửa Key Result" : "Thêm Key Result"}
+            items={[
+              { label: "Mục tiêu", href: "/goals" },
+              ...(goal ? [{ label: goal.name, href: `/goals/${goal.id}` }] : []),
+              { label: isEditMode ? "Chỉnh sửa Key Result" : "Thêm Key Result" },
+            ]}
+          />
 
           <main className="min-h-0 flex-1 overflow-y-auto bg-[#f3f5fa] px-4 py-6 lg:px-7">
             {showPermissionDebug ? (
@@ -964,12 +1121,14 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
             <section className="mx-auto w-full max-w-[920px] rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_24px_50px_-40px_rgba(15,23,42,0.4)] lg:p-6">
               <div className="mb-5">
                 <h1 className="text-2xl font-semibold tracking-[-0.02em] text-slate-900">
-                  {isEditMode ? "Chỉnh sửa KR" : "Tạo KR mới"}
+                  {isEditMode ? "Chỉnh sửa Key Result" : "Thêm Key Result cho mục tiêu"}
                 </h1>
                 <p className="mt-1 text-sm text-slate-500">
                   {goal
-                    ? `${isEditMode ? "Đang chỉnh sửa KR của mục tiêu" : "Mục tiêu"}: ${goal.name}`
-                    : "Thiết lập loại đo lường, chỉ tiêu, thời gian và phòng ban phụ trách."}
+                    ? `${
+                        isEditMode ? "Mục tiêu đang liên kết" : "Mục tiêu đang liên kết"
+                      }: ${goal.name}`
+                    : "Xác định loại KR, vai trò đóng góp, chỉ tiêu và phòng ban phụ trách."}
                 </p>
                 {goal?.start_date || goal?.end_date ? (
                   <p className="mt-2 text-xs text-slate-500">
@@ -1021,12 +1180,12 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
 
                   <div className="grid gap-4 md:items-end md:grid-cols-[minmax(0,1fr)_220px_200px_200px]">
                     <div className="flex h-full flex-col justify-end gap-1.5">
-                      <label className="inline-flex min-h-5 items-center text-sm font-semibold text-slate-700">Tên KR *</label>
+                      <label className="inline-flex min-h-5 items-center text-sm font-semibold text-slate-700">Tên Key Result *</label>
                       <input
                         value={form.name}
                         onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
                         className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                        placeholder="Ví dụ: Tăng MRR thêm 20%"
+                        placeholder={keyResultNamePlaceholder}
                       />
                     </div>
 
@@ -1052,29 +1211,48 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                     </div>
 
                     <div className="flex h-full flex-col justify-end gap-1.5">
-                      <label className="inline-flex min-h-5 items-center text-sm font-semibold text-slate-700">Loại kết quả</label>
+                      <label className="inline-flex min-h-5 items-center text-sm font-semibold text-slate-700">Loại KR</label>
                       <Select
                         value={form.type}
-                        onValueChange={(value: KeyResultTypeValue) =>
-                          setForm((prev) => ({ ...prev, type: value }))
-                        }
+                        onValueChange={(value: KeyResultTypeValue) => {
+                          if (requiredKeyResultType && value !== requiredKeyResultType) {
+                            return;
+                          }
+                          setForm((prev) => ({
+                            ...prev,
+                            type: value,
+                            unit: normalizeKeyResultUnitForType(value, prev.unit),
+                            target: value === "okr" ? 100 : prev.target,
+                          }));
+                          if (value === "okr") {
+                            setTargetInputValue("100");
+                          }
+                        }}
+                        disabled={Boolean(requiredKeyResultType)}
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="Chọn loại kết quả" />
+                          <SelectValue placeholder="Chọn loại KR" />
                         </SelectTrigger>
                         <SelectContent>
-                          {KEY_RESULT_TYPES.map((item) => (
+                          {KEY_RESULT_TYPES.filter((item) =>
+                            requiredKeyResultType ? item.value === requiredKeyResultType : true,
+                          ).map((item) => (
                             <SelectItem key={item.value} value={item.value}>
                               {item.label}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
+                      {requiredKeyResultTypeLabel ? (
+                        <p className="text-xs text-slate-500">
+                          Loại KR được cố định theo loại mục tiêu: {requiredKeyResultTypeLabel}.
+                        </p>
+                      ) : null}
                     </div>
 
                     <div className="flex h-full flex-col justify-end gap-1.5">
                       <label className="inline-flex min-h-5 items-center gap-1.5 text-sm font-semibold text-slate-700">
-                        <span>Kiểu đóng góp</span>
+                        <span>Vai trò đóng góp</span>
                         <KeyResultContributionInfo />
                       </label>
                       <Select
@@ -1084,7 +1262,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                         }
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="Chọn kiểu đóng góp" />
+                          <SelectValue placeholder="Chọn vai trò đóng góp" />
                         </SelectTrigger>
                         <SelectContent>
                           {KEY_RESULT_CONTRIBUTION_TYPES.map((item) => (
@@ -1098,12 +1276,9 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                   </div>
 
                   <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                  <p className="font-semibold">
-                      KR hiện tại đang ở dạng {form.type.toUpperCase()} /{" "}
-                      {formatKeyResultContributionTypeLabel(form.contributionType).toLowerCase()}.
-                  </p>
+                    <p className="font-semibold">{keyResultRoleSummary.title}</p>
                     <p className="mt-1 text-xs text-slate-500">
-                      Đây là nơi lưu chỉ số chính. Công việc chỉ theo dõi phần thực thi và không tự cộng dồn vào giá trị hiện tại.
+                      {keyResultRoleSummary.description}
                     </p>
                   </div>
 
@@ -1112,15 +1287,16 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                       <label className="text-sm font-semibold text-slate-700">Đơn vị</label>
                       <Select
                         value={form.unit}
+                        disabled={isOkrType}
                         onValueChange={(value: KeyResultUnitValue) =>
-                          setForm((prev) => ({ ...prev, unit: value }))
+                          setForm((prev) => ({ ...prev, unit: normalizeKeyResultUnitForType(prev.type, value) }))
                         }
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="Chọn đơn vị" />
+                          <SelectValue placeholder={isOkrType ? "OKR dùng phần trăm" : "Chọn đơn vị"} />
                         </SelectTrigger>
                         <SelectContent>
-                          {KEY_RESULT_UNITS.map((unit) => (
+                          {getAllowedKeyResultUnitsByType(form.type).map((unit) => (
                             <SelectItem key={unit.value} value={unit.value}>
                               {unit.label}
                             </SelectItem>
@@ -1130,9 +1306,10 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">Chỉ tiêu *</label>
+                      <label className="text-sm font-semibold text-slate-700">Chỉ tiêu cần đạt *</label>
                       <FormattedNumberInput
                         value={targetInputValue}
+                        disabled={isOkrType}
                         onValueChange={(value) => {
                           setTargetInputValue(value);
                           setForm((prev) => ({
@@ -1140,7 +1317,12 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                             target: value ? Number(value) : 0,
                           }));
                         }}
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        className={`h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
+                          isOkrType
+                            ? "cursor-not-allowed bg-slate-50 text-slate-400"
+                            : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        }`}
+                        placeholder={isOkrType ? "KR OKR luôn là 100%" : undefined}
                       />
                     </div>
 
@@ -1151,15 +1333,45 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <h2 className="text-base font-semibold text-slate-900">
-                            Liên kết hỗ trợ tới KR trực tiếp
+                            Phân bổ đóng góp tới KR trực tiếp
                           </h2>
                           <p className="mt-1 text-sm text-slate-500">
-                            Chọn rõ KR trực tiếp mà KR hỗ trợ này đóng góp vào. Mỗi dòng là một liên kết.
+                            Chọn các KR trực tiếp mà KR hỗ trợ này sẽ đóng góp vào. Tổng phân bổ phải khớp với chỉ tiêu của KR hỗ trợ.
                           </p>
                         </div>
                         <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
-                          {supportLinkDrafts.filter(isSupportLinkDraftFilled).length} liên kết
+                          {getSupportLinkCountLabel(activeSupportLinkDrafts.length)}
                         </span>
+                      </div>
+
+                      <div
+                        className={`rounded-xl border px-4 py-3 text-sm ${
+                          isSupportAllocationBalanced
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                            : "border-amber-200 bg-amber-50 text-amber-700"
+                        }`}
+                      >
+                        <p className="font-semibold">
+                          Tổng phân bổ:{" "}
+                          {usesPercentAllocation
+                            ? `${formatMetricValue(supportAllocationTotal)}% / 100%`
+                            : `${formatKeyResultMetric(supportAllocationTotal, form.unit)} / ${formatKeyResultMetric(supportAllocationExpectedTotal, form.unit)}`}
+                        </p>
+                        <p className="mt-1 text-xs">
+                          {isSupportAllocationBalanced
+                            ? "Tổng phân bổ đã khớp với chỉ tiêu của KR hỗ trợ."
+                            : supportAllocationDelta > 0
+                              ? `Cần phân bổ thêm ${
+                                  usesPercentAllocation
+                                    ? `${formatMetricValue(supportAllocationDelta)}%`
+                                    : formatKeyResultMetric(supportAllocationDelta, form.unit)
+                                } để khớp với chỉ tiêu của KR hỗ trợ.`
+                              : `Đang phân bổ vượt ${
+                                  usesPercentAllocation
+                                    ? `${formatMetricValue(Math.abs(supportAllocationDelta))}%`
+                                    : formatKeyResultMetric(Math.abs(supportAllocationDelta), form.unit)
+                                } so với chỉ tiêu của KR hỗ trợ.`}
+                        </p>
                       </div>
 
                       {isLoadingSupportTargets ? (
@@ -1180,20 +1392,20 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                           return (
                             <div key={item.rowId} className="rounded-2xl border border-slate-200 bg-white p-4">
                               <div className="flex flex-wrap items-center justify-between gap-3">
-                                <p className="text-sm font-semibold text-slate-900">Liên kết #{index + 1}</p>
+                                <p className="text-sm font-semibold text-slate-900">Phân bổ #{index + 1}</p>
                                 <button
                                   type="button"
                                   onClick={() => removeSupportLinkDraft(item.rowId)}
                                   className="inline-flex h-8 items-center rounded-lg border border-rose-200 bg-white px-3 text-xs font-semibold text-rose-700 hover:bg-rose-50"
                                 >
-                                  Xóa liên kết
+                                  Xóa phân bổ
                                 </button>
                               </div>
 
                               <div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1.25fr)_220px]">
                                 <label className="space-y-1.5">
                                   <span className="text-sm font-semibold text-slate-700">
-                                    KR trực tiếp *
+                                    KR nhận đóng góp *
                                   </span>
                                   <Select
                                     value={item.targetKeyResultId || undefined}
@@ -1202,7 +1414,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                                     }
                                   >
                                     <SelectTrigger>
-                                      <SelectValue placeholder="Chọn KR trực tiếp" />
+                                      <SelectValue placeholder="Chọn KR nhận đóng góp" />
                                     </SelectTrigger>
                                     <SelectContent>
                                       {targetChoices.map((target) => (
@@ -1214,11 +1426,11 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                                   </Select>
                                 </label>
 
-                                {isSupportKpi ? (
+                                {usesValueAllocation ? (
                                   <label className="space-y-1.5">
                                     <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-700">
-                                      <span>Lượng phân bổ</span>
-                                      <SupportAllocationInfo type={form.type} />
+                                      <span>Giá trị phân bổ</span>
+                                      <SupportAllocationInfo unit={form.unit} />
                                     </span>
                                     <FormattedNumberInput
                                       value={item.allocatedValue}
@@ -1231,11 +1443,11 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                                   </label>
                                 ) : null}
 
-                                {isSupportOkr ? (
+                                {usesPercentAllocation ? (
                                   <label className="space-y-1.5">
                                     <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-700">
-                                      <span>Phần trăm phân bổ</span>
-                                      <SupportAllocationInfo type={form.type} />
+                                      <span>Giá trị phân bổ</span>
+                                      <SupportAllocationInfo unit={form.unit} />
                                     </span>
                                     <FormattedNumberInput
                                       value={item.allocatedPercent}
@@ -1250,7 +1462,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                               </div>
 
                               <label className="mt-4 block space-y-1.5">
-                                <span className="text-sm font-semibold text-slate-700">Ghi chú liên kết</span>
+                                <span className="text-sm font-semibold text-slate-700">Ghi chú phân bổ</span>
                                 <textarea
                                   rows={3}
                                   value={item.note}
@@ -1259,9 +1471,9 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                                   }
                                   className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                                   placeholder={
-                                    isSupportOkr
-                                      ? "Ví dụ: KR này hỗ trợ 25% phạm vi kết quả của KR trực tiếp."
-                                      : "Ví dụ: Phân bổ 20 đơn hoặc 20 lead từ KR hỗ trợ này sang KR trực tiếp."
+                                    usesPercentAllocation
+                                      ? "Ví dụ: Phân bổ 25% mức đóng góp từ KR hỗ trợ này sang KR trực tiếp đã chọn."
+                                      : "Ví dụ: Phân bổ 20 đơn vị từ KR hỗ trợ này sang KR trực tiếp đã chọn."
                                   }
                                 />
                               </label>
@@ -1276,7 +1488,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                           onClick={addSupportLinkDraft}
                           className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100"
                         >
-                          + Thêm liên kết hỗ trợ
+                          + Thêm phân bổ
                         </button>
                       </div>
                     </div>

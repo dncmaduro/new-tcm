@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { supabase } from "@/lib/supabase";
 
@@ -778,30 +779,29 @@ function DepartmentsPageContent() {
         <WorkspaceSidebar active="departments" />
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <header className="sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-7">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <h1 className="text-3xl font-semibold tracking-[-0.02em] text-slate-900">Phòng ban</h1>
-                <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1">
-                  <button
-                    type="button"
-                    onClick={() => updateQuery({ mode: "tree" })}
-                    className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
-                      mode === "tree" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                    }`}
-                  >
-                    Tree
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateQuery({ mode: "list" })}
-                    className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
-                      mode === "list" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                    }`}
-                  >
-                    List
-                  </button>
-                </div>
+          <WorkspacePageHeader title="Phòng ban" items={[{ label: "Phòng ban" }]} />
+
+          <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-7">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1">
+                <button
+                  type="button"
+                  onClick={() => updateQuery({ mode: "tree" })}
+                  className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                    mode === "tree" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  Tree
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateQuery({ mode: "list" })}
+                  className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                    mode === "list" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  List
+                </button>
               </div>
 
               <div className="flex items-center gap-2">
@@ -814,9 +814,6 @@ function DepartmentsPageContent() {
                 />
               </div>
             </div>
-          </header>
-
-          <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-7">
             {isLoading ? (
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
                 Đang tải dữ liệu phòng ban...

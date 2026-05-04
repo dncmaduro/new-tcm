@@ -118,10 +118,7 @@ function weightedAverage(rows: Array<{ progress: number | null; weight: number |
   const valid = rows.filter((r) => r.progress != null);
   if (!valid.length) return null;
 
-  const sumWeight = valid.reduce((s, r) => s + (r.weight ?? 1), 0);
-  if (sumWeight <= 0) return null;
-
-  const score = valid.reduce((s, r) => s + (r.progress! * (r.weight ?? 1)), 0) / sumWeight;
+  const score = valid.reduce((s, r) => s + r.progress!, 0) / valid.length;
   return round2(score);
 }
 
@@ -431,7 +428,7 @@ serve(async (req) => {
             current_value: kr.current,
             unit: kr.unit,
             progress_percent: calcProgress(kr.target, kr.current),
-            weight: kr.weight,
+            weight: null,
             score: calcProgress(kr.target, kr.current),
             meta_json: null,
           })),
@@ -444,7 +441,7 @@ serve(async (req) => {
             current_value: kr.current,
             unit: kr.unit,
             progress_percent: calcProgress(kr.target, kr.current),
-            weight: kr.weight,
+            weight: null,
             score: calcProgress(kr.target, kr.current),
             meta_json: null,
           })),

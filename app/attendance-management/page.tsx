@@ -1,13 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { TimesheetOverview } from "@/components/timesheet/timesheet-overview";
+import { collectAttendanceIds } from "@/lib/attendance";
 import { useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
-
-type RoleScope = "director" | "leader" | "member";
 
 type UserRoleRow = {
   profile_id: string | null;
@@ -19,6 +18,12 @@ type ProfileRow = {
   id: string;
   name: string | null;
   email: string | null;
+  attendance_id: number | null;
+};
+
+type TimesProfileLinkRow = {
+  profile_id: string | null;
+  attendance_id: number | null;
 };
 
 type ViewableProfile = {
@@ -28,6 +33,7 @@ type ViewableProfile = {
   roleLabel: string;
   departmentLabel: string;
   rawRolePriority: number;
+  attendanceIds: number[];
 };
 
 const normalizeText = (value: string | null | undefined) =>
@@ -49,16 +55,6 @@ const toRolePriority = (roleName: string) => {
     return 2;
   }
   return 3;
-};
-
-const toRoleScopeLabel = (scope: RoleScope) => {
-  if (scope === "director") {
-    return "Giám đốc";
-  }
-  if (scope === "leader") {
-    return "Trưởng nhóm";
-  }
-  return "Thành viên";
 };
 
 const getDescendantDepartmentIds = (
@@ -97,7 +93,6 @@ const getDescendantDepartmentIds = (
 
 export default function AttendanceManagementPage() {
   const workspaceAccess = useWorkspaceAccess();
-  const [roleScope, setRoleScope] = useState<RoleScope>("member");
   const [viewableProfiles, setViewableProfiles] = useState<ViewableProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
@@ -145,7 +140,7 @@ export default function AttendanceManagementPage() {
           throw new Error("Không xác định được hồ sơ người dùng hiện tại.");
         }
 
-        let nextRoleScope: RoleScope = "member";
+        let nextRoleScope: "director" | "leader" | "member" = "member";
         if (workspaceAccess.hasDirectorRole) {
           nextRoleScope = "director";
         } else if (workspaceAccess.hasLeaderRole) {
@@ -155,8 +150,6 @@ export default function AttendanceManagementPage() {
         if (!isActive) {
           return;
         }
-        setRoleScope(nextRoleScope);
-
         if (nextRoleScope === "member") {
           setViewableProfiles([]);
           setSelectedProfileId(null);
@@ -170,7 +163,7 @@ export default function AttendanceManagementPage() {
         if (nextRoleScope === "director") {
           const [{ data: profilesData, error: profilesError }, { data: membershipsData, error: membershipsError }] =
             await Promise.all([
-              supabase.from("profiles").select("id,name,email").order("name", { ascending: true }),
+              supabase.from("profiles").select("id,name,email,attendance_id").order("name", { ascending: true }),
               supabase.from("user_role_in_department").select("profile_id,department_id,role_id"),
             ]);
 
@@ -236,7 +229,7 @@ export default function AttendanceManagementPage() {
 
           const { data: profilesData, error: profilesError } = await supabase
             .from("profiles")
-            .select("id,name,email")
+            .select("id,name,email,attendance_id")
             .in("id", targetProfileIds)
             .order("name", { ascending: true });
 
@@ -245,6 +238,23 @@ export default function AttendanceManagementPage() {
           }
 
           targetProfiles = (profilesData ?? []) as ProfileRow[];
+        }
+
+        if (!isActive) {
+          return;
+        }
+
+        const targetProfileIds = targetProfiles.map((profile) => String(profile.id));
+        const { data: attendanceLinkRows, error: attendanceLinkError } =
+          targetProfileIds.length > 0
+            ? await supabase
+                .from("times_profiles")
+                .select("profile_id,attendance_id")
+                .in("profile_id", targetProfileIds)
+            : { data: [], error: null };
+
+        if (attendanceLinkError) {
+          throw new Error(attendanceLinkError.message || "Không tải được liên kết mã chấm công.");
         }
 
         if (!isActive) {
@@ -270,10 +280,27 @@ export default function AttendanceManagementPage() {
           acc[profileId].push(membership);
           return acc;
         }, {});
+        const attendanceLinksByProfileId = ((attendanceLinkRows ?? []) as TimesProfileLinkRow[]).reduce<
+          Record<string, TimesProfileLinkRow[]>
+        >((acc, row) => {
+          if (!row.profile_id) {
+            return acc;
+          }
+          const profileId = String(row.profile_id);
+          if (!acc[profileId]) {
+            acc[profileId] = [];
+          }
+          acc[profileId].push(row);
+          return acc;
+        }, {});
 
         const mappedProfiles = targetProfiles
           .map((profile) => {
             const profileId = String(profile.id);
+            const attendanceIds = collectAttendanceIds([
+              profile.attendance_id,
+              ...(attendanceLinksByProfileId[profileId] ?? []),
+            ]);
             const assignments = (membershipsByProfileId[profileId] ?? [])
               .map((membership) => ({
                 roleLabel: membership.role_id
@@ -307,6 +334,7 @@ export default function AttendanceManagementPage() {
               roleLabel: primaryAssignment.roleLabel,
               departmentLabel: primaryAssignment.departmentLabel,
               rawRolePriority: toRolePriority(primaryAssignment.roleLabel),
+              attendanceIds,
             } satisfies ViewableProfile;
           })
           .sort((a, b) => {
@@ -380,22 +408,10 @@ export default function AttendanceManagementPage() {
         <WorkspaceSidebar active="attendanceManagement" />
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <header className="sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-7">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm text-slate-500">
-                  <Link href="/dashboard" className="hover:text-slate-700">
-                    Bảng điều khiển
-                  </Link>
-                  <span className="px-2">›</span>
-                  <span className="font-semibold text-slate-700">Quản lý chấm công</span>
-                </p>
-                <h1 className="mt-1 text-3xl font-semibold tracking-[-0.02em] text-slate-900">
-                  Quản lý chấm công
-                </h1>
-              </div>
-            </div>
-          </header>
+          <WorkspacePageHeader
+            title="Quản lý chấm công"
+            items={[{ label: "Quản lý chấm công" }]}
+          />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-7 xl:overflow-hidden">
             {workspaceAccess.isLoading || isLoadingProfiles ? (
@@ -460,7 +476,20 @@ export default function AttendanceManagementPage() {
                                   {profile.roleLabel}
                                 </span>
                               </div>
-                              <p className="mt-3 text-xs text-slate-500">{profile.departmentLabel}</p>
+                              <div className="mt-3 flex items-center justify-between gap-2">
+                                <p className="text-xs text-slate-500">{profile.departmentLabel}</p>
+                                <span
+                                  className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                                    profile.attendanceIds.length > 0
+                                      ? "bg-emerald-50 text-emerald-700"
+                                      : "bg-amber-50 text-amber-700"
+                                  }`}
+                                >
+                                  {profile.attendanceIds.length > 0
+                                    ? `${profile.attendanceIds.length} mã công`
+                                    : "Chưa liên kết công"}
+                                </span>
+                              </div>
                             </button>
                           );
                         })
@@ -491,6 +520,17 @@ export default function AttendanceManagementPage() {
                             </span>
                             <span className="rounded-full bg-slate-100 px-3 py-1 font-semibold text-slate-700">
                               {selectedProfile.departmentLabel}
+                            </span>
+                            <span
+                              className={`rounded-full px-3 py-1 font-semibold ${
+                                selectedProfile.attendanceIds.length > 0
+                                  ? "bg-emerald-50 text-emerald-700"
+                                  : "bg-amber-50 text-amber-700"
+                              }`}
+                            >
+                              {selectedProfile.attendanceIds.length > 0
+                                ? `Mã công: ${selectedProfile.attendanceIds.join(", ")}`
+                                : "Chưa liên kết mã công"}
                             </span>
                           </div>
                         </div>

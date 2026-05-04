@@ -161,6 +161,28 @@ const buildManagedDepartments = (
   return departments.filter((department) => !department.parentDepartmentId && rootDepartmentIds.has(department.id));
 };
 
+export const hasRootLeaderRole = (
+  memberships: WorkspaceMembership[],
+  departments: WorkspaceDepartment[],
+  leaderRoleIds: string[],
+) => {
+  const rootDepartmentIds = new Set(
+    departments
+      .filter((department) => !department.parentDepartmentId)
+      .map((department) => department.id),
+  );
+
+  return memberships.some(
+    (membership) =>
+      Boolean(
+        membership.departmentId &&
+          membership.roleId &&
+          leaderRoleIds.includes(membership.roleId) &&
+          rootDepartmentIds.has(membership.departmentId),
+      ),
+  );
+};
+
 export const useWorkspaceAccessStore = create<WorkspaceAccessStore>((set, get) => ({
   ...defaultState,
   async load(options) {
@@ -290,6 +312,10 @@ export function useWorkspaceAccess() {
     () => state.memberships.some((membership) => membership.roleId && directorRoleIds.includes(membership.roleId)),
     [directorRoleIds, state.memberships],
   );
+  const hasRootLeaderAccess = useMemo(
+    () => hasRootLeaderRole(state.memberships, state.departments, leaderRoleIds),
+    [leaderRoleIds, state.departments, state.memberships],
+  );
 
   return useMemo(
     () => ({
@@ -300,10 +326,12 @@ export function useWorkspaceAccess() {
       directorRoleIds,
       hasLeaderRole,
       hasDirectorRole,
+      hasRootLeaderAccess,
       canManage: state.managedDepartments.length > 0,
       canManageAttendance: hasLeaderRole || hasDirectorRole,
+      canViewTaskPoints: hasDirectorRole || hasRootLeaderAccess,
     }),
-    [directorRoleIds, hasDirectorRole, hasLeaderRole, leaderRoleIds, state],
+    [directorRoleIds, hasDirectorRole, hasLeaderRole, hasRootLeaderAccess, leaderRoleIds, state],
   );
 }
 

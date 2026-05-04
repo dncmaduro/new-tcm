@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { TimesheetOverview } from "@/components/timesheet/timesheet-overview";
 import { supabase } from "@/lib/supabase";
@@ -65,11 +66,7 @@ export default function TimesheetPage() {
         <WorkspaceSidebar active="timesheet" />
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <header className="sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-7">
-            <div className="flex items-center justify-between gap-3">
-              <h1 className="text-3xl font-semibold tracking-[-0.02em] text-slate-900">Chấm công</h1>
-            </div>
-          </header>
+          <WorkspacePageHeader title="Chấm công" items={[{ label: "Chấm công" }]} />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-7">
             <TimesheetOverview

@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { type ReactNode, useState } from "react";
+import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import {
   DepartmentAnalyticsSection,
@@ -99,20 +99,10 @@ export default function DepartmentPerformancePage() {
         <WorkspaceSidebar active="departmentPerformance" />
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-8">
-            <p className="text-sm text-slate-500">
-              <Link href="/dashboard" className="hover:text-slate-700">
-                Bảng điều khiển
-              </Link>
-              <span className="px-2">›</span>
-              <span>Hiệu suất phòng ban</span>
-            </p>
-            <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
-              <div>
-                <h1 className="text-4xl font-semibold leading-[1.05] tracking-[-0.04em] text-slate-950">Hiệu suất phòng ban</h1>
-              </div>
-            </div>
-          </header>
+          <WorkspacePageHeader
+            title="Hiệu suất phòng ban"
+            items={[{ label: "Hiệu suất phòng ban" }]}
+          />
 
           <main className="space-y-8 px-4 py-6 lg:px-8 lg:py-8">
             {isLoadingPermission ? (

@@ -1,23 +1,26 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { getTaskProgressHint, TASK_STATUSES, type TaskStatusValue } from "@/lib/constants/tasks";
+import { getTaskProgressHint } from "@/lib/constants/tasks";
 import {
   formatTimelineRangeVi,
   getTimelineMissingReason,
 } from "@/lib/timeline";
 import { ProgressSummary } from "./progress-summary";
 import { StatItem } from "./stat-item";
-import { TaskStatusBadge } from "./task-status-badge";
+import {
+  formatTaskPriorityPoints,
+  getTaskEarnedPoints,
+  getTaskPriorityScore,
+} from "./utils";
 import type { KeyResultLiteRow, TaskFormState, TaskRow, TaskTimelineFormState } from "./types";
-import { getTaskStatusMeta, getTaskStatusLabel } from "./utils";
 
 type TaskExecutionSectionProps = {
   task: TaskRow;
   keyResult: KeyResultLiteRow | null;
   form: TaskFormState;
   progressInput: string;
+  showTaskPoints: boolean;
   taskTimelineForm: TaskTimelineFormState;
   isEditingTaskInfo: boolean;
   isEditingExecution: boolean;
@@ -28,7 +31,6 @@ type TaskExecutionSectionProps = {
   onDescriptionChange: (value: string) => void;
   onHypothesisChange: (value: string) => void;
   onResultChange: (value: string) => void;
-  onStatusChange: (value: TaskStatusValue) => void;
   onProgressInputChange: (value: string) => void;
   onProgressInputBlur: () => void;
   onStartTimelineEdit: () => void;
@@ -43,6 +45,7 @@ export function TaskExecutionSection({
   keyResult,
   form,
   progressInput,
+  showTaskPoints,
   taskTimelineForm,
   isEditingTaskInfo,
   isEditingExecution,
@@ -53,7 +56,6 @@ export function TaskExecutionSection({
   onDescriptionChange,
   onHypothesisChange,
   onResultChange,
-  onStatusChange,
   onProgressInputChange,
   onProgressInputBlur,
   onStartTimelineEdit,
@@ -62,7 +64,6 @@ export function TaskExecutionSection({
   onTimelineStartChange,
   onTimelineEndChange,
 }: TaskExecutionSectionProps) {
-  const statusMeta = getTaskStatusMeta(form.status);
   const taskTimelineLabel = formatTimelineRangeVi(task.start_date, task.end_date, {
     fallback: "Chưa đặt thời gian thực thi",
   });
@@ -72,17 +73,16 @@ export function TaskExecutionSection({
   const goalTimelineLabel = formatTimelineRangeVi(keyResult?.goal?.start_date ?? null, keyResult?.goal?.end_date ?? null, {
     fallback: "Mục tiêu chưa có timeline",
   });
-  const executionFormula =
-    form.type === "okr"
-      ? `${getTaskStatusLabel(form.status)} = ${form.progress}%`
-      : "Nhập trực tiếp % hoàn thành của task.";
+  const executionFormula = "Nhập trực tiếp % hoàn thành của task.";
+  const totalPoints = getTaskPriorityScore(form.priority);
+  const earnedPoints = getTaskEarnedPoints(form.priority, form.progress);
 
   return (
     <section className="space-y-4">
       <div>
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Execution</p>
         <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em] text-slate-950">Triển khai</h2>
-        <p className="mt-1 text-sm text-slate-500">Ưu tiên cập nhật tiến độ, trạng thái và timeline làm việc.</p>
+        <p className="mt-1 text-sm text-slate-500">Ưu tiên cập nhật tiến độ và timeline làm việc.</p>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(300px,0.9fr)]">
@@ -92,40 +92,11 @@ export function TaskExecutionSection({
               <p className="text-sm font-semibold text-slate-900">Tiến độ thực thi</p>
               <p className="mt-1 text-sm text-slate-500">Phản ánh tiến độ làm việc của task, không ghi đè metric của KR.</p>
             </div>
-            <TaskStatusBadge status={form.status} />
           </div>
 
-          <ProgressSummary
-            progress={form.progress}
-            label="Execution progress"
-            statusLabel={statusMeta.label}
-            tone={statusMeta.tone}
-            className="mt-4"
-          />
+          <ProgressSummary progress={form.progress} label="Execution progress" className="mt-4" />
 
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <div className="space-y-1.5">
-              <span className="text-sm font-semibold text-slate-700">Trạng thái</span>
-              {isEditingExecution ? (
-                <Select value={form.status} onValueChange={(value) => onStatusChange(value as TaskStatusValue)}>
-                  <SelectTrigger className="h-11">
-                    <SelectValue placeholder="Chọn trạng thái" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {TASK_STATUSES.map((status) => (
-                      <SelectItem key={status.value} value={status.value}>
-                        {status.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <div className="flex h-11 items-center rounded-xl bg-slate-50 px-3">
-                  <span className="text-sm font-semibold text-slate-900">{statusMeta.label}</span>
-                </div>
-              )}
-            </div>
-
+          <div className="mt-4 grid gap-4">
             <label className="space-y-1.5">
               <span className="text-sm font-semibold text-slate-700">Tiến độ (%)</span>
               {isEditingExecution ? (
@@ -134,10 +105,9 @@ export function TaskExecutionSection({
                   min={0}
                   max={100}
                   value={progressInput}
-                  disabled={form.type === "okr"}
                   onChange={(event) => onProgressInputChange(event.target.value)}
                   onBlur={onProgressInputBlur}
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 />
               ) : (
                 <div className="flex h-11 items-center rounded-xl bg-slate-50 px-3">
@@ -150,6 +120,14 @@ export function TaskExecutionSection({
           <div className="mt-4 rounded-2xl bg-slate-50 px-4 py-3">
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Cách tính</p>
             <p className="mt-2 text-sm font-medium text-slate-800">{executionFormula}</p>
+            {showTaskPoints ? (
+              <p className="mt-1 text-sm text-slate-700">
+                Điểm đã đạt:{" "}
+                <span className="font-semibold text-slate-900">
+                  {formatTaskPriorityPoints(earnedPoints)} / {formatTaskPriorityPoints(totalPoints)} điểm
+                </span>
+              </p>
+            ) : null}
             <p className="mt-1 text-xs leading-5 text-slate-500">{getTaskProgressHint(form.type)}</p>
           </div>
         </article>

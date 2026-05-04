@@ -2,9 +2,11 @@ import { endOfMonth, endOfQuarter, format, isValid, parseISO, startOfWeek } from
 import { supabase } from "@/lib/supabase";
 import type {
   ManagedDepartment,
+  WorkspaceRole,
   WorkspaceDepartment,
   WorkspaceMembership,
 } from "@/lib/stores/workspace-access-store";
+import { getDirectorRoleIds, getLeaderRoleIds } from "@/lib/stores/workspace-access-store";
 
 export const REPORT_PERIOD_TYPES = [
   { value: "weekly", label: "Tuần" },
@@ -14,22 +16,38 @@ export const REPORT_PERIOD_TYPES = [
 
 export const REPORT_STATUSES = [
   { value: "draft", label: "Nháp" },
-  { value: "submitted", label: "Đã gửi" },
+  { value: "pending", label: "Chờ duyệt" },
   { value: "reviewed", label: "Đã duyệt" },
   { value: "locked", label: "Đã khóa" },
+  { value: "rejected", label: "Từ chối" },
 ] as const;
 
 export const REPORT_ITEM_TYPES = [
   { value: "goal", label: "Mục tiêu" },
   { value: "direct_kr", label: "KR trực tiếp" },
-  { value: "support_kr", label: "KR hỗ trợ" },
-  { value: "execution", label: "Thực thi" },
+  { value: "support_kr", label: "KR phối hợp" },
+  { value: "execution", label: "Task" },
 ] as const;
 
 export type PerformanceReportPeriodType = (typeof REPORT_PERIOD_TYPES)[number]["value"];
 export type PerformanceReportStatus = (typeof REPORT_STATUSES)[number]["value"];
 export type PerformanceReportItemType = (typeof REPORT_ITEM_TYPES)[number]["value"];
 export type ReportAccessScope = "director" | "leader" | "member";
+
+export type PerformanceReportProfile = {
+  id: string;
+  name: string;
+  email?: string;
+  avatar?: string;
+};
+
+export type PerformanceReportDepartment = {
+  id: string;
+  name: string;
+  parentDepartmentId?: string | null;
+};
+
+export type PerformanceReportMetricKind = "goal" | "kr";
 
 export type PerformanceReportRow = {
   id: string;
@@ -48,6 +66,8 @@ export type PerformanceReportRow = {
   support_kr_count: number | null;
   task_count: number | null;
   completed_task_count: number | null;
+  total_task_points: number | null;
+  completed_task_points: number | null;
   overdue_task_count: number | null;
   self_comment: string | null;
   manager_comment: string | null;
@@ -56,6 +76,11 @@ export type PerformanceReportRow = {
   reviewed_by: string | null;
   created_at: string | null;
   updated_at: string | null;
+};
+
+export type PerformanceReportWithRelations = PerformanceReportRow & {
+  profile?: PerformanceReportProfile;
+  department?: PerformanceReportDepartment;
 };
 
 export type PerformanceReportItemRow = {
@@ -119,6 +144,12 @@ type UserRoleRow = {
   department_id: string | null;
 };
 
+export type PerformanceReportRoleMembershipRow = {
+  profile_id: string | null;
+  department_id: string | null;
+  role_id: string | null;
+};
+
 const toNumeric = (value: number | string | null | undefined) => {
   if (value === null || value === undefined) {
     return null;
@@ -167,8 +198,11 @@ export const normalizeReportPeriodType = (value: string | null | undefined): Per
 };
 
 export const normalizeReportStatus = (value: string | null | undefined): PerformanceReportStatus => {
-  if (value === "submitted" || value === "reviewed" || value === "locked") {
+  if (value === "pending" || value === "reviewed" || value === "locked" || value === "rejected") {
     return value;
+  }
+  if (value === "submitted") {
+    return "pending";
   }
   return "draft";
 };
@@ -198,6 +232,10 @@ export const normalizePerformanceReportRow = (value: Record<string, unknown>) =>
     support_kr_count: toNumeric(value.support_kr_count as number | string | null | undefined),
     task_count: toNumeric(value.task_count as number | string | null | undefined),
     completed_task_count: toNumeric(value.completed_task_count as number | string | null | undefined),
+    total_task_points: toNumeric(value.total_task_points as number | string | null | undefined),
+    completed_task_points: toNumeric(
+      value.completed_task_points as number | string | null | undefined,
+    ),
     overdue_task_count: toNumeric(value.overdue_task_count as number | string | null | undefined),
     self_comment: value.self_comment ? String(value.self_comment) : null,
     manager_comment: value.manager_comment ? String(value.manager_comment) : null,
@@ -207,6 +245,52 @@ export const normalizePerformanceReportRow = (value: Record<string, unknown>) =>
     created_at: value.created_at ? String(value.created_at) : null,
     updated_at: value.updated_at ? String(value.updated_at) : null,
   }) satisfies PerformanceReportRow;
+
+export const normalizePerformanceReportWithRelations = (
+  value: Record<string, unknown>,
+): PerformanceReportWithRelations => {
+  const baseReport = normalizePerformanceReportRow(value);
+  const rawProfile = Array.isArray(value.profile) ? (value.profile[0] ?? null) : value.profile;
+  const rawDepartment = Array.isArray(value.department)
+    ? (value.department[0] ?? null)
+    : value.department;
+
+  const profile =
+    rawProfile && typeof rawProfile === "object" && "id" in rawProfile
+      ? {
+          id: String((rawProfile as Record<string, unknown>).id),
+          name:
+            String(
+              (rawProfile as Record<string, unknown>).name ??
+                (rawProfile as Record<string, unknown>).email ??
+                "Chưa có tên",
+            ) || "Chưa có tên",
+          email: (rawProfile as Record<string, unknown>).email
+            ? String((rawProfile as Record<string, unknown>).email)
+            : undefined,
+          avatar: (rawProfile as Record<string, unknown>).avatar
+            ? String((rawProfile as Record<string, unknown>).avatar)
+            : undefined,
+        }
+      : undefined;
+
+  const department =
+    rawDepartment && typeof rawDepartment === "object" && "id" in rawDepartment
+      ? {
+          id: String((rawDepartment as Record<string, unknown>).id),
+          name: String((rawDepartment as Record<string, unknown>).name ?? "Không rõ"),
+          parentDepartmentId: (rawDepartment as Record<string, unknown>).parent_department_id
+            ? String((rawDepartment as Record<string, unknown>).parent_department_id)
+            : null,
+        }
+      : undefined;
+
+  return {
+    ...baseReport,
+    profile,
+    department,
+  };
+};
 
 export const normalizePerformanceReportItemRow = (value: Record<string, unknown>) =>
   ({
@@ -243,10 +327,13 @@ export const getReportStatusTone = (value: string | null | undefined) => {
   if (normalized === "locked") {
     return "bg-slate-200 text-slate-700";
   }
+  if (normalized === "rejected") {
+    return "bg-rose-50 text-rose-700";
+  }
   if (normalized === "reviewed") {
     return "bg-emerald-50 text-emerald-700";
   }
-  if (normalized === "submitted") {
+  if (normalized === "pending") {
     return "bg-amber-50 text-amber-700";
   }
   return "bg-blue-50 text-blue-700";
@@ -258,6 +345,14 @@ export const formatReportScore = (value: number | null | undefined) => {
     return "--";
   }
   return `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 1 }).format(safeValue)}%`;
+};
+
+export const formatReportProgressValue = (
+  value: number | null | undefined,
+  emptyText = "Chưa có dữ liệu",
+) => {
+  const formatted = formatReportScore(value);
+  return formatted === "--" ? emptyText : formatted;
 };
 
 export const formatReportCount = (value: number | null | undefined) => {
@@ -283,6 +378,45 @@ export const formatReportNumericValue = (
   return `${formatted} ${unit}`.trim();
 };
 
+export const formatReportPointValue = (value: number | null | undefined, emptyText = "0") => {
+  if (!Number.isFinite(value)) {
+    return emptyText;
+  }
+
+  return new Intl.NumberFormat("vi-VN", {
+    minimumFractionDigits: Number.isInteger(Number(value)) ? 0 : 1,
+    maximumFractionDigits: 1,
+  }).format(Number(value));
+};
+
+export const formatReportTaskCompletionText = (
+  completed: number | null | undefined,
+  total: number | null | undefined,
+  emptyText = "Chưa có task",
+) => {
+  const safeTotal = Number.isFinite(total) ? Number(total) : 0;
+  if (safeTotal <= 0) {
+    return emptyText;
+  }
+
+  const safeCompleted = Number.isFinite(completed) ? Number(completed) : 0;
+  return `${formatReportCount(safeCompleted)} / ${formatReportCount(safeTotal)} task`;
+};
+
+export const formatReportTaskPointText = (
+  completed: number | null | undefined,
+  total: number | null | undefined,
+  emptyText = "Chưa có điểm task",
+) => {
+  const safeTotal = Number.isFinite(total) ? Number(total) : 0;
+  if (safeTotal <= 0) {
+    return emptyText;
+  }
+
+  const safeCompleted = Number.isFinite(completed) ? Number(completed) : 0;
+  return `${formatReportPointValue(safeCompleted)} / ${formatReportPointValue(safeTotal)} điểm`;
+};
+
 export const formatReportDateRange = (start: string | null | undefined, end: string | null | undefined) => {
   const startDate = toValidDate(start ?? null);
   const endDate = toValidDate(end ?? null);
@@ -297,7 +431,54 @@ export const formatReportDateRange = (start: string | null | undefined, end: str
     return format(endDate, "dd/MM/yyyy");
   }
 
-  return `${format(startDate as Date, "dd/MM/yyyy")} – ${format(endDate as Date, "dd/MM/yyyy")}`;
+  return `${format(startDate as Date, "dd/MM/yyyy")} - ${format(endDate as Date, "dd/MM/yyyy")}`;
+};
+
+export const buildGoalReportProfileIds = (params: {
+  roles: WorkspaceRole[];
+  departments: WorkspaceDepartment[];
+  memberships: PerformanceReportRoleMembershipRow[];
+}) => {
+  const directorRoleIds = new Set(getDirectorRoleIds(params.roles));
+  const leaderRoleIds = new Set(getLeaderRoleIds(params.roles));
+  const rootDepartmentIds = new Set(
+    params.departments.filter((department) => !department.parentDepartmentId).map((department) => department.id),
+  );
+
+  return [
+    ...new Set(
+      params.memberships
+        .filter((membership) => {
+          if (!membership.profile_id || !membership.role_id) {
+            return false;
+          }
+
+          if (directorRoleIds.has(membership.role_id)) {
+            return true;
+          }
+
+          return (
+            leaderRoleIds.has(membership.role_id) &&
+            Boolean(membership.department_id && rootDepartmentIds.has(membership.department_id))
+          );
+        })
+        .map((membership) => membership.profile_id as string),
+    ),
+  ];
+};
+
+export const getPerformanceReportMetricKind = (
+  profileId: string | null | undefined,
+  goalReportProfileIds: string[] | Set<string>,
+): PerformanceReportMetricKind => {
+  if (!profileId) {
+    return "kr";
+  }
+
+  const goalProfileIdSet =
+    goalReportProfileIds instanceof Set ? goalReportProfileIds : new Set(goalReportProfileIds);
+
+  return goalProfileIdSet.has(profileId) ? "goal" : "kr";
 };
 
 export const getSuggestedPeriodEnd = (
@@ -348,13 +529,13 @@ export const isReportLocked = (status: string | null | undefined) => normalizeRe
 
 export const canOwnerEditReport = (status: string | null | undefined) => {
   const normalized = normalizeReportStatus(status);
-  return normalized === "draft" || normalized === "submitted";
+  return normalized === "draft" || normalized === "pending" || normalized === "rejected";
 };
 
 export const getOwnerStatusChoices = (status: string | null | undefined): PerformanceReportStatus[] => {
   const normalized = normalizeReportStatus(status);
-  if (normalized === "draft") {
-    return ["draft", "submitted"];
+  if (normalized === "draft" || normalized === "rejected") {
+    return ["draft", "pending"];
   }
   return [normalized];
 };
@@ -367,10 +548,13 @@ export const getManagerStatusChoices = (status: string | null | undefined): Perf
   if (normalized === "reviewed") {
     return ["reviewed", "locked"];
   }
-  if (normalized === "submitted") {
-    return ["submitted", "reviewed", "locked"];
+  if (normalized === "pending") {
+    return ["pending", "reviewed", "rejected", "locked"];
   }
-  return ["draft", "submitted", "reviewed"];
+  if (normalized === "rejected") {
+    return ["rejected", "pending", "reviewed"];
+  }
+  return ["draft", "pending", "reviewed"];
 };
 
 export const getReportItemGroupDescription = (itemType: PerformanceReportItemType) => {
@@ -381,9 +565,9 @@ export const getReportItemGroupDescription = (itemType: PerformanceReportItemTyp
     return "Nhóm này phản ánh mức đóng góp trực tiếp vào kết quả chính của kỳ đánh giá.";
   }
   if (itemType === "support_kr") {
-    return "Nhóm này phản ánh phần hỗ trợ cho các KR trực tiếp và các nhóm liên quan.";
+    return "Nhóm này phản ánh phần phối hợp với các KR trực tiếp và các nhóm liên quan.";
   }
-  return "Nhóm này chỉ tóm tắt tiến độ công việc để tham khảo thêm, không thay thế mục tiêu và KR.";
+  return "Nhóm này tóm tắt tiến độ task để tham khảo thêm, không thay thế mục tiêu và KR.";
 };
 
 export const buildDepartmentSubtreeIds = (

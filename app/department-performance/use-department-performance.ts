@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { normalizeDashboardStatus } from "@/lib/dashboard";
 import {
   formatGoalOwnersSummary,
   getGoalOwnerSearchText,
@@ -15,8 +14,10 @@ import {
   formatKeyResultMetric,
   formatKeyResultTypeLabel,
   formatMetricValue,
+  getSupportAllocationFieldLabel,
   normalizeKeyResultContributionTypeValue,
   normalizeKeyResultTypeValue,
+  usesPercentSupportAllocation,
 } from "@/lib/constants/key-results";
 import { supabase } from "@/lib/supabase";
 
@@ -88,8 +89,6 @@ type TaskRow = {
   key_result_id: string | null;
   assignee_id: string | null;
   profile_id: string | null;
-  status: string | null;
-  progress: number | null;
   start_date: string | null;
   end_date: string | null;
   type: string | null;
@@ -439,8 +438,6 @@ const normalizeTaskRow = (value: TaskRow) =>
     key_result_id: value.key_result_id ? String(value.key_result_id) : null,
     assignee_id: value.assignee_id ? String(value.assignee_id) : null,
     profile_id: value.profile_id ? String(value.profile_id) : null,
-    status: value.status ? String(value.status) : null,
-    progress: toNumeric(value.progress),
     start_date: value.start_date ? String(value.start_date) : null,
     end_date: value.end_date ? String(value.end_date) : null,
     type: value.type ? String(value.type) : null,
@@ -467,7 +464,7 @@ const isTaskOverdue = (task: TaskRow, now = new Date()) => {
   const today = new Date(now);
   deadline.setHours(0, 0, 0, 0);
   today.setHours(0, 0, 0, 0);
-  return deadline < today && !["done", "cancelled"].includes(normalizeDashboardStatus(task.status));
+  return deadline < today;
 };
 
 const getDateDiffInDays = (value: string | null, now = new Date()) => {
@@ -734,11 +731,6 @@ const computePortfolioPerformance = (
   return computeWeightedProgress(
     keyResults.map((keyResult) => ({
       progress: keyResultProgressMap[keyResult.id] ?? 0,
-      weight:
-        normalizeKeyResultContributionTypeValue(keyResult.contribution_type) === "direct" &&
-        normalizeKeyResultTypeValue(keyResult.type) === "okr"
-          ? keyResult.weight ?? 1
-          : 1,
     })),
   );
 };
@@ -997,21 +989,19 @@ const sortGoalsByPeriod = (goals: GoalRow[]) =>
     return (a.quarter ?? 0) - (b.quarter ?? 0);
   });
 
-const getSupportAllocationModeLabel = (type: string | null | undefined) =>
-  normalizeKeyResultTypeValue(type) === "okr" ? "Phần trăm phân bổ" : "Lượng phân bổ";
+const getSupportAllocationModeLabel = (unit: string | null | undefined) =>
+  getSupportAllocationFieldLabel(unit);
 
 const getSupportAllocationLabel = ({
-  type,
   allocatedValue,
   allocatedPercent,
   unit,
 }: {
-  type: string | null | undefined;
   allocatedValue: number | null;
   allocatedPercent: number | null;
   unit: string | null;
 }) => {
-  if (normalizeKeyResultTypeValue(type) === "okr") {
+  if (usesPercentSupportAllocation(unit)) {
     return allocatedPercent === null ? "Chưa đặt" : `${formatMetricValue(allocatedPercent)}%`;
   }
 
@@ -1279,7 +1269,7 @@ export function useDepartmentPerformance(filters: FilterParams) {
           primaryKeyResultIds.length > 0
             ? supabase
                 .from("tasks")
-                .select("id,name,key_result_id,assignee_id,profile_id,status,progress,start_date,end_date,type")
+                .select("id,name,key_result_id,assignee_id,profile_id,start_date,end_date,type")
                 .in("key_result_id", primaryKeyResultIds)
             : emptyAsyncResult<TaskRow>(),
           primaryKeyResultIds.length > 0
@@ -1938,7 +1928,7 @@ export function useDepartmentPerformance(filters: FilterParams) {
           startDate: keyResult.start_date,
           endDate: keyResult.end_date,
           daysRemaining,
-          allocationModeLabel: getSupportAllocationModeLabel(keyResult.type),
+          allocationModeLabel: getSupportAllocationModeLabel(keyResult.unit),
           supportedDirectKeyResults: outboundSupportLinks
             .map((link) => {
               const targetKeyResult = link.target_key_result_id ? allKeyResultsById[link.target_key_result_id] ?? null : null;
@@ -1952,10 +1942,9 @@ export function useDepartmentPerformance(filters: FilterParams) {
                   ? allGoalsById[targetKeyResult.goal_id]?.name ?? "Chưa có mục tiêu"
                   : "Chưa có mục tiêu",
                 allocationLabel: getSupportAllocationLabel({
-                  type: keyResult.type,
                   allocatedValue: link.allocated_value,
                   allocatedPercent: link.allocated_percent,
-                  unit: targetKeyResult.unit,
+                  unit: keyResult.unit,
                 }),
               };
             })
@@ -2018,7 +2007,7 @@ export function useDepartmentPerformance(filters: FilterParams) {
         ];
         const performanceScore = averageRounded(performanceInputs);
         const overdueTasks = assignedTasks.filter((task) => isTaskOverdue(task)).length;
-        const blockedTasks = assignedTasks.filter((task) => normalizeDashboardStatus(task.status) === "blocked").length;
+        const blockedTasks = 0;
 
         return {
           id: memberId,
@@ -2052,15 +2041,9 @@ export function useDepartmentPerformance(filters: FilterParams) {
       .map((keyResult) => {
         const tasks = tasksByKeyResultId[keyResult.id] ?? [];
         const overdueTasks = tasks.filter((task) => isTaskOverdue(task)).length;
-        const blockedTasks = tasks.filter((task) => normalizeDashboardStatus(task.status) === "blocked").length;
-        const openTasks = tasks.filter(
-          (task) => !["done", "cancelled"].includes(normalizeDashboardStatus(task.status)),
-        ).length;
-        const completionRate = tasks.length
-          ? Math.round(
-              (tasks.filter((task) => normalizeDashboardStatus(task.status) === "done").length / tasks.length) * 100,
-            )
-          : 0;
+        const blockedTasks = 0;
+        const openTasks = tasks.length;
+        const completionRate = 0;
         return {
           keyResultId: keyResult.id,
           keyResultName: keyResult.name,
@@ -2261,12 +2244,8 @@ export function useDepartmentPerformance(filters: FilterParams) {
       memberContribution,
       executionContext: {
         overdueTasks: visibleDepartmentTasks.filter((task) => isTaskOverdue(task)).length,
-        blockedTasks: visibleDepartmentTasks.filter(
-          (task) => normalizeDashboardStatus(task.status) === "blocked",
-        ).length,
-        openTasks: visibleDepartmentTasks.filter(
-          (task) => !["done", "cancelled"].includes(normalizeDashboardStatus(task.status)),
-        ).length,
+        blockedTasks: 0,
+        openTasks: visibleDepartmentTasks.length,
         items: executionContextItems,
       } satisfies DepartmentExecutionContext,
       filterOptions: {

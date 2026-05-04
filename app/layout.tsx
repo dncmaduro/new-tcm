@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Geist_Mono, Noto_Sans } from "next/font/google";
+import "@mantine/core/styles.css";
+import { Providers } from "@/components/providers";
 import "./globals.css";
 
 const appSans = Noto_Sans({
@@ -26,10 +28,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="vi">
-      <body
-        className={`${appSans.variable} ${appMono.variable} antialiased`}
-      >
-        {children}
+      <body className={`${appSans.variable} ${appMono.variable} antialiased`}>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
