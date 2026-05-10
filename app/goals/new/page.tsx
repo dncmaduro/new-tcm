@@ -7,6 +7,7 @@ import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { ClearableNumberInput } from "@/components/ui/clearable-number-input";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
+import { useLeaveFormConfirm } from "@/components/use-leave-form-confirm";
 import {
   GOAL_STATUSES,
   GOAL_TYPES,
@@ -483,6 +484,9 @@ function NewGoalPageContent() {
   const [collapsedDepartmentIds, setCollapsedDepartmentIds] = useState<Record<string, boolean>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const { leaveConfirmDialog, runWithoutConfirm } = useLeaveFormConfirm({
+    enabled: !isSubmitting,
+  });
 
   const showPermissionDebug = searchParams.get("debugPermission") === "1";
   const queryDepartmentId = searchParams.get("departmentId");
@@ -652,7 +656,7 @@ function NewGoalPageContent() {
               ? "100"
               : goalData.target === null || goalData.target === undefined
                 ? ""
-              : String(goalData.target),
+                : String(goalData.target),
           unit: normalizeKeyResultUnitForType(
             normalizedGoalType,
             goalData.unit ? String(goalData.unit) : null,
@@ -1131,8 +1135,10 @@ function NewGoalPageContent() {
         return;
       }
 
-      router.push(`/goals/${savedGoalId}`);
-      router.refresh();
+      runWithoutConfirm(() => {
+        router.push(`/goals/${savedGoalId}`);
+        router.refresh();
+      });
     } catch {
       setSubmitError(`Có lỗi xảy ra khi ${isEditMode ? "cập nhật" : "tạo"} mục tiêu.`);
     } finally {
@@ -1206,7 +1212,7 @@ function NewGoalPageContent() {
                           name: event.target.value,
                         }))
                       }
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       placeholder="Ví dụ: Tăng thị phần thêm 15% tại EU"
                     />
                   </div>
@@ -1254,9 +1260,9 @@ function NewGoalPageContent() {
                             <SelectItem key={status.value} value={status.value}>
                               {status.label}
                             </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
 
                     <div className="space-y-1.5">
@@ -1283,14 +1289,14 @@ function NewGoalPageContent() {
                             <SelectItem key={unit.value} value={unit.value}>
                               {unit.label}
                             </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
 
                     <div className="space-y-1.5">
                       <label htmlFor="goal-target" className="text-sm font-semibold text-slate-700">
-                      Chỉ tiêu {isKpiGoal ? "*" : ""}
+                        Chỉ tiêu {isKpiGoal ? "*" : ""}
                       </label>
                       <FormattedNumberInput
                         id="goal-target"
@@ -1302,14 +1308,12 @@ function NewGoalPageContent() {
                           }))
                         }
                         disabled={isOkrGoal}
-                        className={`h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
+                        className={`h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
                           isOkrGoal
                             ? "cursor-not-allowed bg-slate-50 text-slate-400"
                             : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         }`}
-                        placeholder={
-                          isKpiGoal ? "Ví dụ: 1.200.000.000" : "Goal OKR luôn là 100%"
-                        }
+                        placeholder={isKpiGoal ? "Ví dụ: 1.200.000.000" : "Goal OKR luôn là 100%"}
                       />
                     </div>
                   </div>
@@ -1353,7 +1357,7 @@ function NewGoalPageContent() {
                             year: value,
                           }))
                         }
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       />
                     </div>
 
@@ -1370,7 +1374,7 @@ function NewGoalPageContent() {
                         value={form.startDate}
                         disabled
                         readOnly
-                        className="h-11 w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-500 outline-none"
+                        className="h-10 w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-500 outline-none"
                       />
                     </div>
 
@@ -1388,7 +1392,7 @@ function NewGoalPageContent() {
                         value={form.endDate}
                         disabled
                         readOnly
-                        className="h-11 w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-500 outline-none"
+                        className="h-10 w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-500 outline-none"
                       />
                     </div>
                   </div>
@@ -1442,7 +1446,7 @@ function NewGoalPageContent() {
                       htmlFor="goal-description"
                       className="text-sm font-semibold text-slate-700"
                     >
-                      Mô tả (description)
+                      Mô tả
                     </label>
                     <textarea
                       id="goal-description"
@@ -1486,6 +1490,7 @@ function NewGoalPageContent() {
           </main>
         </div>
       </div>
+      {leaveConfirmDialog}
     </div>
   );
 }

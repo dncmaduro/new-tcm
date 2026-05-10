@@ -216,13 +216,7 @@ function ProgressBar({ value }: { value: number }) {
   );
 }
 
-function DepartmentStatColumn({
-  value,
-  tone,
-}: {
-  value: number;
-  tone: "primary" | "secondary";
-}) {
+function DepartmentStatColumn({ value, tone }: { value: number; tone: "primary" | "secondary" }) {
   const safeValue = Math.max(0, Math.min(100, Math.round(value)));
   return (
     <div className="relative flex h-full w-10 items-end">
@@ -230,9 +224,7 @@ function DepartmentStatColumn({
         {safeValue}%
       </span>
       <div
-        className={`w-full rounded-t-sm ${
-          tone === "primary" ? "bg-slate-800" : "bg-slate-400"
-        }`}
+        className={`w-full rounded-t-sm ${tone === "primary" ? "bg-slate-800" : "bg-slate-400"}`}
         style={{ height: `${Math.max(safeValue, 2)}%` }}
       />
     </div>
@@ -502,11 +494,13 @@ function GoalDetailPageContent() {
     if (!goal?.id) {
       return 0;
     }
-    return buildGoalProgressMap(
-      [{ id: goal.id, type: goal.type, target: goal.target }],
-      keyResults,
-      keyResultProgressMap,
-    )[goal.id] ?? 0;
+    return (
+      buildGoalProgressMap(
+        [{ id: goal.id, type: goal.type, target: goal.target }],
+        keyResults,
+        keyResultProgressMap,
+      )[goal.id] ?? 0
+    );
   }, [goal, keyResultProgressMap, keyResults]);
   const goalType = goal ? normalizeGoalTypeValue(goal.type) : "kpi";
   const goalTypeLabel = goal ? formatGoalTypeLabel(goal.type) : "Chưa đặt";
@@ -534,15 +528,15 @@ function GoalDetailPageContent() {
       return total + safeTarget;
     }, 0);
     const safeGoalTarget =
-      Number.isFinite(goalMetricTarget) && Number(goalMetricTarget) > 0 ? Number(goalMetricTarget) : null;
+      Number.isFinite(goalMetricTarget) && Number(goalMetricTarget) > 0
+        ? Number(goalMetricTarget)
+        : null;
     const currentGap = safeGoalTarget === null ? null : Math.max(0, safeGoalTarget - totalCurrent);
     const currentOver = safeGoalTarget === null ? null : Math.max(0, totalCurrent - safeGoalTarget);
     const targetGap = safeGoalTarget === null ? null : Math.max(0, safeGoalTarget - totalTarget);
     const targetOver = safeGoalTarget === null ? null : Math.max(0, totalTarget - safeGoalTarget);
     const targetCoveragePercent =
-      safeGoalTarget && safeGoalTarget > 0
-        ? Math.round((totalTarget / safeGoalTarget) * 100)
-        : 0;
+      safeGoalTarget && safeGoalTarget > 0 ? Math.round((totalTarget / safeGoalTarget) * 100) : 0;
     const mismatchedUnitCount = goalMetricUnit
       ? directKeyResults.filter((keyResult) => keyResult.unit && keyResult.unit !== goalMetricUnit)
           .length
@@ -779,9 +773,7 @@ function GoalDetailPageContent() {
       .eq("goal_id", goal.id);
 
     if (keyResultsError) {
-      window.alert(
-        keyResultsError.message || "Không thể tải danh sách KR để xóa mục tiêu.",
-      );
+      window.alert(keyResultsError.message || "Không thể tải danh sách KR để xóa mục tiêu.");
       setIsDeletingGoal(false);
       return;
     }
@@ -848,9 +840,7 @@ function GoalDetailPageContent() {
       .eq("goal_id", goal.id);
 
     if (deleteGoalOwnersError) {
-      window.alert(
-        deleteGoalOwnersError.message || "Không thể xóa người phụ trách của mục tiêu.",
-      );
+      window.alert(deleteGoalOwnersError.message || "Không thể xóa người phụ trách của mục tiêu.");
       setIsDeletingGoal(false);
       return;
     }
@@ -862,9 +852,7 @@ function GoalDetailPageContent() {
         .in("id", keyResultIds);
 
       if (deleteKeyResultsError) {
-        window.alert(
-          deleteKeyResultsError.message || "Không thể xóa KR của mục tiêu.",
-        );
+        window.alert(deleteKeyResultsError.message || "Không thể xóa KR của mục tiêu.");
         setIsDeletingGoal(false);
         return;
       }
@@ -883,7 +871,7 @@ function GoalDetailPageContent() {
 
   const editingKeyResult =
     editingKeyResultId && keyResultScaleForm
-      ? keyResults.find((item) => item.id === editingKeyResultId) ?? null
+      ? (keyResults.find((item) => item.id === editingKeyResultId) ?? null)
       : null;
   const isSavingEditingKeyResult =
     editingKeyResult !== null && savingKeyResultId === editingKeyResult.id;
@@ -1013,7 +1001,9 @@ function GoalDetailPageContent() {
                               KR
                             </p>
                             <div className="mt-1 flex items-baseline gap-2">
-                              <p className="text-xl font-semibold text-slate-900">{keyResults.length}</p>
+                              <p className="text-xl font-semibold text-slate-900">
+                                {keyResults.length}
+                              </p>
                               <span className="text-xs text-slate-500">KR</span>
                             </div>
                           </div>
@@ -1049,7 +1039,9 @@ function GoalDetailPageContent() {
                               <p className="text-xl font-semibold text-slate-900">
                                 {goal.quarter ? `Q${goal.quarter}` : "--"}
                               </p>
-                              <span className="text-xs text-slate-500">{goal.year ?? "Chưa đặt năm"}</span>
+                              <span className="text-xs text-slate-500">
+                                {goal.year ?? "Chưa đặt năm"}
+                              </span>
                             </div>
                           </div>
                         </div>
@@ -1069,7 +1061,10 @@ function GoalDetailPageContent() {
                             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
                               <span className="font-medium text-slate-600">Chỉ số tiến độ</span>
                               <span className="font-semibold text-slate-900">
-                                {formatKeyResultMetric(kpiDirectSummary.totalCurrent, goalMetricUnit)}
+                                {formatKeyResultMetric(
+                                  kpiDirectSummary.totalCurrent,
+                                  goalMetricUnit,
+                                )}
                                 {kpiDirectSummary.safeGoalTarget !== null
                                   ? ` / ${formatKeyResultMetric(
                                       kpiDirectSummary.safeGoalTarget,
@@ -1156,8 +1151,8 @@ function GoalDetailPageContent() {
                           {goalType === "kpi" && kpiDirectSummary.mismatchedUnitCount > 0 ? (
                             <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                               Có {kpiDirectSummary.mismatchedUnitCount} KR trực tiếp khác đơn vị với
-                              mục tiêu. Số cộng dồn KPI nên được kiểm tra lại trước khi dùng để quyết
-                              định.
+                              mục tiêu. Số cộng dồn KPI nên được kiểm tra lại trước khi dùng để
+                              quyết định.
                             </p>
                           ) : null}
                         </>
@@ -1247,17 +1242,26 @@ function GoalDetailPageContent() {
                                 <th className="px-4 py-3 font-semibold">Phòng ban</th>
                                 <th className="px-4 py-3 font-semibold">Vai trò</th>
                                 <th className="px-4 py-3 text-right font-semibold">KR sở hữu</th>
-                                <th className="px-4 py-3 text-right font-semibold">Tỷ trọng mục tiêu</th>
+                                <th className="px-4 py-3 text-right font-semibold">
+                                  Tỷ trọng mục tiêu
+                                </th>
                                 <th className="px-4 py-3 text-right font-semibold">Tỷ trọng KR</th>
-                                <th className="px-4 py-3 text-right font-semibold">Tiến độ KR sở hữu</th>
+                                <th className="px-4 py-3 text-right font-semibold">
+                                  Tiến độ KR sở hữu
+                                </th>
                                 <th className="px-4 py-3 text-right font-semibold">Hiệu suất PB</th>
                               </tr>
                             </thead>
                             <tbody>
                               {departmentPerformanceItems.map((department) => (
-                                <tr key={department.departmentId} className="border-b border-slate-100 last:border-b-0">
+                                <tr
+                                  key={department.departmentId}
+                                  className="border-b border-slate-100 last:border-b-0"
+                                >
                                   <td className="px-4 py-3">
-                                    <p className="font-semibold text-slate-900">{department.name}</p>
+                                    <p className="font-semibold text-slate-900">
+                                      {department.name}
+                                    </p>
                                   </td>
                                   <td className="px-4 py-3 text-slate-600">
                                     {formatGoalParticipationRoleLabel(department.role)}
@@ -1299,7 +1303,10 @@ function GoalDetailPageContent() {
                             <div
                               className="rounded-xl border border-slate-200 bg-white p-4"
                               style={{
-                                minWidth: Math.max(760, departmentPerformanceChartItems.length * 148),
+                                minWidth: Math.max(
+                                  760,
+                                  departmentPerformanceChartItems.length * 148,
+                                ),
                               }}
                             >
                               <div className="grid grid-cols-[40px_minmax(0,1fr)] gap-4">
@@ -1328,7 +1335,12 @@ function GoalDetailPageContent() {
 
                                   <div
                                     className="relative grid auto-cols-fr grid-flow-col gap-6 pt-2"
-                                    style={{ minWidth: Math.max(720, departmentPerformanceChartItems.length * 132) }}
+                                    style={{
+                                      minWidth: Math.max(
+                                        720,
+                                        departmentPerformanceChartItems.length * 132,
+                                      ),
+                                    }}
                                   >
                                     {departmentPerformanceChartItems.map((department) => (
                                       <div key={department.departmentId} className="min-w-[112px]">
@@ -1347,10 +1359,12 @@ function GoalDetailPageContent() {
                                             {department.name}
                                           </p>
                                           <p className="mt-1 text-[11px] text-slate-500">
-                                            {formatGoalParticipationRoleLabel(department.role)} · {department.ownedKrCount} KR
+                                            {formatGoalParticipationRoleLabel(department.role)} ·{" "}
+                                            {department.ownedKrCount} KR
                                           </p>
                                           <p className="mt-1 text-[11px] text-slate-400">
-                                            Mục tiêu {department.goalWeight.toFixed(2)} · KR {department.krWeight.toFixed(2)}
+                                            Mục tiêu {department.goalWeight.toFixed(2)} · KR{" "}
+                                            {department.krWeight.toFixed(2)}
                                           </p>
                                         </div>
                                       </div>
@@ -1372,9 +1386,7 @@ function GoalDetailPageContent() {
                   <article className="order-4 rounded-2xl border border-slate-200 bg-white p-5">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
-                        <h2 className="text-base font-semibold text-slate-900">
-                          KR
-                        </h2>
+                        <h2 className="text-base font-semibold text-slate-900">KR</h2>
                         <p className="mt-1 text-sm text-slate-500">
                           Hiển thị nhanh tiến độ, chỉ số hiện tại, mục tiêu và khung thời gian của
                           từng KR.
@@ -1410,11 +1422,12 @@ function GoalDetailPageContent() {
                         }`}
                       >
                         <p className="font-semibold">
-                          KPI của mục tiêu hiện đang được cộng từ {kpiDirectSummary.directCount} KR trực
-                          tiếp.
+                          KPI của mục tiêu hiện đang được cộng từ {kpiDirectSummary.directCount} KR
+                          trực tiếp.
                         </p>
                         <p className="mt-1">
-                          Đã đạt {formatKeyResultMetric(kpiDirectSummary.totalCurrent, goalMetricUnit)}
+                          Đã đạt{" "}
+                          {formatKeyResultMetric(kpiDirectSummary.totalCurrent, goalMetricUnit)}
                           {kpiDirectSummary.safeGoalTarget !== null
                             ? ` / ${formatKeyResultMetric(
                                 kpiDirectSummary.safeGoalTarget,
@@ -1457,9 +1470,7 @@ function GoalDetailPageContent() {
                     ) : null}
                     {!keyResultLoadError && keyResults.length === 0 ? (
                       <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center">
-                        <p className="text-lg font-semibold text-slate-900">
-                          Chưa có KR.
-                        </p>
+                        <p className="text-lg font-semibold text-slate-900">Chưa có KR.</p>
                         <p className="mt-2 text-sm text-slate-500">
                           Hãy tạo KR để bắt đầu theo dõi mục tiêu.
                         </p>
@@ -1517,8 +1528,8 @@ function GoalDetailPageContent() {
                                 const keyResultDetailHref = `/goals/${goal.id}/key-results/${keyResult.id}`;
                                 const keyResultProgress = keyResultProgressMap[keyResult.id] ?? 0;
                                 const responsibleDepartmentName =
-                                  goalDepartmentsById[keyResult.responsible_department_id ?? ""]?.name ??
-                                  "Chưa gán phòng ban";
+                                  goalDepartmentsById[keyResult.responsible_department_id ?? ""]
+                                    ?.name ?? "Chưa gán phòng ban";
 
                                 return (
                                   <Fragment key={keyResult.id}>
@@ -1561,9 +1572,13 @@ function GoalDetailPageContent() {
                                       </td>
                                       <td className="px-4 py-4">
                                         <p className="font-medium text-slate-900">
-                                          {formatTimelineRangeVi(keyResult.start_date, keyResult.end_date, {
-                                            fallback: "KR chưa có mốc thời gian",
-                                          })}
+                                          {formatTimelineRangeVi(
+                                            keyResult.start_date,
+                                            keyResult.end_date,
+                                            {
+                                              fallback: "KR chưa có mốc thời gian",
+                                            },
+                                          )}
                                         </p>
                                         <p className="mt-1 text-xs text-slate-500">
                                           {getTimelineMissingReason(
@@ -1608,7 +1623,10 @@ function GoalDetailPageContent() {
 
                                     {savedKeyResultId === keyResult.id ? (
                                       <tr className="border-b border-slate-100 bg-emerald-50/60">
-                                        <td colSpan={8} className="px-4 py-3 text-sm text-emerald-700">
+                                        <td
+                                          colSpan={8}
+                                          className="px-4 py-3 text-sm text-emerald-700"
+                                        >
                                           Đã lưu KR.
                                         </td>
                                       </tr>
@@ -1773,7 +1791,8 @@ function GoalDetailPageContent() {
                               {formatKeyResultMetric(kpiDirectSummary.totalCurrent, goalMetricUnit)}
                             </p>
                             <p className="mt-1 text-xs text-slate-500">
-                              {kpiDirectSummary.directCount} KR trực tiếp đang đóng góp vào mục tiêu KPI
+                              {kpiDirectSummary.directCount} KR trực tiếp đang đóng góp vào mục tiêu
+                              KPI
                             </p>
                           </div>
 
@@ -1808,9 +1827,7 @@ function GoalDetailPageContent() {
                   </article>
 
                   <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <h2 className="text-base font-semibold text-slate-900">
-                      Phòng ban tham gia
-                    </h2>
+                    <h2 className="text-base font-semibold text-slate-900">Phòng ban tham gia</h2>
                     {relatedDepartmentLoadError ? (
                       <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
                         {relatedDepartmentLoadError}
@@ -1876,7 +1893,8 @@ function GoalDetailPageContent() {
                         {editingKeyResult.name}
                       </h2>
                       <p className="mt-1 text-sm text-slate-500">
-                        Cập nhật phân loại, chỉ số, thời gian và tiến độ của KR trong một cửa sổ riêng.
+                        Cập nhật phân loại, chỉ số, thời gian và tiến độ của KR trong một cửa sổ
+                        riêng.
                       </p>
                     </div>
                     <button
@@ -1919,7 +1937,7 @@ function GoalDetailPageContent() {
                                 : prev,
                             )
                           }
-                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         >
                           {KEY_RESULT_TYPES.map((type) => (
                             <option key={type.value} value={type.value}>
@@ -1945,7 +1963,7 @@ function GoalDetailPageContent() {
                                 : prev,
                             )
                           }
-                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         >
                           {KEY_RESULT_CONTRIBUTION_TYPES.map((item) => (
                             <option key={item.value} value={item.value}>
@@ -1956,7 +1974,9 @@ function GoalDetailPageContent() {
                       </label>
 
                       <label className="grid gap-2">
-                        <span className="text-sm font-medium text-slate-700">Phòng ban phụ trách</span>
+                        <span className="text-sm font-medium text-slate-700">
+                          Phòng ban phụ trách
+                        </span>
                         <select
                           value={keyResultScaleForm.responsibleDepartmentId}
                           onChange={(event) =>
@@ -1969,7 +1989,7 @@ function GoalDetailPageContent() {
                                 : prev,
                             )
                           }
-                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         >
                           {goalDepartments.map((department) => (
                             <option key={department.departmentId} value={department.departmentId}>
@@ -1997,7 +2017,7 @@ function GoalDetailPageContent() {
                                 : prev,
                             )
                           }
-                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                         >
                           {getAllowedKeyResultUnitsByType(keyResultScaleForm.type).map((unit) => (
                             <option key={unit.value} value={unit.value}>
@@ -2022,7 +2042,7 @@ function GoalDetailPageContent() {
                             )
                           }
                           placeholder="Nhập giá trị bắt đầu"
-                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />
                       </label>
 
@@ -2041,7 +2061,7 @@ function GoalDetailPageContent() {
                             )
                           }
                           placeholder="Nhập giá trị hiện tại"
-                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />
                       </label>
 
@@ -2061,7 +2081,7 @@ function GoalDetailPageContent() {
                             )
                           }
                           placeholder="Nhập chỉ tiêu"
-                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                         />
                       </label>
 
@@ -2080,7 +2100,7 @@ function GoalDetailPageContent() {
                                 : prev,
                             )
                           }
-                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />
                       </label>
 
@@ -2100,7 +2120,7 @@ function GoalDetailPageContent() {
                                 : prev,
                             )
                           }
-                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />
                       </label>
                     </div>
@@ -2108,7 +2128,9 @@ function GoalDetailPageContent() {
                     <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <p className="text-sm font-semibold text-slate-900">Xem trước tiến độ KR</p>
+                          <p className="text-sm font-semibold text-slate-900">
+                            Xem trước tiến độ KR
+                          </p>
                           <p className="mt-1 text-xs text-slate-500">
                             {formatKeyResultMetric(modalCurrentValue, keyResultScaleForm.unit)}
                             {" / "}

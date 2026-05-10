@@ -657,7 +657,7 @@ export default function ProfilePage() {
                             }))
                           }
                           readOnly={!isEditing}
-                          className={`h-11 w-full rounded-xl border px-3 text-sm outline-none ${
+                          className={`h-10 w-full rounded-xl border px-3 text-sm outline-none ${
                             isEditing
                               ? "border-slate-200 bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                               : "border-slate-200 bg-slate-50 text-slate-600"
@@ -671,7 +671,7 @@ export default function ProfilePage() {
                         <input
                           value={form.email}
                           readOnly
-                          className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600 outline-none"
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600 outline-none"
                         />
                       </div>
 
@@ -686,7 +686,7 @@ export default function ProfilePage() {
                             }))
                           }
                           readOnly={!isEditing}
-                          className={`h-11 w-full rounded-xl border px-3 text-sm outline-none ${
+                          className={`h-10 w-full rounded-xl border px-3 text-sm outline-none ${
                             isEditing
                               ? "border-slate-200 bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                               : "border-slate-200 bg-slate-50 text-slate-600"
@@ -700,7 +700,7 @@ export default function ProfilePage() {
                         <input
                           value={formatDateOnly(joinAt)}
                           readOnly
-                          className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600 outline-none"
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600 outline-none"
                         />
                       </div>
 
@@ -709,7 +709,7 @@ export default function ProfilePage() {
                         <input
                           value={formatDateOnly(leaveAt)}
                           readOnly
-                          className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600 outline-none"
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600 outline-none"
                         />
                       </div>
                     </div>

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
@@ -242,18 +242,17 @@ const normalizeSupportLinkRow = (value: Record<string, unknown>): SupportLinkRow
 const keyResultLinkHref = (keyResult: KeyResultLinkOption | null) =>
   keyResult?.goalId ? `/goals/${keyResult.goalId}/key-results/${keyResult.id}` : null;
 
-function MetricCard({ label, value }: { label: string; value: string }) {
+function MetricCard({ label, value, className = "" }: { label: string; value: string; className?: string }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+    <div className={`rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 ${className}`}>
       <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">{label}</p>
-      <p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p>
+      <p className="mt-1.5 text-[36px] leading-none font-semibold text-slate-900">{value}</p>
     </div>
   );
 }
 
 export default function KeyResultDetailPage() {
   const params = useParams<{ goalId: string; keyResultId: string }>();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const workspaceAccess = useWorkspaceAccess();
   const goalId = typeof params.goalId === "string" ? params.goalId : "";
@@ -262,7 +261,7 @@ export default function KeyResultDetailPage() {
 
   const [goal, setGoal] = useState<GoalRow | null>(null);
   const [keyResult, setKeyResult] = useState<KeyResultDetailRow | null>(null);
-  const [goalDepartmentName, setGoalDepartmentName] = useState<string | null>(null);
+  const [, setGoalDepartmentName] = useState<string | null>(null);
   const [responsibleDepartmentName, setResponsibleDepartmentName] = useState<string | null>(null);
   const [tasks, setTasks] = useState<KeyResultTaskItem[]>([]);
   const [outboundSupportLinks, setOutboundSupportLinks] = useState<OutboundSupportLinkItem[]>([]);
@@ -277,7 +276,6 @@ export default function KeyResultDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSavingCurrentMetric, setIsSavingCurrentMetric] = useState(false);
-  const [isDeletingKeyResult, setIsDeletingKeyResult] = useState(false);
 
   const isCheckingCreatePermission = workspaceAccess.isLoading;
   const canCreateTask = workspaceAccess.canManage && !workspaceAccess.error;
@@ -743,88 +741,6 @@ export default function KeyResultDetailPage() {
     setIsSavingCurrentMetric(false);
   };
 
-  const handleDeleteKeyResult = async () => {
-    if (!keyResult || isDeletingKeyResult) {
-      return;
-    }
-
-    const relatedTaskCount = tasks.length;
-    const relatedSupportLinkCount = outboundSupportLinks.length + inboundSupportLinks.length;
-    const relatedItems: string[] = [];
-
-    if (relatedTaskCount > 0) {
-      relatedItems.push(`${relatedTaskCount} công việc`);
-    }
-    if (relatedSupportLinkCount > 0) {
-      relatedItems.push(`${relatedSupportLinkCount} liên kết hỗ trợ`);
-    }
-
-    const relatedWarning =
-      relatedItems.length > 0
-        ? ` Thao tác này cũng sẽ xóa ${relatedItems.join(" và ")} liên quan.`
-        : "";
-
-    if (!window.confirm(`Xóa KR "${keyResult.name}"?${relatedWarning}`)) {
-      return;
-    }
-
-    setIsDeletingKeyResult(true);
-    setActionError(null);
-    setNotice(null);
-
-    const deleteOutboundLinksResult = await supabase
-      .from("key_result_support_links")
-      .delete()
-      .eq("support_key_result_id", keyResult.id);
-
-    if (deleteOutboundLinksResult.error) {
-      setActionError(
-        deleteOutboundLinksResult.error.message ||
-          "Không thể xóa các liên kết hỗ trợ đi ra của KR.",
-      );
-      setIsDeletingKeyResult(false);
-      return;
-    }
-
-    const deleteInboundLinksResult = await supabase
-      .from("key_result_support_links")
-      .delete()
-      .eq("target_key_result_id", keyResult.id);
-
-    if (deleteInboundLinksResult.error) {
-      setActionError(
-        deleteInboundLinksResult.error.message ||
-          "Không thể xóa các liên kết hỗ trợ đi vào của KR.",
-      );
-      setIsDeletingKeyResult(false);
-      return;
-    }
-
-    const deleteTasksResult = await supabase
-      .from("tasks")
-      .delete()
-      .eq("key_result_id", keyResult.id);
-
-    if (deleteTasksResult.error) {
-      setActionError(deleteTasksResult.error.message || "Không thể xóa công việc của KR.");
-      setIsDeletingKeyResult(false);
-      return;
-    }
-
-    const deleteKeyResultResult = await supabase
-      .from("key_results")
-      .delete()
-      .eq("id", keyResult.id);
-
-    if (deleteKeyResultResult.error) {
-      setActionError(deleteKeyResultResult.error.message || "Không thể xóa KR.");
-      setIsDeletingKeyResult(false);
-      return;
-    }
-
-    router.push(`${goalHref}?krDeleted=1`);
-  };
-
   return (
     <div className="h-screen overflow-hidden bg-[#f3f5fa] text-slate-900">
       <div className="flex h-full w-full">
@@ -853,20 +769,10 @@ export default function KeyResultDetailPage() {
               {workspaceAccess.canManage && !workspaceAccess.error && keyResult ? (
                 <Link
                   href={createTaskHref}
-                  className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  className="inline-flex h-9 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
                 >
                   + Thêm công việc
                 </Link>
-              ) : null}
-              {workspaceAccess.canManage && !workspaceAccess.error && keyResult ? (
-                <button
-                  type="button"
-                  onClick={() => void handleDeleteKeyResult()}
-                  disabled={isDeletingKeyResult}
-                  className="inline-flex h-9 items-center rounded-xl border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isDeletingKeyResult ? "Đang xóa..." : "Xóa KR"}
-                </button>
               ) : null}
             </div>
             {!hasValidParams ? (
@@ -918,9 +824,6 @@ export default function KeyResultDetailPage() {
                           <h1 className="text-[30px] font-semibold tracking-[-0.02em] text-slate-900">
                             {keyResult.name}
                           </h1>
-                          <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">
-                            {keyResultProgress}%
-                          </span>
                         </div>
                         <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
                           <span className="rounded-full bg-blue-50 px-2.5 py-1 font-semibold text-blue-700">
@@ -938,12 +841,13 @@ export default function KeyResultDetailPage() {
                         </div>
                       </div>
 
-                      <div className="grid min-w-[280px] flex-1 gap-3 sm:grid-cols-3">
+                      <div className="ml-auto flex w-full flex-wrap items-end justify-end gap-3 xl:w-auto">
                         <MetricCard
                           label="Bắt đầu"
                           value={formatKeyResultMetric(keyResult.start_value, keyResult.unit)}
+                          className="w-[170px]"
                         />
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                        <div className="w-[200px] rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5">
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0 flex-1">
                               <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
@@ -954,14 +858,14 @@ export default function KeyResultDetailPage() {
                                   <FormattedNumberInput
                                     value={currentMetricDraft}
                                     onValueChange={(value) => setCurrentMetricDraft(value)}
-                                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                                   />
                                   <p className="text-[11px] text-slate-500">
                                     Đơn vị tiến độ: {formatKeyResultUnit(keyResult.unit)}.
                                   </p>
                                 </div>
                               ) : (
-                                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                                <p className="mt-1.5 text-[36px] leading-none font-semibold text-slate-900">
                                   {formatKeyResultMetric(keyResult.current, keyResult.unit)}
                                 </p>
                               )}
@@ -1008,6 +912,7 @@ export default function KeyResultDetailPage() {
                         <MetricCard
                           label="Mục tiêu"
                           value={formatKeyResultMetric(keyResult.target, keyResult.unit)}
+                          className="w-[170px]"
                         />
                       </div>
                     </div>
@@ -1082,64 +987,75 @@ export default function KeyResultDetailPage() {
                           </div>
                         ) : null}
 
-                        {outboundSupportLinks.map((link) => {
-                          const href = keyResultLinkHref(link.targetKeyResult);
-                          const allocationSummary = getSupportAllocationSummary({
-                            allocatedValue: link.allocated_value,
-                            allocatedPercent: link.allocated_percent,
-                            unit: keyResult.unit,
-                          });
+                        {outboundSupportLinks.length > 0 ? (
+                          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                            <div className="overflow-x-auto">
+                              <table className="w-full min-w-[980px] text-left">
+                                <thead>
+                                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-[0.08em] text-slate-400">
+                                    <th className="px-4 py-3 font-semibold">
+                                      KR trực tiếp nhận hỗ trợ
+                                    </th>
+                                    <th className="px-4 py-3 font-semibold">Giá trị phân bổ</th>
+                                    <th className="px-4 py-3 font-semibold">Cập nhật lần cuối</th>
+                                    <th className="px-4 py-3 font-semibold">Ghi chú liên kết</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {outboundSupportLinks.map((link) => {
+                                    const href = keyResultLinkHref(link.targetKeyResult);
+                                    const allocationSummary = getSupportAllocationSummary({
+                                      allocatedValue: link.allocated_value,
+                                      allocatedPercent: link.allocated_percent,
+                                      unit: keyResult.unit,
+                                    });
 
-                          return (
-                            <div
-                              key={link.id}
-                              className="rounded-2xl border border-slate-200 bg-white p-4"
-                            >
-                              <div className="flex flex-wrap items-start justify-between gap-3">
-                                <div>
-                                  <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                                    KR trực tiếp nhận hỗ trợ
-                                  </p>
-                                  {href ? (
-                                    <Link
-                                      href={href}
-                                      className="mt-1 inline-flex text-lg font-semibold text-slate-900 hover:text-blue-700"
-                                    >
-                                      {link.targetKeyResult?.name ?? "KR trực tiếp"}
-                                    </Link>
-                                  ) : (
-                                    <p className="mt-1 text-lg font-semibold text-slate-900">
-                                      {link.targetKeyResult?.name ?? "KR trực tiếp"}
-                                    </p>
-                                  )}
-                                  <p className="mt-1 text-xs text-slate-500">
-                                    {link.targetKeyResult?.goalName ?? "Chưa có mục tiêu"} ·{" "}
-                                    {formatKeyResultTypeLabel(link.targetKeyResult?.type)} ·{" "}
-                                    {formatKeyResultContributionTypeLabel(
-                                      link.targetKeyResult?.contributionType,
-                                    )}
-                                  </p>
-                                </div>
-                                <p className="text-xs text-slate-500">
-                                  Cập nhật lần cuối: {formatDateTime(link.updated_at)}
-                                </p>
-                              </div>
-
-                              <div className="mt-4 max-w-xs rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                                <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                                  {allocationSummary.label}
-                                </p>
-                                <p className="mt-2 text-sm font-semibold text-slate-900">
-                                  {allocationSummary.value}
-                                </p>
-                              </div>
-
-                              <p className="mt-3 text-sm text-slate-600">
-                                {link.note?.trim() || "Chưa có ghi chú liên kết."}
-                              </p>
+                                    return (
+                                      <tr
+                                        key={link.id}
+                                        className="border-b border-slate-100 align-top hover:bg-slate-50/70"
+                                      >
+                                        <td className="px-4 py-4">
+                                          {href ? (
+                                            <Link
+                                              href={href}
+                                              className="inline-flex text-sm font-semibold text-slate-900 hover:text-blue-700"
+                                            >
+                                              {link.targetKeyResult?.name ?? "KR trực tiếp"}
+                                            </Link>
+                                          ) : (
+                                            <p className="text-sm font-semibold text-slate-900">
+                                              {link.targetKeyResult?.name ?? "KR trực tiếp"}
+                                            </p>
+                                          )}
+                                          <p className="mt-1 text-xs text-slate-500">
+                                            {link.targetKeyResult?.goalName ?? "Chưa có mục tiêu"} ·{" "}
+                                            {formatKeyResultTypeLabel(link.targetKeyResult?.type)} ·{" "}
+                                            {formatKeyResultContributionTypeLabel(
+                                              link.targetKeyResult?.contributionType,
+                                            )}
+                                          </p>
+                                        </td>
+                                        <td className="px-4 py-4 text-sm font-semibold text-slate-800">
+                                          <p>{allocationSummary.value}</p>
+                                          <p className="mt-1 text-xs font-medium text-slate-500">
+                                            {allocationSummary.label}
+                                          </p>
+                                        </td>
+                                        <td className="px-4 py-4 text-sm text-slate-600">
+                                          {formatDateTime(link.updated_at)}
+                                        </td>
+                                        <td className="px-4 py-4 text-sm text-slate-600">
+                                          {link.note?.trim() || "Chưa có ghi chú liên kết."}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
                             </div>
-                          );
-                        })}
+                          </div>
+                        ) : null}
                       </div>
                     ) : (
                       <>
@@ -1231,7 +1147,7 @@ export default function KeyResultDetailPage() {
                         {canCreateTask ? (
                           <Link
                             href={createTaskHref}
-                            className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                            className="inline-flex h-9 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
                           >
                             + Thêm công việc
                           </Link>
@@ -1407,36 +1323,13 @@ export default function KeyResultDetailPage() {
                     <h2 className="text-base font-semibold text-slate-900">Thông tin KR</h2>
                     <div className="mt-4 space-y-3 text-sm">
                       <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Mục tiêu</span>
-                        <Link
-                          href={goalHref}
-                          className="text-right font-medium text-blue-600 hover:text-blue-700"
-                        >
-                          {goal.name}
-                        </Link>
+                        <span className="text-slate-500">Tên KR</span>
+                        <span className="text-right font-medium text-slate-800">{keyResult.name}</span>
                       </div>
                       <div className="flex items-start justify-between gap-3">
                         <span className="text-slate-500">Loại mục tiêu</span>
                         <span className="text-right font-medium text-slate-800">
                           {formatGoalTypeLabel(goal.type)}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Loại kết quả</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {formatKeyResultTypeLabel(keyResult.type)}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Kiểu đóng góp</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {formatKeyResultContributionTypeLabel(keyResult.contribution_type)}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Phòng ban chính</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {goalDepartmentName ?? "Chưa có phòng ban"}
                         </span>
                       </div>
                       <div className="flex items-start justify-between gap-3">
@@ -1446,31 +1339,11 @@ export default function KeyResultDetailPage() {
                         </span>
                       </div>
                       <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Chỉ tiêu mục tiêu</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {formatOptionalMetric(goal.target, goal.unit)}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Đơn vị đo</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {formatKeyResultUnit(keyResult.unit)}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Hiện tại / KPI</span>
+                        <span className="text-slate-500">Tiến độ</span>
                         <span className="text-right font-medium text-slate-800">
                           {formatKeyResultMetric(keyResult.current, keyResult.unit)}
                           {" / "}
                           {formatKeyResultMetric(keyResult.target, keyResult.unit)}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Khung thời gian</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {formatTimelineRangeVi(keyResult.start_date, keyResult.end_date, {
-                            fallback: "KR chưa có mốc thời gian",
-                          })}
                         </span>
                       </div>
                       <div className="flex items-start justify-between gap-3 border-t border-slate-100 pt-3">
@@ -1485,25 +1358,6 @@ export default function KeyResultDetailPage() {
                           {formatDateTime(keyResult.updated_at)}
                         </span>
                       </div>
-                    </div>
-                  </article>
-
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <h2 className="text-base font-semibold text-slate-900">Nguyên tắc đo lường</h2>
-                    <div className="mt-4 space-y-3 text-sm text-slate-700">
-                      <p>
-                        Mục tiêu định nghĩa phạm vi cần đạt. KR là nơi lưu chỉ số đo lường kết quả.
-                        Công việc chỉ là lớp triển khai.
-                      </p>
-                      <p>
-                        Tiến độ của KR được cập nhật trực tiếp tại chính mục này. Công việc không
-                        còn là nguồn cộng dồn vào chỉ số đo lường.
-                      </p>
-                      <p>
-                        {isSupportKeyResult
-                          ? "Đây là KR hỗ trợ, nên việc chọn KR trực tiếp được thực hiện trong form chỉnh sửa."
-                          : "Đây là KR trực tiếp, nên phần bên trái chỉ hiển thị các KR hỗ trợ đang đóng góp vào nó."}
-                      </p>
                     </div>
                   </article>
 

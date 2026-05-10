@@ -3,13 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  BarChartIcon,
   CheckboxIcon,
   DashboardIcon,
-  GroupIcon,
   RocketIcon,
-  TargetIcon,
   ClockIcon,
+  GearIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   ChevronLeftIcon,
@@ -25,7 +23,9 @@ type SidebarKey =
   | "dashboard"
   | "goals"
   | "tasks"
+  | "realtimeReports"
   | "timesheet"
+  | "timeRequestForms"
   | "attendanceManagement"
   | "timeRequestManagement"
   | "reports"
@@ -39,17 +39,26 @@ type WorkspaceSidebarProps = {
 
 type SidebarIcon = ComponentType<{ className?: string }>;
 
-const sidebarItems: Array<{ key: SidebarKey; label: string; href: string; icon: SidebarIcon }> = [
-  { key: "dashboard", label: "Bảng điều khiển", href: "/dashboard", icon: DashboardIcon },
-  { key: "goals", label: "Mục tiêu", href: "/goals", icon: TargetIcon },
-  { key: "tasks", label: "Công việc", href: "/tasks", icon: CheckboxIcon },
-  { key: "timesheet", label: "Chấm công", href: "/timesheet", icon: ClockIcon },
-  { key: "reports", label: "Báo cáo", href: "/reports", icon: BarChartIcon },
-  { key: "departmentPerformance", label: "Hiệu suất phòng ban", href: "/department-performance", icon: BarChartIcon },
-  { key: "departments", label: "Phòng ban", href: "/departments", icon: GroupIcon },
+const dashboardItem: { key: SidebarKey; label: string; href: string; icon: SidebarIcon } = {
+  key: "dashboard",
+  label: "Bảng điều khiển",
+  href: "/dashboard",
+  icon: DashboardIcon,
+};
+
+const workSidebarItems: Array<{ key: SidebarKey; label: string; href: string }> = [
+  { key: "goals", label: "Mục tiêu", href: "/goals" },
+  { key: "tasks", label: "Công việc", href: "/tasks" },
+  { key: "reports", label: "Báo cáo", href: "/reports" },
+];
+
+const timeSidebarItems: Array<{ key: SidebarKey; label: string; href: string }> = [
+  { key: "timesheet", label: "Chấm công", href: "/timesheet" },
+  { key: "timeRequestForms", label: "Yêu cầu thời gian", href: "/timesheet/requests" },
 ];
 
 const managementSidebarItems: Array<{ key: SidebarKey; label: string; href: string }> = [
+  { key: "realtimeReports", label: "Quản lý hiệu suất", href: "/reports/realtime" },
   { key: "attendanceManagement", label: "Quản lý chấm công", href: "/attendance-management" },
   { key: "timeRequestManagement", label: "Quản lý yêu cầu thời gian", href: "/time-request-management" },
 ];
@@ -90,6 +99,8 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   const router = useRouter();
   const workspaceAccess = useWorkspaceAccess();
   const userMenuRef = useRef<HTMLDivElement | null>(null);
+  const workMenuRef = useRef<HTMLDivElement | null>(null);
+  const timeMenuRef = useRef<HTMLDivElement | null>(null);
   const managementMenuRef = useRef<HTMLDivElement | null>(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -97,6 +108,8 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   const isCollapsed = useWorkspaceSidebarStore((state) => state.isCollapsed);
   const hydrateSidebarFromStorage = useWorkspaceSidebarStore((state) => state.hydrateFromStorage);
   const toggleSidebarCollapsed = useWorkspaceSidebarStore((state) => state.toggleCollapsed);
+  const [isWorkMenuOpen, setIsWorkMenuOpen] = useState(false);
+  const [isTimeMenuOpen, setIsTimeMenuOpen] = useState(false);
   const [isManagementMenuOpen, setIsManagementMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -116,8 +129,16 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
         setIsUserMenuOpen(false);
       }
 
-      if (isCollapsed && managementMenuRef.current && !managementMenuRef.current.contains(target)) {
-        setIsManagementMenuOpen(false);
+      if (isCollapsed) {
+        if (workMenuRef.current && !workMenuRef.current.contains(target)) {
+          setIsWorkMenuOpen(false);
+        }
+        if (timeMenuRef.current && !timeMenuRef.current.contains(target)) {
+          setIsTimeMenuOpen(false);
+        }
+        if (managementMenuRef.current && !managementMenuRef.current.contains(target)) {
+          setIsManagementMenuOpen(false);
+        }
       }
     };
 
@@ -127,18 +148,18 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
     };
   }, [isCollapsed]);
 
-  const visibleSidebarItems = sidebarItems.filter((item) => {
-    if (item.key === "departmentPerformance" || item.key === "departments") {
-      return false;
-    }
-    return true;
-  });
   const visibleManagementItems = managementSidebarItems.filter((item) => {
+    if (item.key === "realtimeReports") {
+      return workspaceAccess.hasDirectorRole || workspaceAccess.hasRootLeaderAccess;
+    }
     if (item.key === "attendanceManagement") {
       return workspaceAccess.canManage;
     }
     return true;
   });
+  const workGroupActive = workSidebarItems.some((item) => item.key === active);
+  const timeGroupActive = timeSidebarItems.some((item) => item.key === active);
+  const managementGroupActive = visibleManagementItems.some((item) => item.key === active);
 
   const sidebarName = useMemo(() => {
     const profileName = workspaceAccess.profileName?.trim();
@@ -201,14 +222,16 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
 
   useEffect(() => {
     if (isCollapsed) {
+      setIsWorkMenuOpen(false);
+      setIsTimeMenuOpen(false);
       setIsManagementMenuOpen(false);
       return;
     }
 
-    if (active === "attendanceManagement" || active === "timeRequestManagement") {
-      setIsManagementMenuOpen(true);
-    }
-  }, [active, isCollapsed]);
+    setIsWorkMenuOpen(workGroupActive);
+    setIsTimeMenuOpen(timeGroupActive);
+    setIsManagementMenuOpen(managementGroupActive);
+  }, [isCollapsed, managementGroupActive, timeGroupActive, workGroupActive]);
 
   const handleLogout = async () => {
     setIsLoggingOut(true);
@@ -258,6 +281,8 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
             onClick={() => {
               toggleSidebarCollapsed();
               setIsUserMenuOpen(false);
+              setIsWorkMenuOpen(false);
+              setIsTimeMenuOpen(false);
               setIsManagementMenuOpen(false);
             }}
             title={isCollapsed ? "Mở rộng sidebar" : "Thu gọn sidebar"}
@@ -277,31 +302,191 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
 
           <div className="scrollbar-none min-h-0 flex-1 overflow-y-auto overflow-x-visible">
             <nav className="space-y-2">
-              {visibleSidebarItems.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <Link
-                    key={item.key}
-                    href={item.href}
-                    title={item.label}
-                    className={`group relative flex w-full items-center rounded-xl text-left font-medium tracking-[-0.01em] transition ${
-                      isCollapsed ? "justify-center px-0 py-3" : "gap-3 px-4 py-3 text-lg"
-                    } ${
-                      item.key === active
-                        ? "bg-[#1e62d8] text-white"
-                        : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
-                    }`}
-                  >
-                    <Icon className="h-[18px] w-[18px] shrink-0" />
-                    {!isCollapsed ? item.label : null}
-                    {isCollapsed ? (
+              <Link
+                href={dashboardItem.href}
+                title={dashboardItem.label}
+                className={`group relative flex w-full items-center rounded-xl text-left font-medium tracking-[-0.01em] transition ${
+                  isCollapsed ? "justify-center px-0 py-3" : "gap-3 px-4 py-3 text-lg"
+                } ${
+                  dashboardItem.key === active
+                    ? "bg-[#1e62d8] text-white"
+                    : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
+                }`}
+              >
+                <DashboardIcon className="h-[18px] w-[18px] shrink-0" />
+                {!isCollapsed ? dashboardItem.label : null}
+                {isCollapsed ? (
+                  <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 -translate-y-1/2 whitespace-nowrap rounded-lg border border-slate-700 bg-[#0d234f] px-3 py-1.5 text-sm font-semibold text-white opacity-0 shadow-2xl transition duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
+                    {dashboardItem.label}
+                  </span>
+                ) : null}
+              </Link>
+
+              {isCollapsed ? (
+                <>
+                  <div ref={workMenuRef} className="relative">
+                    <button
+                      type="button"
+                      title="Công việc"
+                      onClick={() => {
+                        setIsWorkMenuOpen((prev) => !prev);
+                        setIsTimeMenuOpen(false);
+                        setIsManagementMenuOpen(false);
+                        setIsUserMenuOpen(false);
+                      }}
+                      className={`group relative flex w-full items-center justify-center rounded-xl px-0 py-3 text-left font-medium tracking-[-0.01em] transition ${
+                        workGroupActive ? "bg-[#0b1e43] text-white" : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
+                      }`}
+                    >
+                      <CheckboxIcon className="h-[18px] w-[18px] shrink-0" />
                       <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 -translate-y-1/2 whitespace-nowrap rounded-lg border border-slate-700 bg-[#0d234f] px-3 py-1.5 text-sm font-semibold text-white opacity-0 shadow-2xl transition duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
-                        {item.label}
+                        Công việc
                       </span>
+                    </button>
+                    {isWorkMenuOpen ? (
+                      <div className="absolute left-full top-0 z-50 ml-3 w-[240px] rounded-xl border border-slate-700 bg-[#0d234f] p-2 shadow-2xl">
+                        <div className="mb-2 rounded-xl bg-[#12306b] px-3 py-2">
+                          <p className="text-sm font-semibold text-white">Công việc</p>
+                        </div>
+                        {workSidebarItems.map((item) => (
+                          <Link
+                            key={item.key}
+                            href={item.href}
+                            onClick={() => setIsWorkMenuOpen(false)}
+                            className={`mb-1 flex min-h-9 items-center rounded-lg px-3 py-2 text-sm font-semibold transition last:mb-0 ${
+                              item.key === active
+                                ? "bg-[#1e62d8] text-white"
+                                : "text-slate-100 hover:bg-[#12306b]"
+                            }`}
+                          >
+                            {item.label}
+                          </Link>
+                        ))}
+                      </div>
                     ) : null}
-                  </Link>
-                );
-              })}
+                  </div>
+
+                  <div ref={timeMenuRef} className="relative">
+                    <button
+                      type="button"
+                      title="Thời gian"
+                      onClick={() => {
+                        setIsTimeMenuOpen((prev) => !prev);
+                        setIsWorkMenuOpen(false);
+                        setIsManagementMenuOpen(false);
+                        setIsUserMenuOpen(false);
+                      }}
+                      className={`group relative flex w-full items-center justify-center rounded-xl px-0 py-3 text-left font-medium tracking-[-0.01em] transition ${
+                        timeGroupActive ? "bg-[#0b1e43] text-white" : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
+                      }`}
+                    >
+                      <ClockIcon className="h-[18px] w-[18px] shrink-0" />
+                      <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 -translate-y-1/2 whitespace-nowrap rounded-lg border border-slate-700 bg-[#0d234f] px-3 py-1.5 text-sm font-semibold text-white opacity-0 shadow-2xl transition duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
+                        Thời gian
+                      </span>
+                    </button>
+                    {isTimeMenuOpen ? (
+                      <div className="absolute left-full top-0 z-50 ml-3 w-[240px] rounded-xl border border-slate-700 bg-[#0d234f] p-2 shadow-2xl">
+                        <div className="mb-2 rounded-xl bg-[#12306b] px-3 py-2">
+                          <p className="text-sm font-semibold text-white">Thời gian</p>
+                        </div>
+                        {timeSidebarItems.map((item) => (
+                          <Link
+                            key={item.key}
+                            href={item.href}
+                            onClick={() => setIsTimeMenuOpen(false)}
+                            className={`mb-1 flex min-h-9 items-center rounded-lg px-3 py-2 text-sm font-semibold transition last:mb-0 ${
+                              item.key === active
+                                ? "bg-[#1e62d8] text-white"
+                                : "text-slate-100 hover:bg-[#12306b]"
+                            }`}
+                          >
+                            {item.label}
+                          </Link>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Collapsible open={isWorkMenuOpen} onOpenChange={setIsWorkMenuOpen}>
+                    <div className="space-y-2">
+                      <CollapsibleTrigger
+                        title="Công việc"
+                        className={`flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-lg font-medium tracking-[-0.01em] transition ${
+                          workGroupActive
+                            ? "bg-[#0b1e43] text-white"
+                            : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
+                        }`}
+                      >
+                        <span className="flex items-center gap-3">
+                          <CheckboxIcon className="h-[18px] w-[18px] shrink-0" />
+                          Công việc
+                        </span>
+                        {isWorkMenuOpen ? (
+                          <ChevronUpIcon className="h-4 w-4 text-slate-300" />
+                        ) : (
+                          <ChevronDownIcon className="h-4 w-4 text-slate-300" />
+                        )}
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="space-y-2">
+                        {workSidebarItems.map((item) => (
+                          <Link
+                            key={item.key}
+                            href={item.href}
+                            className={`ml-5 flex w-[calc(100%-1.25rem)] items-center rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+                              item.key === active
+                                ? "bg-[#1e62d8] text-white"
+                                : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
+                            }`}
+                          >
+                            {item.label}
+                          </Link>
+                        ))}
+                      </CollapsibleContent>
+                    </div>
+                  </Collapsible>
+
+                  <Collapsible open={isTimeMenuOpen} onOpenChange={setIsTimeMenuOpen}>
+                    <div className="space-y-2">
+                      <CollapsibleTrigger
+                        title="Thời gian"
+                        className={`flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-lg font-medium tracking-[-0.01em] transition ${
+                          timeGroupActive
+                            ? "bg-[#0b1e43] text-white"
+                            : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
+                        }`}
+                      >
+                        <span className="flex items-center gap-3">
+                          <ClockIcon className="h-[18px] w-[18px] shrink-0" />
+                          Thời gian
+                        </span>
+                        {isTimeMenuOpen ? (
+                          <ChevronUpIcon className="h-4 w-4 text-slate-300" />
+                        ) : (
+                          <ChevronDownIcon className="h-4 w-4 text-slate-300" />
+                        )}
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="space-y-2">
+                        {timeSidebarItems.map((item) => (
+                          <Link
+                            key={item.key}
+                            href={item.href}
+                            className={`ml-5 flex w-[calc(100%-1.25rem)] items-center rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+                              item.key === active
+                                ? "bg-[#1e62d8] text-white"
+                                : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
+                            }`}
+                          >
+                            {item.label}
+                          </Link>
+                        ))}
+                      </CollapsibleContent>
+                    </div>
+                  </Collapsible>
+                </>
+              )}
 
               {visibleManagementItems.length > 0 ? (
                 isCollapsed ? (
@@ -311,15 +496,17 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
                       title="Quản lý"
                       onClick={() => {
                         setIsManagementMenuOpen((prev) => !prev);
+                        setIsWorkMenuOpen(false);
+                        setIsTimeMenuOpen(false);
                         setIsUserMenuOpen(false);
                       }}
                       className={`group relative flex w-full items-center justify-center rounded-xl px-0 py-3 text-left font-medium tracking-[-0.01em] transition ${
-                        active === "attendanceManagement" || active === "timeRequestManagement"
+                        managementGroupActive
                           ? "bg-[#0b1e43] text-white"
                           : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
                       }`}
                     >
-                      <ClockIcon className="h-[18px] w-[18px] shrink-0" />
+                      <GearIcon className="h-[18px] w-[18px] shrink-0" />
                       <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-3 -translate-y-1/2 whitespace-nowrap rounded-lg border border-slate-700 bg-[#0d234f] px-3 py-1.5 text-sm font-semibold text-white opacity-0 shadow-2xl transition duration-150 group-hover:opacity-100 group-focus-visible:opacity-100">
                         Quản lý
                       </span>
@@ -354,13 +541,13 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
                       <CollapsibleTrigger
                         title="Quản lý"
                         className={`flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-lg font-medium tracking-[-0.01em] transition ${
-                          active === "attendanceManagement" || active === "timeRequestManagement"
+                          managementGroupActive
                             ? "bg-[#0b1e43] text-white"
                             : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
                         }`}
                       >
                         <span className="flex items-center gap-3">
-                          <ClockIcon className="h-[18px] w-[18px] shrink-0" />
+                          <GearIcon className="h-[18px] w-[18px] shrink-0" />
                           Quản lý
                         </span>
                         {isManagementMenuOpen ? (
@@ -402,7 +589,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
                 }}
                 title={sidebarName}
                 className={`flex w-full items-center rounded-xl bg-[#0d234f] p-3 text-left transition hover:bg-[#12306b] ${
-                  isCollapsed ? "justify-center" : "justify-between gap-3"
+                  isCollapsed ? "justify-center" : "justify-start gap-3"
                 }`}
               >
                 {isCollapsed ? (
@@ -417,22 +604,13 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
                         {sidebarRole} · {sidebarDepartment}
                       </p>
                     </div>
-                    {isUserMenuOpen ? (
-                      <ChevronUpIcon className="h-4 w-4 text-slate-300" />
-                    ) : (
-                      <ChevronDownIcon className="h-4 w-4 text-slate-300" />
-                    )}
                   </>
                 )}
               </button>
 
               {isUserMenuOpen ? (
                 <div
-                  className={`rounded-xl border border-slate-700 bg-[#0d234f] p-2 shadow-2xl ${
-                    isCollapsed
-                      ? "absolute left-[calc(100%+0.75rem)] top-1/2 z-[60] w-[240px] -translate-y-1/2"
-                      : "mt-2"
-                  }`}
+                  className="absolute left-[calc(100%+0.75rem)] top-1/2 z-[60] w-[240px] -translate-y-1/2 rounded-xl border border-slate-700 bg-[#0d234f] p-2 shadow-2xl animate-[sidebar-popout-fade-in_140ms_ease-out]"
                 >
                   {isCollapsed ? (
                     <div className="mb-2 rounded-xl bg-[#12306b] px-3 py-2">

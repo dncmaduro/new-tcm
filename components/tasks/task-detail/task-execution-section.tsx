@@ -107,7 +107,7 @@ export function TaskExecutionSection({
                   value={progressInput}
                   onChange={(event) => onProgressInputChange(event.target.value)}
                   onBlur={onProgressInputBlur}
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 />
               ) : (
                 <div className="flex h-11 items-center rounded-xl bg-slate-50 px-3">
@@ -163,7 +163,7 @@ export function TaskExecutionSection({
                   type="date"
                   value={taskTimelineForm.startDate}
                   onChange={(event) => onTimelineStartChange(event.target.value)}
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 />
               </label>
 
@@ -174,7 +174,7 @@ export function TaskExecutionSection({
                   min={taskTimelineForm.startDate || undefined}
                   value={taskTimelineForm.endDate}
                   onChange={(event) => onTimelineEndChange(event.target.value)}
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 />
               </label>
 

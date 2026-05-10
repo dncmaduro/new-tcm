@@ -173,7 +173,7 @@ export default function DepartmentPerformancePage() {
                         onValueChange={setSelectedDepartmentId}
                         disabled={manageableDepartments.length === 0}
                       >
-                        <SelectTrigger className="h-11">
+                        <SelectTrigger className="h-10">
                           <SelectValue placeholder="Chọn phòng ban" />
                         </SelectTrigger>
                         <SelectContent>
@@ -191,7 +191,7 @@ export default function DepartmentPerformancePage() {
 
                     <FilterField label="Quý">
                       <Select value={quarterFilter} onValueChange={setQuarterFilter}>
-                        <SelectTrigger className="h-11">
+                        <SelectTrigger className="h-10">
                           <SelectValue placeholder="Tất cả quý" />
                         </SelectTrigger>
                         <SelectContent>
@@ -207,7 +207,7 @@ export default function DepartmentPerformancePage() {
 
                     <FilterField label="Năm">
                       <Select value={yearFilter} onValueChange={setYearFilter}>
-                        <SelectTrigger className="h-11">
+                        <SelectTrigger className="h-10">
                           <SelectValue placeholder="Tất cả năm" />
                         </SelectTrigger>
                         <SelectContent>

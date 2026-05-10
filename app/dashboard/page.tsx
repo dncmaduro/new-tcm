@@ -19,27 +19,10 @@ export default function DashboardPage() {
         <WorkspaceSidebar active="dashboard" />
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <header className="sticky top-0 z-10 border-b border-slate-200/80 bg-[#f3f5fa]/95 px-4 py-4 backdrop-blur lg:px-8">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-slate-500">Bảng điều khiển</p>
-                <p className="mt-1 text-sm text-slate-500">
-                  {data.profile?.departmentName ?? "Chưa có phòng ban"}
-                </p>
-              </div>
-            </div>
-          </header>
-
           <main className="space-y-6 px-4 py-6 lg:px-8 lg:py-7">
-            <section>
-              <h1 className="text-4xl font-semibold tracking-[-0.025em] text-slate-950">
-                Tổng quan
-              </h1>
-            </section>
-
             {error ? (
               <section className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500 shadow-[0_8px_26px_-20px_rgba(15,23,42,0.45)]">
-                Không tải được dữ liệu. Vui lòng thử lại.
+                Không có data
               </section>
             ) : null}
 
@@ -65,7 +48,7 @@ export default function DashboardPage() {
               />
             </section>
 
-            <section>
+            <section className="xl:w-1/2">
               <DashboardRecentActivities
                 items={data.recentActivities}
                 loading={isLoading}

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
@@ -7,7 +8,6 @@ import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import {
   BlockState,
   CompactMetricCard,
-  ReportItemGroup,
   ReportStatusBadge,
   ReportTopSummary,
   SectionTitle,
@@ -29,6 +29,8 @@ import {
   buildGoalReportProfileIds,
   canOwnerEditReport,
   formatReportDateRange,
+  formatReportItemTypeLabel,
+  formatReportNumericValue,
   formatReportProgressValue,
   formatReportStatusLabel,
   formatReportTaskCompletionText,
@@ -182,12 +184,72 @@ const buildTaskItemRow = (task: TrackedTaskRow): PerformanceReportItemRow => ({
     metric_type: task.type ?? task.unit ?? null,
     priority: task.priority,
     task_type: task.type,
+    assignee_id: task.assignee_id,
+    profile_id: task.profile_id,
     key_result_name: task.key_result?.name ?? null,
     goal_name: task.key_result?.goal?.name ?? null,
   },
   created_at: task.created_at,
   updated_at: task.created_at,
 });
+
+const getItemMetaText = (item: PerformanceReportItemRow, key: string) =>
+  item.meta_json && typeof item.meta_json[key] === "string" ? item.meta_json[key] : null;
+
+const normalizeMetricToken = (value: string | null | undefined) =>
+  (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+
+const isRevenueMetricToken = (token: string) => token.includes("doanh thu") || token.includes("revenue");
+
+const isQuantityMetricToken = (token: string) =>
+  token.includes("so luong") || token.includes("quantity") || token.includes("count") || token === "sl";
+
+const resolveItemDisplayConfig = (item: PerformanceReportItemRow) => {
+  const metricTypeFromMeta = getItemMetaText(item, "metric_type");
+  const taskTypeFromMeta = getItemMetaText(item, "task_type");
+  const normalizedTokens = [metricTypeFromMeta, taskTypeFromMeta, item.unit]
+    .map((value) => normalizeMetricToken(value))
+    .filter(Boolean);
+
+  const isRevenue = normalizedTokens.some(isRevenueMetricToken);
+  const isQuantity = normalizedTokens.some(isQuantityMetricToken);
+  const unit = isRevenue ? "đ" : isQuantity ? "" : item.unit;
+
+  return {
+    unit: unit ?? "",
+    showPercent: isRevenue,
+  };
+};
+
+const formatPriorityText = (value: string | null) => {
+  const token = (value ?? "").trim().toLowerCase();
+  if (!token) {
+    return "--";
+  }
+  if (token === "critical" || token === "urgent") {
+    return "Khẩn cấp";
+  }
+  if (token === "high") {
+    return "Cao";
+  }
+  if (token === "medium" || token === "normal") {
+    return "Trung bình";
+  }
+  if (token === "low") {
+    return "Thấp";
+  }
+  return value ?? "--";
+};
+
+const formatCurrentTargetText = (item: PerformanceReportItemRow) => {
+  const { unit } = resolveItemDisplayConfig(item);
+  return `${formatReportNumericValue(item.current_value, unit)} / ${formatReportNumericValue(item.target_value, unit)}`;
+};
 
 export default function PerformanceReportDetailPage() {
   const params = useParams<{ reportId: string }>();
@@ -949,27 +1011,32 @@ export default function PerformanceReportDetailPage() {
     };
   }, [items, trackedItems]);
 
-  const visibleItemGroups = useMemo(() => {
-    const groups: Array<{
-      itemType: "goal" | "direct_kr" | "support_kr" | "execution";
-      items: PerformanceReportItemRow[];
-    }> = [];
-
-    if (groupedItems.goal.length > 0) {
-      groups.push({ itemType: "goal", items: groupedItems.goal });
-    }
-    if (groupedItems.direct_kr.length > 0) {
-      groups.push({ itemType: "direct_kr", items: groupedItems.direct_kr });
-    }
-    if (groupedItems.support_kr.length > 0) {
-      groups.push({ itemType: "support_kr", items: groupedItems.support_kr });
-    }
-    if (groupedItems.execution.length > 0) {
-      groups.push({ itemType: "execution", items: groupedItems.execution });
+  const weeklyAssignedTasks = useMemo(() => {
+    const reportProfileId = report?.profile_id ?? null;
+    if (!reportProfileId) {
+      return groupedItems.execution;
     }
 
-    return groups;
-  }, [groupedItems]);
+    return groupedItems.execution.filter((task) => {
+      const assigneeId = getItemMetaText(task, "assignee_id");
+      const profileId = getItemMetaText(task, "profile_id");
+
+      if (assigneeId) {
+        return assigneeId === reportProfileId;
+      }
+      if (profileId) {
+        return profileId === reportProfileId;
+      }
+      return true;
+    });
+  }, [groupedItems.execution, report?.profile_id]);
+
+  const weeklyObjectiveItems = useMemo(() => {
+    if (reportMetricKind === "goal") {
+      return [...groupedItems.goal, ...groupedItems.direct_kr, ...groupedItems.support_kr];
+    }
+    return [...groupedItems.direct_kr, ...groupedItems.support_kr];
+  }, [groupedItems.direct_kr, groupedItems.goal, groupedItems.support_kr, reportMetricKind]);
 
   const isOwner = report?.profile_id === access.profileId;
   const canEditSelf = Boolean(report && isOwner && canOwnerEditReport(report.status));
@@ -1269,23 +1336,161 @@ export default function PerformanceReportDetailPage() {
                 </section>
 
                 <section className="rounded-2xl border border-slate-200 bg-white">
-                  <div className="space-y-5 px-5 py-5">
-                    {visibleItemGroups.length > 0 ? (
-                      visibleItemGroups.map((group) => (
-                        <ReportItemGroup
-                          key={group.itemType}
-                          itemType={group.itemType}
-                          items={group.items}
-                        />
-                      ))
+                  <SectionTitle
+                    title="Task được giao trong tuần"
+                    description="Danh sách task được giao trong khoảng thời gian của báo cáo."
+                  />
+
+                  <div className="px-5 py-5">
+                    {weeklyAssignedTasks.length > 0 ? (
+                      <div className="overflow-x-auto rounded-xl border border-slate-200">
+                        <table className="w-full min-w-[760px] text-left">
+                          <thead>
+                            <tr className="bg-slate-50 text-xs tracking-[0.08em] text-slate-500 uppercase">
+                              <th className="px-4 py-3 font-semibold">Task</th>
+                              <th className="px-4 py-3 font-semibold">KR</th>
+                              <th className="px-4 py-3 font-semibold">Goal</th>
+                              <th className="px-4 py-3 font-semibold">Tiến độ</th>
+                              <th className="px-4 py-3 font-semibold">Ưu tiên</th>
+                              <th className="px-4 py-3 font-semibold">Timeline</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {weeklyAssignedTasks.map((task) => {
+                              const href = getItemMetaText(task, "href");
+                              const keyResultName = getItemMetaText(task, "key_result_name");
+                              const goalName = getItemMetaText(task, "goal_name");
+                              const priority = formatPriorityText(getItemMetaText(task, "priority"));
+                              const timeline = getItemMetaText(task, "timeline") ?? "--";
+                              const { showPercent } = resolveItemDisplayConfig(task);
+
+                              return (
+                                <tr key={task.id} className="border-t border-slate-100 align-top">
+                                  <td className="px-4 py-3 text-sm font-semibold text-slate-900">
+                                    {href ? (
+                                      <Link href={href} className="transition hover:text-blue-700">
+                                        {task.name}
+                                      </Link>
+                                    ) : (
+                                      task.name
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3 text-sm text-slate-700">
+                                    {keyResultName ?? "--"}
+                                  </td>
+                                  <td className="px-4 py-3 text-sm text-slate-700">
+                                    {goalName ?? "--"}
+                                  </td>
+                                  <td className="px-4 py-3 text-sm text-slate-700">
+                                    {showPercent ? (
+                                      <>
+                                        <p className="font-semibold text-slate-900">
+                                          {formatReportProgressValue(task.progress_percent, "Chưa có")}
+                                        </p>
+                                        <p className="mt-1 text-xs text-slate-600">
+                                          {formatCurrentTargetText(task)}
+                                        </p>
+                                      </>
+                                    ) : (
+                                      <p className="font-semibold text-slate-900">
+                                        {formatCurrentTargetText(task)}
+                                      </p>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3 text-sm text-slate-700">{priority}</td>
+                                  <td className="px-4 py-3 text-sm text-slate-700">{timeline}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     ) : (
                       <div className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-700">
-                        Không có Goal, KR hoặc Task nào được theo dõi trong khoảng thời gian của báo
-                        cáo này.
+                        Không có task được giao trong tuần của báo cáo này.
                       </div>
                     )}
                   </div>
                 </section>
+
+                <section className="rounded-2xl border border-slate-200 bg-white">
+                  <SectionTitle
+                    title={reportMetricKind === "goal" ? "KR và Goal trong tuần" : "KR trong tuần"}
+                    description={
+                      reportMetricKind === "goal"
+                        ? "Vai trò quản lý/ban giám đốc sẽ theo dõi cả Goal và KR trong tuần."
+                        : "Vai trò thành viên sẽ theo dõi KR trong tuần."
+                    }
+                  />
+
+                  <div className="px-5 py-5">
+                    {weeklyObjectiveItems.length > 0 ? (
+                      <div className="overflow-x-auto rounded-xl border border-slate-200">
+                        <table className="w-full min-w-[680px] text-left">
+                          <thead>
+                            <tr className="bg-slate-50 text-xs tracking-[0.08em] text-slate-500 uppercase">
+                              <th className="px-4 py-3 font-semibold">Loại</th>
+                              <th className="px-4 py-3 font-semibold">Tên</th>
+                              <th className="px-4 py-3 font-semibold">Goal liên quan</th>
+                              <th className="px-4 py-3 font-semibold">Tiến độ</th>
+                              <th className="px-4 py-3 font-semibold">Timeline</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {weeklyObjectiveItems.map((item) => {
+                              const href = getItemMetaText(item, "href");
+                              const goalName = getItemMetaText(item, "goal_name");
+                              const timeline = getItemMetaText(item, "timeline") ?? "--";
+                              const { showPercent } = resolveItemDisplayConfig(item);
+
+                              return (
+                                <tr key={`${item.item_type}-${item.id}`} className="border-t border-slate-100 align-top">
+                                  <td className="px-4 py-3 text-sm text-slate-700">
+                                    {formatReportItemTypeLabel(item.item_type)}
+                                  </td>
+                                  <td className="px-4 py-3 text-sm font-semibold text-slate-900">
+                                    {href ? (
+                                      <Link href={href} className="transition hover:text-blue-700">
+                                        {item.name}
+                                      </Link>
+                                    ) : (
+                                      item.name
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3 text-sm text-slate-700">
+                                    {item.item_type === "goal" ? item.name : (goalName ?? "--")}
+                                  </td>
+                                  <td className="px-4 py-3 text-sm text-slate-700">
+                                    {showPercent ? (
+                                      <>
+                                        <p className="font-semibold text-slate-900">
+                                          {formatReportProgressValue(item.progress_percent, "Chưa có")}
+                                        </p>
+                                        <p className="mt-1 text-xs text-slate-600">
+                                          {formatCurrentTargetText(item)}
+                                        </p>
+                                      </>
+                                    ) : (
+                                      <p className="font-semibold text-slate-900">
+                                        {formatCurrentTargetText(item)}
+                                      </p>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3 text-sm text-slate-700">{timeline}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-700">
+                        Không có KR hoặc Goal nào trong tuần của báo cáo này.
+                      </div>
+                    )}
+                  </div>
+                </section>
+
               </div>
             )}
           </main>

@@ -212,6 +212,22 @@ function resolveMappedUnit(item: PerformanceReportItemRow) {
   return item.unit ?? "";
 }
 
+function shouldShowProgressPercent(item: PerformanceReportItemRow) {
+  const metricTypeFromMeta =
+    item.meta_json && typeof item.meta_json.metric_type === "string"
+      ? item.meta_json.metric_type
+      : null;
+  const taskTypeFromMeta =
+    item.meta_json && typeof item.meta_json.task_type === "string"
+      ? item.meta_json.task_type
+      : null;
+  const normalizedTokens = [metricTypeFromMeta, taskTypeFromMeta, item.unit]
+    .map((value) => normalizeMetricType(value))
+    .filter(Boolean);
+
+  return normalizedTokens.some(isRevenueToken);
+}
+
 function formatValueWithUnit(value: number | null | undefined, unit: string) {
   if (!Number.isFinite(value)) {
     return "--";
@@ -246,6 +262,7 @@ function ReportItemRow({ item }: { item: PerformanceReportItemRow }) {
   const href =
     item.meta_json && typeof item.meta_json.href === "string" ? item.meta_json.href : null;
   const unit = resolveMappedUnit(item);
+  const showProgressPercent = shouldShowProgressPercent(item);
   const progressText = formatScoreText(item.progress_percent, "Chưa có");
   const currentTargetText = `${formatValueWithUnit(item.current_value, unit)} / ${formatValueWithUnit(item.target_value, unit)}`;
   const priorityFromMeta =
@@ -265,8 +282,14 @@ function ReportItemRow({ item }: { item: PerformanceReportItemRow }) {
         )}
       </td>
       <td className="px-4 py-3 text-sm text-slate-700">
-        <p className="font-semibold text-slate-900">{progressText}</p>
-        <p className="mt-1 text-xs text-slate-600">{currentTargetText}</p>
+        {showProgressPercent ? (
+          <>
+            <p className="font-semibold text-slate-900">{progressText}</p>
+            <p className="mt-1 text-xs text-slate-600">{currentTargetText}</p>
+          </>
+        ) : (
+          <p className="font-semibold text-slate-900">{currentTargetText}</p>
+        )}
       </td>
       {item.item_type === "execution" ? (
         <td className="px-4 py-3 text-sm text-slate-700">{priorityFromMeta}</td>

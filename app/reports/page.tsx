@@ -1,11 +1,10 @@
 "use client";
 
+import { InfoCircledIcon } from "@radix-ui/react-icons";
 import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import {
-  BlockState,
-  SectionTitle,
-} from "@/app/reports/_components/reporting-ui";
+import { BlockState, SectionTitle } from "@/app/reports/_components/reporting-ui";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import {
@@ -24,9 +23,8 @@ import {
   type PerformanceReportWithRelations,
   type ReportingScopeDirectory,
   formatReportDateRange,
+  formatReportPointValue,
   formatReportProgressValue,
-  formatReportTaskCompletionText,
-  formatReportTaskPointText,
   getPerformanceReportMetricKind,
   loadReportingScopeDirectory,
   normalizePerformanceReportWithRelations,
@@ -70,19 +68,48 @@ const REPORT_SELECT = `
 `;
 
 const formatProgressValue = (value: number | null | undefined) => formatReportProgressValue(value);
+const REPORT_LOAD_ERROR_MESSAGE = "Không thể tải dữ liệu báo cáo. Vui lòng thử lại sau.";
 
-function FilterField({
-  label,
-  children,
+function formatCount(value: number) {
+  return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(value);
+}
+
+function CompletionCell({
+  completed,
+  total,
+  unitLabel,
+  pointValue,
 }: {
-  label: string;
-  children: ReactNode;
+  completed: number | null | undefined;
+  total: number | null | undefined;
+  unitLabel: string;
+  pointValue?: boolean;
 }) {
+  const safeTotal = Number.isFinite(total) ? Number(total) : 0;
+  if (safeTotal <= 0) {
+    return <span className="text-sm font-medium text-slate-700">Chưa có dữ liệu</span>;
+  }
+
+  const safeCompleted = Number.isFinite(completed) ? Number(completed) : 0;
+  const completedText = pointValue
+    ? formatReportPointValue(safeCompleted)
+    : formatCount(safeCompleted);
+  const totalText = pointValue ? formatReportPointValue(safeTotal) : formatCount(safeTotal);
+
+  return (
+    <>
+      <p className="text-sm font-semibold text-slate-900">
+        {completedText} / {totalText}
+      </p>
+      <p className="mt-1 text-xs font-medium text-slate-600">{unitLabel}</p>
+    </>
+  );
+}
+
+function FilterField({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="space-y-2">
-      <span className="block text-sm font-semibold text-slate-900">
-        {label}
-      </span>
+      <span className="block text-sm font-semibold text-slate-900">{label}</span>
       {children}
     </label>
   );
@@ -163,7 +190,7 @@ export default function ReportsPage() {
         const { data, error: reportsError } = await query;
 
         if (reportsError) {
-          throw new Error(reportsError.message || "Không tải được báo cáo hiệu suất.");
+          throw new Error(REPORT_LOAD_ERROR_MESSAGE);
         }
 
         const normalizedReports = ((data ?? []) as Array<Record<string, unknown>>).map((item) =>
@@ -187,7 +214,7 @@ export default function ReportsPage() {
             : { data: [] as PerformanceReportRoleMembershipRow[], error: null };
 
         if (userRoleResult.error) {
-          throw new Error(userRoleResult.error.message || "Không tải được vai trò nhân sự của báo cáo.");
+          throw new Error(REPORT_LOAD_ERROR_MESSAGE);
         }
 
         const goalReportProfileIds = new Set(
@@ -217,7 +244,8 @@ export default function ReportsPage() {
         if (!isActive) {
           return;
         }
-        setError(loadError instanceof Error ? loadError.message : "Không tải được dữ liệu báo cáo.");
+        console.error(loadError);
+        setError(REPORT_LOAD_ERROR_MESSAGE);
         setReports([]);
         setScopeDirectory(null);
       } finally {
@@ -358,7 +386,7 @@ export default function ReportsPage() {
                   </Select>
                 </FilterField>
 
-                <FilterField label="Loại kỳ">
+                {/* <FilterField label="Loại kỳ">
                   <Select value={periodTypeFilter} onValueChange={setPeriodTypeFilter}>
                     <SelectTrigger className="h-10">
                       <SelectValue placeholder="Chọn loại kỳ" />
@@ -372,23 +400,7 @@ export default function ReportsPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                </FilterField>
-
-                <FilterField label="Trạng thái">
-                  <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger className="h-10">
-                      <SelectValue placeholder="Chọn trạng thái" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Tất cả</SelectItem>
-                      {REPORT_STATUSES.map((item) => (
-                        <SelectItem key={item.value} value={item.value}>
-                          {item.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </FilterField>
+                </FilterField> */}
 
                 <FilterField label="Từ ngày">
                   <input
@@ -407,23 +419,11 @@ export default function ReportsPage() {
                     className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   />
                 </FilterField>
-
-                <FilterField label="Tìm kiếm">
-                  <input
-                    value={searchKeyword}
-                    onChange={(event) => setSearchKeyword(event.target.value)}
-                    placeholder="Tên, email, mã kỳ..."
-                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  />
-                </FilterField>
               </div>
             </section>
 
             <section className="mt-5 rounded-2xl border border-slate-200 bg-white">
-              <SectionTitle
-                title="Danh sách báo cáo"
-                description={`Trang ${safeCurrentPage}/${totalPages} · ${filteredReports.length} báo cáo`}
-              />
+              <SectionTitle title="Danh sách báo cáo" />
 
               {isLoading ? (
                 <ReportsTableSkeleton />
@@ -441,10 +441,31 @@ export default function ReportsPage() {
                         <th className="px-3 py-3 font-semibold">Nhân sự</th>
                         <th className="px-3 py-3 font-semibold">Phòng ban</th>
                         <th className="px-3 py-3 font-semibold">Khoảng thời gian</th>
-                        <th className="px-3 py-3 font-semibold">Trung bình tiến độ Goal</th>
-                        <th className="px-3 py-3 font-semibold">Trung bình tiến độ KR</th>
-                        <th className="px-3 py-3 font-semibold">Task hoàn thành</th>
-                        <th className="px-3 py-3 font-semibold">Điểm task</th>
+                        <th className="px-3 py-3 font-semibold">Tiến độ mục tiêu</th>
+                        <th className="px-3 py-3 font-semibold">Tiến độ KR</th>
+                        <th className="px-3 py-3 font-semibold">Công việc hoàn thành</th>
+                        <th className="px-3 py-3 font-semibold">
+                          <span className="inline-flex items-center gap-1.5">
+                            Khối lượng hoàn thành
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <button
+                                  type="button"
+                                  aria-label="Giải thích khối lượng hoàn thành"
+                                  className="inline-flex h-4 w-4 items-center justify-center rounded-full text-slate-400 transition hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-200"
+                                >
+                                  <InfoCircledIcon className="h-4 w-4" />
+                                </button>
+                              </PopoverTrigger>
+                              <PopoverContent
+                                className="w-[260px] p-3 text-xs leading-5 text-slate-600"
+                                align="start"
+                              >
+                                Khối lượng được tính theo điểm của các công việc được giao.
+                              </PopoverContent>
+                            </Popover>
+                          </span>
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -458,27 +479,37 @@ export default function ReportsPage() {
                             <p className="text-sm font-semibold text-slate-900">
                               {report.profile?.name ?? "Chưa gắn nhân sự"}
                             </p>
-                            <p className="mt-1 text-sm text-slate-700">
-                              {report.profile?.email ?? "Chưa có email"}
-                            </p>
                           </td>
                           <td className="px-3 py-4 text-sm text-slate-700">
-                            {report.department?.name ?? "Không gắn phòng ban"}
+                            {report.department?.name ?? "Chưa thuộc phòng ban"}
                           </td>
                           <td className="px-3 py-4 text-sm text-slate-700">
                             {formatReportDateRange(report.period_start, report.period_end)}
                           </td>
                           <td className="px-3 py-4 text-sm text-slate-700">
-                            {report.metricKind === "goal" ? formatProgressValue(report.business_score) : "—"}
+                            {report.metricKind === "goal"
+                              ? formatProgressValue(report.business_score)
+                              : "—"}
                           </td>
                           <td className="px-3 py-4 text-sm text-slate-700">
-                            {report.metricKind === "kr" ? formatProgressValue(report.business_score) : "—"}
+                            {report.metricKind === "kr"
+                              ? formatProgressValue(report.business_score)
+                              : "—"}
                           </td>
                           <td className="px-3 py-4 text-sm font-semibold text-slate-900">
-                            {formatReportTaskCompletionText(report.completed_task_count, report.task_count)}
+                            <CompletionCell
+                              completed={report.completed_task_count}
+                              total={report.task_count}
+                              unitLabel="công việc"
+                            />
                           </td>
                           <td className="px-3 py-4 text-sm font-semibold text-slate-900">
-                            {formatReportTaskPointText(report.completed_task_points, report.total_task_points)}
+                            <CompletionCell
+                              completed={report.completed_task_points}
+                              total={report.total_task_points}
+                              unitLabel="điểm"
+                              pointValue
+                            />
                           </td>
                         </tr>
                       ))}
@@ -488,7 +519,8 @@ export default function ReportsPage() {
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
                     <p className="text-sm text-slate-700">
                       Hiển thị {(safeCurrentPage - 1) * pageSize + 1}-
-                      {Math.min(safeCurrentPage * pageSize, filteredReports.length)} / {filteredReports.length}
+                      {Math.min(safeCurrentPage * pageSize, filteredReports.length)} /{" "}
+                      {filteredReports.length}
                     </p>
                     <div className="flex items-center gap-2">
                       <button
@@ -518,7 +550,6 @@ export default function ReportsPage() {
           </main>
         </div>
       </div>
-
     </div>
   );
 }

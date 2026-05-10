@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { useLeaveFormConfirm } from "@/components/use-leave-form-confirm";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { Button } from "@/components/ui/button";
@@ -45,6 +46,9 @@ export default function CreatePerformanceReportPage() {
   const [isLoadingScope, setIsLoadingScope] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { leaveConfirmDialog, runWithoutConfirm } = useLeaveFormConfirm({
+    enabled: !isSubmitting,
+  });
 
   useEffect(() => {
     if (access.isLoading || !access.isLoaded) {
@@ -259,7 +263,9 @@ export default function CreatePerformanceReportPage() {
       }
 
       const report = normalizePerformanceReportRow(insertedReport as Record<string, unknown>);
-      router.push(`/reports/${report.id}?created=1`);
+      runWithoutConfirm(() => {
+        router.push(`/reports/${report.id}?created=1`);
+      });
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Không tạo được báo cáo mới.");
     } finally {
@@ -308,7 +314,7 @@ export default function CreatePerformanceReportPage() {
                       <div className="space-y-2">
                         <label className="text-sm font-semibold text-slate-800">Nhân sự</label>
                         <Select value={profileId || undefined} onValueChange={setProfileId}>
-                          <SelectTrigger className="h-11">
+                          <SelectTrigger className="h-10">
                             <SelectValue placeholder="Chọn nhân sự" />
                           </SelectTrigger>
                           <SelectContent>
@@ -324,7 +330,7 @@ export default function CreatePerformanceReportPage() {
                       <div className="space-y-2">
                         <label className="text-sm font-semibold text-slate-800">Phòng ban</label>
                         <Select value={departmentId} onValueChange={setDepartmentId}>
-                          <SelectTrigger className="h-11">
+                          <SelectTrigger className="h-10">
                             <SelectValue placeholder="Chọn phòng ban hoặc để trống" />
                           </SelectTrigger>
                           <SelectContent>
@@ -345,7 +351,7 @@ export default function CreatePerformanceReportPage() {
                         <div className="space-y-2">
                           <label className="text-sm font-semibold text-slate-800">Loại kỳ báo cáo</label>
                           <Select value={periodType} onValueChange={(value) => setPeriodType(value as PerformanceReportPeriodType)}>
-                            <SelectTrigger className="h-11">
+                            <SelectTrigger className="h-10">
                               <SelectValue placeholder="Chọn loại kỳ" />
                             </SelectTrigger>
                             <SelectContent>
@@ -373,7 +379,7 @@ export default function CreatePerformanceReportPage() {
                             type="date"
                             value={periodStart}
                             onChange={(event) => setPeriodStart(event.target.value)}
-                            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                            className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                           />
                         </div>
 
@@ -383,7 +389,7 @@ export default function CreatePerformanceReportPage() {
                             type="date"
                             value={periodEnd}
                             onChange={(event) => setPeriodEnd(event.target.value)}
-                            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                            className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                           />
                         </div>
                       </div>
@@ -440,6 +446,7 @@ export default function CreatePerformanceReportPage() {
           </main>
         </div>
       </div>
+      {leaveConfirmDialog}
     </div>
   );
 }

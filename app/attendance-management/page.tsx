@@ -48,7 +48,11 @@ const toRolePriority = (roleName: string) => {
   if (normalized.includes("giam doc") || normalized.includes("director")) {
     return 0;
   }
-  if (normalized.includes("leader") || normalized.includes("truong nhom") || normalized.includes("manager")) {
+  if (
+    normalized.includes("leader") ||
+    normalized.includes("truong nhom") ||
+    normalized.includes("manager")
+  ) {
     return 1;
   }
   if (normalized.includes("member") || normalized.includes("thanh vien")) {
@@ -110,7 +114,9 @@ export default function AttendanceManagementPage() {
       workspaceAccess.roles
         .filter((role) => {
           const roleName = normalizeText(role.name);
-          return roleName === "member" || roleName.includes("member") || roleName.includes("thanh vien");
+          return (
+            roleName === "member" || roleName.includes("member") || roleName.includes("thanh vien")
+          );
         })
         .map((role) => role.id),
     [workspaceAccess.roles],
@@ -161,17 +167,24 @@ export default function AttendanceManagementPage() {
         let targetMemberships: UserRoleRow[] = [];
 
         if (nextRoleScope === "director") {
-          const [{ data: profilesData, error: profilesError }, { data: membershipsData, error: membershipsError }] =
-            await Promise.all([
-              supabase.from("profiles").select("id,name,email,attendance_id").order("name", { ascending: true }),
-              supabase.from("user_role_in_department").select("profile_id,department_id,role_id"),
-            ]);
+          const [
+            { data: profilesData, error: profilesError },
+            { data: membershipsData, error: membershipsError },
+          ] = await Promise.all([
+            supabase
+              .from("profiles")
+              .select("id,name,email,attendance_id")
+              .order("name", { ascending: true }),
+            supabase.from("user_role_in_department").select("profile_id,department_id,role_id"),
+          ]);
 
           if (profilesError) {
             throw new Error(profilesError.message || "Không tải được danh sách nhân sự.");
           }
           if (membershipsError) {
-            throw new Error(membershipsError.message || "Không tải được dữ liệu phân quyền phòng ban.");
+            throw new Error(
+              membershipsError.message || "Không tải được dữ liệu phân quyền phòng ban.",
+            );
           }
 
           targetProfiles = (profilesData ?? []) as ProfileRow[];
@@ -197,8 +210,13 @@ export default function AttendanceManagementPage() {
             return;
           }
 
-          const scopedDepartmentIds = getDescendantDepartmentIds(ownLeaderDepartmentIds, workspaceAccess.departments);
-          const effectiveRoleIds = [...new Set([...workspaceAccess.leaderRoleIds, ...memberRoleIds])];
+          const scopedDepartmentIds = getDescendantDepartmentIds(
+            ownLeaderDepartmentIds,
+            workspaceAccess.departments,
+          );
+          const effectiveRoleIds = [
+            ...new Set([...workspaceAccess.leaderRoleIds, ...memberRoleIds]),
+          ];
 
           const { data: scopedMembershipsData, error: scopedMembershipsError } = await supabase
             .from("user_role_in_department")
@@ -207,7 +225,9 @@ export default function AttendanceManagementPage() {
             .in("role_id", effectiveRoleIds);
 
           if (scopedMembershipsError) {
-            throw new Error(scopedMembershipsError.message || "Không tải được danh sách nhân sự trong phạm vi.");
+            throw new Error(
+              scopedMembershipsError.message || "Không tải được danh sách nhân sự trong phạm vi.",
+            );
           }
 
           targetMemberships = (scopedMembershipsData ?? []) as UserRoleRow[];
@@ -265,24 +285,30 @@ export default function AttendanceManagementPage() {
           acc[role.id] = role.name?.trim() || "Chưa gán vai trò";
           return acc;
         }, {});
-        const departmentNameById = workspaceAccess.departments.reduce<Record<string, string>>((acc, department) => {
-          acc[department.id] = department.name || "Không rõ phòng ban";
-          return acc;
-        }, {});
-        const membershipsByProfileId = targetMemberships.reduce<Record<string, UserRoleRow[]>>((acc, membership) => {
-          if (!membership.profile_id) {
+        const departmentNameById = workspaceAccess.departments.reduce<Record<string, string>>(
+          (acc, department) => {
+            acc[department.id] = department.name || "Không rõ phòng ban";
             return acc;
-          }
-          const profileId = String(membership.profile_id);
-          if (!acc[profileId]) {
-            acc[profileId] = [];
-          }
-          acc[profileId].push(membership);
-          return acc;
-        }, {});
-        const attendanceLinksByProfileId = ((attendanceLinkRows ?? []) as TimesProfileLinkRow[]).reduce<
-          Record<string, TimesProfileLinkRow[]>
-        >((acc, row) => {
+          },
+          {},
+        );
+        const membershipsByProfileId = targetMemberships.reduce<Record<string, UserRoleRow[]>>(
+          (acc, membership) => {
+            if (!membership.profile_id) {
+              return acc;
+            }
+            const profileId = String(membership.profile_id);
+            if (!acc[profileId]) {
+              acc[profileId] = [];
+            }
+            acc[profileId].push(membership);
+            return acc;
+          },
+          {},
+        );
+        const attendanceLinksByProfileId = (
+          (attendanceLinkRows ?? []) as TimesProfileLinkRow[]
+        ).reduce<Record<string, TimesProfileLinkRow[]>>((acc, row) => {
           if (!row.profile_id) {
             return acc;
           }
@@ -304,10 +330,10 @@ export default function AttendanceManagementPage() {
             const assignments = (membershipsByProfileId[profileId] ?? [])
               .map((membership) => ({
                 roleLabel: membership.role_id
-                  ? roleNameById[String(membership.role_id)] ?? "Chưa gán vai trò"
+                  ? (roleNameById[String(membership.role_id)] ?? "Chưa gán vai trò")
                   : "Chưa gán vai trò",
                 departmentLabel: membership.department_id
-                  ? departmentNameById[String(membership.department_id)] ?? "Không rõ phòng ban"
+                  ? (departmentNameById[String(membership.department_id)] ?? "Không rõ phòng ban")
                   : "Không thuộc phòng ban",
               }))
               .sort((a, b) => {
@@ -358,7 +384,9 @@ export default function AttendanceManagementPage() {
         }
         setViewableProfiles([]);
         setSelectedProfileId(null);
-        setLoadError(error instanceof Error ? error.message : "Không tải được dữ liệu quản lý chấm công.");
+        setLoadError(
+          error instanceof Error ? error.message : "Không tải được dữ liệu quản lý chấm công.",
+        );
       } finally {
         if (isActive) {
           setIsLoadingProfiles(false);
@@ -408,10 +436,7 @@ export default function AttendanceManagementPage() {
         <WorkspaceSidebar active="attendanceManagement" />
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <WorkspacePageHeader
-            title="Quản lý chấm công"
-            items={[{ label: "Quản lý chấm công" }]}
-          />
+          <WorkspacePageHeader title="Quản lý chấm công" items={[{ label: "Quản lý chấm công" }]} />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-7 xl:overflow-hidden">
             {workspaceAccess.isLoading || isLoadingProfiles ? (
@@ -432,20 +457,27 @@ export default function AttendanceManagementPage() {
               </div>
             ) : null}
 
-            {!workspaceAccess.isLoading && !isLoadingProfiles && canViewAttendanceManagement && !loadError ? (
+            {!workspaceAccess.isLoading &&
+            !isLoadingProfiles &&
+            canViewAttendanceManagement &&
+            !loadError ? (
               <div className="grid gap-5 xl:h-full xl:min-h-0 xl:grid-cols-[320px_minmax(0,1fr)]">
                 <aside className="space-y-4 xl:min-h-0">
                   <section className="rounded-2xl border border-slate-200 bg-white xl:flex xl:h-full xl:min-h-0 xl:flex-col">
                     <div className="border-b border-slate-100 px-5 py-4">
-                      <h2 className="text-xl font-semibold text-slate-900">Nhân sự trong phạm vi</h2>
-                      <p className="mt-1 text-sm text-slate-500">{viewableProfiles.length} người có thể xem</p>
+                      <h2 className="text-xl font-semibold text-slate-900">
+                        Nhân sự trong phạm vi
+                      </h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {viewableProfiles.length} người có thể xem
+                      </p>
                     </div>
                     <div className="border-b border-slate-100 px-5 py-4">
                       <input
                         value={searchKeyword}
                         onChange={(event) => setSearchKeyword(event.target.value)}
                         placeholder="Tìm theo tên, email, vai trò..."
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       />
                     </div>
                     <div className="max-h-[calc(100vh-280px)] space-y-3 overflow-y-auto px-4 py-4 xl:max-h-none xl:min-h-0 xl:flex-1">
@@ -465,12 +497,18 @@ export default function AttendanceManagementPage() {
                             >
                               <div className="flex items-start justify-between gap-3">
                                 <div>
-                                  <p className="text-sm font-semibold text-slate-900">{profile.name}</p>
-                                  <p className="mt-1 text-xs text-slate-500">{profile.email ?? "Không có email"}</p>
+                                  <p className="text-sm font-semibold text-slate-900">
+                                    {profile.name}
+                                  </p>
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    {profile.email ?? "Không có email"}
+                                  </p>
                                 </div>
                                 <span
                                   className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                                    isActive ? "bg-white text-blue-700" : "bg-slate-100 text-slate-600"
+                                    isActive
+                                      ? "bg-white text-blue-700"
+                                      : "bg-slate-100 text-slate-600"
                                   }`}
                                 >
                                   {profile.roleLabel}
@@ -480,14 +518,11 @@ export default function AttendanceManagementPage() {
                                 <p className="text-xs text-slate-500">{profile.departmentLabel}</p>
                                 <span
                                   className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                                    profile.attendanceIds.length > 0
-                                      ? "bg-emerald-50 text-emerald-700"
-                                      : "bg-amber-50 text-amber-700"
+                                    profile.attendanceIds.length <= 0 &&
+                                    "bg-amber-50 text-amber-700"
                                   }`}
                                 >
-                                  {profile.attendanceIds.length > 0
-                                    ? `${profile.attendanceIds.length} mã công`
-                                    : "Chưa liên kết công"}
+                                  {profile.attendanceIds.length <= 0 && "Chưa liên kết công"}
                                 </span>
                               </div>
                             </button>
@@ -512,7 +547,9 @@ export default function AttendanceManagementPage() {
                             <h2 className="mt-1 text-2xl font-semibold tracking-[-0.02em] text-slate-900">
                               {selectedProfile.name}
                             </h2>
-                            <p className="mt-1 text-sm text-slate-500">{selectedProfile.email ?? "Không có email"}</p>
+                            <p className="mt-1 text-sm text-slate-500">
+                              {selectedProfile.email ?? "Không có email"}
+                            </p>
                           </div>
                           <div className="flex flex-wrap items-center gap-2 text-xs">
                             <span className="rounded-full bg-blue-50 px-3 py-1 font-semibold text-blue-700">

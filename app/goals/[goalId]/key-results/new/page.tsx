@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { KeyResultContributionInfo } from "@/components/key-result-contribution-info";
+import { useLeaveFormConfirm } from "@/components/use-leave-form-confirm";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
@@ -164,9 +165,12 @@ const toNumericInput = (value: number | null | undefined) => {
 };
 
 const createSupportLinkDraftId = () =>
-  globalThis.crypto?.randomUUID?.() ?? `support-link-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  globalThis.crypto?.randomUUID?.() ??
+  `support-link-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-const createSupportLinkDraft = (value?: Partial<Omit<SupportLinkDraft, "rowId">>): SupportLinkDraft => ({
+const createSupportLinkDraft = (
+  value?: Partial<Omit<SupportLinkDraft, "rowId">>,
+): SupportLinkDraft => ({
   rowId: createSupportLinkDraftId(),
   id: value?.id ?? null,
   targetKeyResultId: value?.targetKeyResultId ?? "",
@@ -178,9 +182,9 @@ const createSupportLinkDraft = (value?: Partial<Omit<SupportLinkDraft, "rowId">>
 const isSupportLinkDraftFilled = (value: SupportLinkDraft) =>
   Boolean(
     value.targetKeyResultId ||
-      value.allocatedValue.trim() ||
-      value.allocatedPercent.trim() ||
-      value.note.trim(),
+    value.allocatedValue.trim() ||
+    value.allocatedPercent.trim() ||
+    value.note.trim(),
   );
 
 const getReadableKeyResultSubmitError = (message: string | null | undefined) => {
@@ -194,7 +198,7 @@ const getReadableKeyResultSubmitError = (message: string | null | undefined) => 
 };
 
 const normalizeKeyResultLinkOption = (value: Record<string, unknown>): KeyResultLinkOption => {
-  const rawGoal = Array.isArray(value.goal) ? value.goal[0] ?? null : value.goal ?? null;
+  const rawGoal = Array.isArray(value.goal) ? (value.goal[0] ?? null) : (value.goal ?? null);
   const goalRecord =
     rawGoal && typeof rawGoal === "object" ? (rawGoal as Record<string, unknown>) : null;
 
@@ -236,67 +240,17 @@ const toKeyResultFormState = (keyResult: ExistingKeyResultRow): KeyResultFormSta
   description: keyResult.description ?? "",
   contributionType: normalizeKeyResultContributionTypeValue(keyResult.contribution_type),
   unit: normalizeKeyResultUnitForType(keyResult.type, keyResult.unit),
-  target: normalizeKeyResultTypeValue(keyResult.type) === "okr" ? 100 : toFormNumber(keyResult.target, 100),
+  target:
+    normalizeKeyResultTypeValue(keyResult.type) === "okr"
+      ? 100
+      : toFormNumber(keyResult.target, 100),
   responsibleDepartmentId: keyResult.responsible_department_id ?? "",
   startDate: keyResult.start_date ?? "",
   endDate: keyResult.end_date ?? "",
 });
 
 const getKeyResultNamePlaceholder = (departmentName: string | null | undefined) => {
-  const normalizedDepartmentName = (departmentName ?? "").trim().toLowerCase();
-
-  if (
-    normalizedDepartmentName.includes("media") ||
-    normalizedDepartmentName.includes("content") ||
-    normalizedDepartmentName.includes("video")
-  ) {
-    return "Ví dụ: Sản xuất 40 video/tháng";
-  }
-
-  if (
-    normalizedDepartmentName.includes("sale") ||
-    normalizedDepartmentName.includes("sales") ||
-    normalizedDepartmentName.includes("kinh doanh") ||
-    normalizedDepartmentName.includes("doanh thu")
-  ) {
-    return "Ví dụ: Đạt doanh thu 2 tỉ từ TikTok Shop";
-  }
-
-  return "Ví dụ: Đạt 40 video/tháng";
-};
-
-const getKeyResultRoleSummary = (
-  type: KeyResultTypeValue,
-  contributionType: KeyResultContributionTypeValue,
-) => {
-  if (type === "kpi" && contributionType === "support") {
-    return {
-      title: "KR này là KPI hỗ trợ",
-      description:
-        "KR hỗ trợ không cộng trực tiếp vào tiến độ mục tiêu. Hãy phân bổ chỉ tiêu của KR này sang một hoặc nhiều KR trực tiếp.",
-    };
-  }
-
-  if (type === "kpi" && contributionType === "direct") {
-    return {
-      title: "KR này là KPI trực tiếp",
-      description:
-        "Tiến độ của KR này được dùng để đóng góp trực tiếp vào tiến độ mục tiêu.",
-    };
-  }
-
-  if (type === "okr" && contributionType === "support") {
-    return {
-      title: "KR này là OKR hỗ trợ",
-      description:
-        "KR hỗ trợ không cộng trực tiếp vào tiến độ mục tiêu. Hãy phân bổ mức đóng góp của KR này sang một hoặc nhiều KR trực tiếp.",
-    };
-  }
-
-  return {
-    title: "KR này là OKR trực tiếp",
-    description: "Tiến độ của KR này được dùng để đóng góp trực tiếp vào tiến độ mục tiêu.",
-  };
+  return "";
 };
 
 const getSupportLinkCountLabel = (count: number) => {
@@ -341,6 +295,27 @@ function SupportAllocationInfo({ unit }: { unit: KeyResultUnitValue }) {
   );
 }
 
+function RequiredKeyResultTypeInfo({ typeLabel }: { typeLabel: string }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex h-4 w-4 items-center justify-center text-slate-400 transition hover:text-slate-600"
+          aria-label="Giải thích loại KR"
+        >
+          <InfoCircledIcon className="h-4 w-4" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[280px] space-y-2 p-3 text-xs text-slate-600" align="start">
+        <p>
+          Loại KR được cố định theo loại mục tiêu hiện tại: <strong>{typeLabel}</strong>.
+        </p>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode }) {
   const params = useParams<{ goalId: string; keyResultId?: string }>();
   const router = useRouter();
@@ -365,6 +340,10 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
   const [supportTargetLoadError, setSupportTargetLoadError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeletingKeyResult, setIsDeletingKeyResult] = useState(false);
+  const { leaveConfirmDialog, runWithoutConfirm } = useLeaveFormConfirm({
+    enabled: !isSubmitting,
+  });
   const requiredKeyResultType = goal ? normalizeGoalTypeValue(goal.type) : null;
   const requiredKeyResultTypeLabel = goal ? formatGoalTypeLabel(goal.type) : null;
 
@@ -519,21 +498,25 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
             ...(keyResultData as ExistingKeyResultRow),
             id: String((keyResultData as ExistingKeyResultRow).id),
             goal_id: String((keyResultData as ExistingKeyResultRow).goal_id),
-            responsible_department_id: (keyResultData as ExistingKeyResultRow).responsible_department_id
+            responsible_department_id: (keyResultData as ExistingKeyResultRow)
+              .responsible_department_id
               ? String((keyResultData as ExistingKeyResultRow).responsible_department_id)
               : null,
           } satisfies ExistingKeyResultRow)
         : null;
 
-      const directOptions = ((directKeyResultData ?? []) as Array<Record<string, unknown>>).map((row) =>
-        normalizeKeyResultLinkOption(row),
+      const directOptions = ((directKeyResultData ?? []) as Array<Record<string, unknown>>).map(
+        (row) => normalizeKeyResultLinkOption(row),
       );
-      const directOptionsById = directOptions.reduce<Record<string, KeyResultLinkOption>>((acc, item) => {
-        acc[item.id] = item;
-        return acc;
-      }, {});
-      const supportLinkRows = ((supportLinkData ?? []) as Array<Record<string, unknown>>).map((row) =>
-        normalizeSupportLinkRow(row),
+      const directOptionsById = directOptions.reduce<Record<string, KeyResultLinkOption>>(
+        (acc, item) => {
+          acc[item.id] = item;
+          return acc;
+        },
+        {},
+      );
+      const supportLinkRows = ((supportLinkData ?? []) as Array<Record<string, unknown>>).map(
+        (row) => normalizeSupportLinkRow(row),
       );
       const missingTargetIds = supportLinkRows
         .map((item) => item.target_key_result_id)
@@ -542,7 +525,9 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
         missingTargetIds.length > 0
           ? await supabase
               .from("key_results")
-              .select("id,goal_id,name,type,contribution_type,unit,goal:goals!key_results_goal_id_fkey(id,name)")
+              .select(
+                "id,goal_id,name,type,contribution_type,unit,goal:goals!key_results_goal_id_fkey(id,name)",
+              )
               .in("id", Array.from(new Set(missingTargetIds)))
           : { data: [], error: null };
 
@@ -592,14 +577,20 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
           [
             typedGoal.department_id,
             typedKeyResult?.responsible_department_id ?? null,
-            ...((goalDepartmentData ?? []) as GoalDepartmentLinkRow[]).map((item) => item.department_id),
+            ...((goalDepartmentData ?? []) as GoalDepartmentLinkRow[]).map(
+              (item) => item.department_id,
+            ),
           ].filter(Boolean),
         ),
       ) as string[];
 
       const { data: departmentsData, error: departmentsError } =
         relatedDepartmentIds.length > 0
-          ? await supabase.from("departments").select("id,name").in("id", relatedDepartmentIds).order("name", { ascending: true })
+          ? await supabase
+              .from("departments")
+              .select("id,name")
+              .in("id", relatedDepartmentIds)
+              .order("name", { ascending: true })
           : { data: [], error: null };
 
       if (!isActive) {
@@ -613,13 +604,12 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
         return;
       }
 
-      const departmentNameById = ((departmentsData ?? []) as DepartmentRow[]).reduce<Record<string, string>>(
-        (acc, department) => {
-          acc[String(department.id)] = String(department.name);
-          return acc;
-        },
-        {},
-      );
+      const departmentNameById = ((departmentsData ?? []) as DepartmentRow[]).reduce<
+        Record<string, string>
+      >((acc, department) => {
+        acc[String(department.id)] = String(department.name);
+        return acc;
+      }, {});
 
       const mappedGoalDepartments = ((goalDepartmentData ?? []) as GoalDepartmentLinkRow[])
         .filter((item) => item.department_id)
@@ -630,7 +620,8 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
         }));
 
       const normalizedGoalDepartments =
-        mappedGoalDepartments.find((item) => item.departmentId === typedGoal.department_id) || !typedGoal.department_id
+        mappedGoalDepartments.find((item) => item.departmentId === typedGoal.department_id) ||
+        !typedGoal.department_id
           ? mappedGoalDepartments
           : [
               {
@@ -643,7 +634,9 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
 
       const nextGoalDepartments =
         typedKeyResult?.responsible_department_id &&
-        !normalizedGoalDepartments.some((item) => item.departmentId === typedKeyResult.responsible_department_id)
+        !normalizedGoalDepartments.some(
+          (item) => item.departmentId === typedKeyResult.responsible_department_id,
+        )
           ? [
               ...normalizedGoalDepartments,
               {
@@ -662,10 +655,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
           ...toKeyResultFormState(typedKeyResult),
           type: goalScopedType,
           unit: normalizeKeyResultUnitForType(goalScopedType, typedKeyResult.unit),
-          target:
-            goalScopedType === "okr"
-              ? 100
-              : toKeyResultFormState(typedKeyResult).target,
+          target: goalScopedType === "okr" ? 100 : toKeyResultFormState(typedKeyResult).target,
           responsibleDepartmentId:
             typedKeyResult.responsible_department_id || nextGoalDepartments[0]?.departmentId || "",
           startDate: typedKeyResult.start_date || typedGoal.start_date || "",
@@ -681,7 +671,8 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
           type: nextGoalType,
           unit: normalizeKeyResultUnitForType(nextGoalType, prev.unit),
           target: nextGoalType === "okr" ? 100 : prev.target,
-          responsibleDepartmentId: prev.responsibleDepartmentId || nextGoalDepartments[0]?.departmentId || "",
+          responsibleDepartmentId:
+            prev.responsibleDepartmentId || nextGoalDepartments[0]?.departmentId || "",
           startDate: prev.startDate || typedGoal.start_date || "",
           endDate: prev.endDate || typedGoal.end_date || "",
         }));
@@ -718,7 +709,8 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
   const supportAllocationExpectedTotal = usesPercentAllocation ? 100 : Number(form.target) || 0;
   const selectedResponsibleDepartmentName = useMemo(
     () =>
-      goalDepartments.find((department) => department.departmentId === form.responsibleDepartmentId)?.name ??
+      goalDepartments.find((department) => department.departmentId === form.responsibleDepartmentId)
+        ?.name ??
       goalDepartments[0]?.name ??
       null,
     [form.responsibleDepartmentId, goalDepartments],
@@ -727,10 +719,6 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
     () => getKeyResultNamePlaceholder(selectedResponsibleDepartmentName),
     [selectedResponsibleDepartmentName],
   );
-  const keyResultRoleSummary = useMemo(
-    () => getKeyResultRoleSummary(form.type, form.contributionType),
-    [form.contributionType, form.type],
-  );
   const activeSupportLinkDrafts = useMemo(
     () => supportLinkDrafts.filter(isSupportLinkDraftFilled),
     [supportLinkDrafts],
@@ -738,7 +726,9 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
   const supportAllocationTotal = useMemo(
     () =>
       activeSupportLinkDrafts.reduce((sum, item) => {
-        const rawValue = usesPercentAllocation ? item.allocatedPercent.trim() : item.allocatedValue.trim();
+        const rawValue = usesPercentAllocation
+          ? item.allocatedPercent.trim()
+          : item.allocatedValue.trim();
         const numericValue = rawValue ? Number(rawValue) : 0;
         return Number.isFinite(numericValue) ? sum + numericValue : sum;
       }, 0),
@@ -792,7 +782,10 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
     });
   };
 
-  const updateSupportLinkDraft = (rowId: string, patch: Partial<Omit<SupportLinkDraft, "rowId">>) => {
+  const updateSupportLinkDraft = (
+    rowId: string,
+    patch: Partial<Omit<SupportLinkDraft, "rowId">>,
+  ) => {
     setSupportLinkDrafts((prev) =>
       prev.map((item) => (item.rowId === rowId ? { ...item, ...patch } : item)),
     );
@@ -831,13 +824,19 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
       }
 
       const safeAllocatedValue = item.allocatedValue.trim() ? Number(item.allocatedValue) : null;
-      const safeAllocatedPercent = item.allocatedPercent.trim() ? Number(item.allocatedPercent) : null;
+      const safeAllocatedPercent = item.allocatedPercent.trim()
+        ? Number(item.allocatedPercent)
+        : null;
 
       if (usesValueAllocation && safeAllocatedValue === null) {
         return "Vui lòng nhập lượng phân bổ cho mọi liên kết hỗ trợ.";
       }
 
-      if (usesValueAllocation && safeAllocatedValue !== null && !Number.isFinite(safeAllocatedValue)) {
+      if (
+        usesValueAllocation &&
+        safeAllocatedValue !== null &&
+        !Number.isFinite(safeAllocatedValue)
+      ) {
         return "Lượng phân bổ phải là số hợp lệ.";
       }
 
@@ -848,7 +847,9 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
       if (
         usesPercentAllocation &&
         safeAllocatedPercent !== null &&
-        (!Number.isFinite(safeAllocatedPercent) || safeAllocatedPercent < 0 || safeAllocatedPercent > 100)
+        (!Number.isFinite(safeAllocatedPercent) ||
+          safeAllocatedPercent < 0 ||
+          safeAllocatedPercent > 100)
       ) {
         return "Phần trăm phân bổ phải nằm trong khoảng 0 đến 100.";
       }
@@ -858,22 +859,6 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
       }
 
       linkedTargetIds.add(item.targetKeyResultId);
-    }
-
-    const totalAllocated = activeDrafts.reduce((sum, item) => {
-      const numericValue = usesPercentAllocation
-        ? Number(item.allocatedPercent.trim())
-        : Number(item.allocatedValue.trim());
-      return sum + numericValue;
-    }, 0);
-
-    if (usesPercentAllocation && Math.abs(totalAllocated - 100) >= 0.0001) {
-      return `Tổng phần trăm phân bổ phải bằng 100%. Hiện tại là ${formatMetricValue(totalAllocated)}%.`;
-    }
-
-    const currentTarget = Number(form.target);
-    if (!usesPercentAllocation && Math.abs(totalAllocated - currentTarget) >= 0.0001) {
-      return `Tổng lượng phân bổ phải bằng chỉ tiêu KR (${formatKeyResultMetric(currentTarget, form.unit)}). Hiện tại là ${formatKeyResultMetric(totalAllocated, form.unit)}.`;
     }
 
     return null;
@@ -887,14 +872,15 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
     const shouldSaveAllocatedPercent = usesPercentSupportAllocation(form.unit);
 
     const retainedIds = new Set(
-      activeDrafts
-        .map((item) => item.id)
-        .filter((value): value is string => Boolean(value)),
+      activeDrafts.map((item) => item.id).filter((value): value is string => Boolean(value)),
     );
     const idsToDelete = initialSupportLinkIds.filter((item) => !retainedIds.has(item));
 
     if (idsToDelete.length > 0) {
-      const { error } = await supabase.from("key_result_support_links").delete().in("id", idsToDelete);
+      const { error } = await supabase
+        .from("key_result_support_links")
+        .delete()
+        .in("id", idsToDelete);
       if (error) {
         return error.message || "Không thể xóa liên kết hỗ trợ cũ.";
       }
@@ -952,6 +938,108 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
     return null;
   };
 
+  const handleDeleteKeyResult = async () => {
+    if (!isEditMode || !goal?.id || !keyResultId || isDeletingKeyResult) {
+      return;
+    }
+
+    const [
+      { count: relatedTaskCount, error: taskCountError },
+      { count: outboundSupportLinkCount, error: outboundCountError },
+      { count: inboundSupportLinkCount, error: inboundCountError },
+    ] = await Promise.all([
+      supabase
+        .from("tasks")
+        .select("id", { count: "exact", head: true })
+        .eq("key_result_id", keyResultId),
+      supabase
+        .from("key_result_support_links")
+        .select("id", { count: "exact", head: true })
+        .eq("support_key_result_id", keyResultId),
+      supabase
+        .from("key_result_support_links")
+        .select("id", { count: "exact", head: true })
+        .eq("target_key_result_id", keyResultId),
+    ]);
+
+    if (taskCountError || outboundCountError || inboundCountError) {
+      setSubmitError("Không thể kiểm tra dữ liệu liên quan trước khi xóa KR.");
+      return;
+    }
+
+    const relatedItems: string[] = [];
+    if ((relatedTaskCount ?? 0) > 0) {
+      relatedItems.push(`${relatedTaskCount} công việc`);
+    }
+    const relatedSupportLinkCount = (outboundSupportLinkCount ?? 0) + (inboundSupportLinkCount ?? 0);
+    if (relatedSupportLinkCount > 0) {
+      relatedItems.push(`${relatedSupportLinkCount} liên kết hỗ trợ`);
+    }
+    const relatedWarning =
+      relatedItems.length > 0
+        ? ` Thao tác này cũng sẽ xóa ${relatedItems.join(" và ")} liên quan.`
+        : "";
+
+    if (!window.confirm(`Xóa KR này?${relatedWarning}`)) {
+      return;
+    }
+
+    setIsDeletingKeyResult(true);
+    setSubmitError(null);
+
+    const deleteOutboundLinksResult = await supabase
+      .from("key_result_support_links")
+      .delete()
+      .eq("support_key_result_id", keyResultId);
+
+    if (deleteOutboundLinksResult.error) {
+      setSubmitError(
+        deleteOutboundLinksResult.error.message ||
+          "Không thể xóa các liên kết hỗ trợ đi ra của KR.",
+      );
+      setIsDeletingKeyResult(false);
+      return;
+    }
+
+    const deleteInboundLinksResult = await supabase
+      .from("key_result_support_links")
+      .delete()
+      .eq("target_key_result_id", keyResultId);
+
+    if (deleteInboundLinksResult.error) {
+      setSubmitError(
+        deleteInboundLinksResult.error.message ||
+          "Không thể xóa các liên kết hỗ trợ đi vào của KR.",
+      );
+      setIsDeletingKeyResult(false);
+      return;
+    }
+
+    const deleteTasksResult = await supabase.from("tasks").delete().eq("key_result_id", keyResultId);
+
+    if (deleteTasksResult.error) {
+      setSubmitError(deleteTasksResult.error.message || "Không thể xóa công việc của KR.");
+      setIsDeletingKeyResult(false);
+      return;
+    }
+
+    const deleteKeyResultResult = await supabase
+      .from("key_results")
+      .delete()
+      .eq("id", keyResultId);
+
+    if (deleteKeyResultResult.error) {
+      setSubmitError(deleteKeyResultResult.error.message || "Không thể xóa KR.");
+      setIsDeletingKeyResult(false);
+      return;
+    }
+
+    runWithoutConfirm(() => {
+      router.push(`/goals/${goal.id}?krDeleted=1`);
+      router.refresh();
+    });
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -961,9 +1049,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
     }
 
     if (!canCreateKeyResult) {
-      setSubmitError(
-        `Bạn không có quyền ${isEditMode ? "chỉnh sửa" : "tạo"} KR cho mục tiêu này.`,
-      );
+      setSubmitError(`Bạn không có quyền ${isEditMode ? "chỉnh sửa" : "tạo"} KR cho mục tiêu này.`);
       return;
     }
 
@@ -1032,7 +1118,12 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
       };
 
       const { data: savedKeyResult, error } = isEditMode
-        ? await supabase.from("key_results").update(payload).eq("id", keyResultId).select("id").maybeSingle()
+        ? await supabase
+            .from("key_results")
+            .update(payload)
+            .eq("id", keyResultId)
+            .select("id")
+            .maybeSingle()
         : await supabase
             .from("key_results")
             .insert({
@@ -1061,29 +1152,37 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
         const supportLinkSyncError = await syncSupportLinks(savedKeyResultId);
         if (supportLinkSyncError) {
           if (isEditMode) {
-            setSubmitError(`Đã lưu KR nhưng chưa cập nhật được liên kết hỗ trợ: ${supportLinkSyncError}`);
+            setSubmitError(
+              `Đã lưu KR nhưng chưa cập nhật được liên kết hỗ trợ: ${supportLinkSyncError}`,
+            );
             return;
           }
 
           const nextSearchParams = new URLSearchParams({
             supportSyncError: supportLinkSyncError,
           });
-          router.push(`/goals/${goal.id}/key-results/${savedKeyResultId}/edit?${nextSearchParams.toString()}`);
-          router.refresh();
+          runWithoutConfirm(() => {
+            router.push(
+              `/goals/${goal.id}/key-results/${savedKeyResultId}/edit?${nextSearchParams.toString()}`,
+            );
+            router.refresh();
+          });
           return;
         }
       }
 
-      router.push(
-        isEditMode
-          ? savedKeyResultId
-            ? `/goals/${goal.id}/key-results/${savedKeyResultId}?updated=1`
-            : `/goals/${goal.id}`
-          : savedKeyResultId
-            ? `/goals/${goal.id}/key-results/${savedKeyResultId}?created=1`
-            : `/goals/${goal.id}?krCreated=1`,
-      );
-      router.refresh();
+      runWithoutConfirm(() => {
+        router.push(
+          isEditMode
+            ? savedKeyResultId
+              ? `/goals/${goal.id}/key-results/${savedKeyResultId}?updated=1`
+              : `/goals/${goal.id}`
+            : savedKeyResultId
+              ? `/goals/${goal.id}/key-results/${savedKeyResultId}?created=1`
+              : `/goals/${goal.id}?krCreated=1`,
+        );
+        router.refresh();
+      });
     } catch {
       setSubmitError(`Có lỗi xảy ra khi ${isEditMode ? "lưu" : "tạo"} KR.`);
     } finally {
@@ -1130,14 +1229,6 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                       }: ${goal.name}`
                     : "Xác định loại KR, vai trò đóng góp, chỉ tiêu và phòng ban phụ trách."}
                 </p>
-                {goal?.start_date || goal?.end_date ? (
-                  <p className="mt-2 text-xs text-slate-500">
-                    Khung thời gian mục tiêu:{" "}
-                    {formatTimelineRangeVi(goal.start_date, goal.end_date, {
-                      fallback: "Chưa đặt khung thời gian",
-                    })}
-                  </p>
-                ) : null}
               </div>
 
               {isLoading ? (
@@ -1164,7 +1255,11 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                 </div>
               ) : null}
 
-              {!isLoading && !isCheckingPermission && hasValidGoalId && goal && canCreateKeyResult ? (
+              {!isLoading &&
+              !isCheckingPermission &&
+              hasValidGoalId &&
+              goal &&
+              canCreateKeyResult ? (
                 <form className="space-y-4" onSubmit={handleSubmit}>
                   {submitError ? (
                     <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
@@ -1180,17 +1275,23 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
 
                   <div className="grid gap-4 md:items-end md:grid-cols-[minmax(0,1fr)_220px_200px_200px]">
                     <div className="flex h-full flex-col justify-end gap-1.5">
-                      <label className="inline-flex min-h-5 items-center text-sm font-semibold text-slate-700">Tên Key Result *</label>
+                      <label className="inline-flex min-h-5 items-center text-sm font-semibold text-slate-700">
+                        Tên Key Result *
+                      </label>
                       <input
                         value={form.name}
-                        onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        onChange={(event) =>
+                          setForm((prev) => ({ ...prev, name: event.target.value }))
+                        }
+                        className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         placeholder={keyResultNamePlaceholder}
                       />
                     </div>
 
                     <div className="flex h-full flex-col justify-end gap-1.5">
-                      <label className="inline-flex min-h-5 items-center text-sm font-semibold text-slate-700">Phòng ban phụ trách *</label>
+                      <label className="inline-flex min-h-5 items-center text-sm font-semibold text-slate-700">
+                        Phòng ban phụ trách *
+                      </label>
                       <Select
                         value={form.responsibleDepartmentId || undefined}
                         onValueChange={(value) =>
@@ -1202,7 +1303,10 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                         </SelectTrigger>
                         <SelectContent>
                           {goalDepartments.map((department) => (
-                            <SelectItem key={department.departmentId} value={department.departmentId}>
+                            <SelectItem
+                              key={department.departmentId}
+                              value={department.departmentId}
+                            >
                               {department.name}
                             </SelectItem>
                           ))}
@@ -1211,7 +1315,12 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                     </div>
 
                     <div className="flex h-full flex-col justify-end gap-1.5">
-                      <label className="inline-flex min-h-5 items-center text-sm font-semibold text-slate-700">Loại KR</label>
+                      <label className="inline-flex min-h-5 items-center gap-1.5 text-sm font-semibold text-slate-700">
+                        <span>Loại KR</span>
+                        {requiredKeyResultTypeLabel ? (
+                          <RequiredKeyResultTypeInfo typeLabel={requiredKeyResultTypeLabel} />
+                        ) : null}
+                      </label>
                       <Select
                         value={form.type}
                         onValueChange={(value: KeyResultTypeValue) => {
@@ -1243,11 +1352,6 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                           ))}
                         </SelectContent>
                       </Select>
-                      {requiredKeyResultTypeLabel ? (
-                        <p className="text-xs text-slate-500">
-                          Loại KR được cố định theo loại mục tiêu: {requiredKeyResultTypeLabel}.
-                        </p>
-                      ) : null}
                     </div>
 
                     <div className="flex h-full flex-col justify-end gap-1.5">
@@ -1275,13 +1379,6 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                    <p className="font-semibold">{keyResultRoleSummary.title}</p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {keyResultRoleSummary.description}
-                    </p>
-                  </div>
-
                   <div className="grid gap-3 md:grid-cols-2">
                     <div className="space-y-1.5">
                       <label className="text-sm font-semibold text-slate-700">Đơn vị</label>
@@ -1289,11 +1386,16 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                         value={form.unit}
                         disabled={isOkrType}
                         onValueChange={(value: KeyResultUnitValue) =>
-                          setForm((prev) => ({ ...prev, unit: normalizeKeyResultUnitForType(prev.type, value) }))
+                          setForm((prev) => ({
+                            ...prev,
+                            unit: normalizeKeyResultUnitForType(prev.type, value),
+                          }))
                         }
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder={isOkrType ? "OKR dùng phần trăm" : "Chọn đơn vị"} />
+                          <SelectValue
+                            placeholder={isOkrType ? "OKR dùng phần trăm" : "Chọn đơn vị"}
+                          />
                         </SelectTrigger>
                         <SelectContent>
                           {getAllowedKeyResultUnitsByType(form.type).map((unit) => (
@@ -1306,7 +1408,9 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">Chỉ tiêu cần đạt *</label>
+                      <label className="text-sm font-semibold text-slate-700">
+                        Chỉ tiêu cần đạt *
+                      </label>
                       <FormattedNumberInput
                         value={targetInputValue}
                         disabled={isOkrType}
@@ -1317,7 +1421,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                             target: value ? Number(value) : 0,
                           }));
                         }}
-                        className={`h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
+                        className={`h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
                           isOkrType
                             ? "cursor-not-allowed bg-slate-50 text-slate-400"
                             : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
@@ -1325,7 +1429,6 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                         placeholder={isOkrType ? "KR OKR luôn là 100%" : undefined}
                       />
                     </div>
-
                   </div>
 
                   {isSupportContribution ? (
@@ -1335,9 +1438,6 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                           <h2 className="text-base font-semibold text-slate-900">
                             Phân bổ đóng góp tới KR trực tiếp
                           </h2>
-                          <p className="mt-1 text-sm text-slate-500">
-                            Chọn các KR trực tiếp mà KR hỗ trợ này sẽ đóng góp vào. Tổng phân bổ phải khớp với chỉ tiêu của KR hỗ trợ.
-                          </p>
                         </div>
                         <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
                           {getSupportLinkCountLabel(activeSupportLinkDrafts.length)}
@@ -1357,21 +1457,6 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                             ? `${formatMetricValue(supportAllocationTotal)}% / 100%`
                             : `${formatKeyResultMetric(supportAllocationTotal, form.unit)} / ${formatKeyResultMetric(supportAllocationExpectedTotal, form.unit)}`}
                         </p>
-                        <p className="mt-1 text-xs">
-                          {isSupportAllocationBalanced
-                            ? "Tổng phân bổ đã khớp với chỉ tiêu của KR hỗ trợ."
-                            : supportAllocationDelta > 0
-                              ? `Cần phân bổ thêm ${
-                                  usesPercentAllocation
-                                    ? `${formatMetricValue(supportAllocationDelta)}%`
-                                    : formatKeyResultMetric(supportAllocationDelta, form.unit)
-                                } để khớp với chỉ tiêu của KR hỗ trợ.`
-                              : `Đang phân bổ vượt ${
-                                  usesPercentAllocation
-                                    ? `${formatMetricValue(Math.abs(supportAllocationDelta))}%`
-                                    : formatKeyResultMetric(Math.abs(supportAllocationDelta), form.unit)
-                                } so với chỉ tiêu của KR hỗ trợ.`}
-                        </p>
                       </div>
 
                       {isLoadingSupportTargets ? (
@@ -1388,11 +1473,19 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
 
                       <div className="space-y-3">
                         {supportLinkDrafts.map((item, index) => {
-                          const targetChoices = getSupportTargetChoices(item.rowId, item.targetKeyResultId);
+                          const targetChoices = getSupportTargetChoices(
+                            item.rowId,
+                            item.targetKeyResultId,
+                          );
                           return (
-                            <div key={item.rowId} className="rounded-2xl border border-slate-200 bg-white p-4">
+                            <div
+                              key={item.rowId}
+                              className="rounded-2xl border border-slate-200 bg-white p-4"
+                            >
                               <div className="flex flex-wrap items-center justify-between gap-3">
-                                <p className="text-sm font-semibold text-slate-900">Phân bổ #{index + 1}</p>
+                                <p className="text-sm font-semibold text-slate-900">
+                                  Phân bổ #{index + 1}
+                                </p>
                                 <button
                                   type="button"
                                   onClick={() => removeSupportLinkDraft(item.rowId)}
@@ -1402,15 +1495,17 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                                 </button>
                               </div>
 
-                              <div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1.25fr)_220px]">
-                                <label className="space-y-1.5">
-                                  <span className="text-sm font-semibold text-slate-700">
+                              <div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1.25fr)_220px] md:items-end">
+                                <label className="flex h-full flex-col justify-end gap-1.5">
+                                  <span className="inline-flex min-h-5 items-center text-sm font-semibold text-slate-700">
                                     KR nhận đóng góp *
                                   </span>
                                   <Select
                                     value={item.targetKeyResultId || undefined}
                                     onValueChange={(value) =>
-                                      updateSupportLinkDraft(item.rowId, { targetKeyResultId: value })
+                                      updateSupportLinkDraft(item.rowId, {
+                                        targetKeyResultId: value,
+                                      })
                                     }
                                   >
                                     <SelectTrigger>
@@ -1427,42 +1522,48 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                                 </label>
 
                                 {usesValueAllocation ? (
-                                  <label className="space-y-1.5">
-                                    <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+                                  <label className="flex h-full flex-col justify-end gap-1.5">
+                                    <span className="inline-flex min-h-5 items-center gap-1.5 text-sm font-semibold text-slate-700">
                                       <span>Giá trị phân bổ</span>
                                       <SupportAllocationInfo unit={form.unit} />
                                     </span>
                                     <FormattedNumberInput
                                       value={item.allocatedValue}
                                       onValueChange={(value) =>
-                                        updateSupportLinkDraft(item.rowId, { allocatedValue: value })
+                                        updateSupportLinkDraft(item.rowId, {
+                                          allocatedValue: value,
+                                        })
                                       }
                                       placeholder="Ví dụ: 20"
-                                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                      className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                                     />
                                   </label>
                                 ) : null}
 
                                 {usesPercentAllocation ? (
-                                  <label className="space-y-1.5">
-                                    <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+                                  <label className="flex h-full flex-col justify-end gap-1.5">
+                                    <span className="inline-flex min-h-5 items-center gap-1.5 text-sm font-semibold text-slate-700">
                                       <span>Giá trị phân bổ</span>
                                       <SupportAllocationInfo unit={form.unit} />
                                     </span>
                                     <FormattedNumberInput
                                       value={item.allocatedPercent}
                                       onValueChange={(value) =>
-                                        updateSupportLinkDraft(item.rowId, { allocatedPercent: value })
+                                        updateSupportLinkDraft(item.rowId, {
+                                          allocatedPercent: value,
+                                        })
                                       }
                                       placeholder="Ví dụ: 25"
-                                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                      className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                                     />
                                   </label>
                                 ) : null}
                               </div>
 
                               <label className="mt-4 block space-y-1.5">
-                                <span className="text-sm font-semibold text-slate-700">Ghi chú phân bổ</span>
+                                <span className="text-sm font-semibold text-slate-700">
+                                  Ghi chú phân bổ
+                                </span>
                                 <textarea
                                   rows={3}
                                   value={item.note}
@@ -1470,11 +1571,6 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                                     updateSupportLinkDraft(item.rowId, { note: event.target.value })
                                   }
                                   className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                                  placeholder={
-                                    usesPercentAllocation
-                                      ? "Ví dụ: Phân bổ 25% mức đóng góp từ KR hỗ trợ này sang KR trực tiếp đã chọn."
-                                      : "Ví dụ: Phân bổ 20 đơn vị từ KR hỗ trợ này sang KR trực tiếp đã chọn."
-                                  }
                                 />
                               </label>
                             </div>
@@ -1503,7 +1599,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                         onChange={(event) =>
                           setForm((prev) => ({ ...prev, startDate: event.target.value }))
                         }
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       />
                     </div>
 
@@ -1516,7 +1612,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                         onChange={(event) =>
                           setForm((prev) => ({ ...prev, endDate: event.target.value }))
                         }
-                        className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       />
                     </div>
                   </div>
@@ -1532,16 +1628,34 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                     <textarea
                       rows={4}
                       value={form.description}
-                      onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
+                      onChange={(event) =>
+                        setForm((prev) => ({ ...prev, description: event.target.value }))
+                      }
                       className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       placeholder="Mô tả phạm vi và cách đo kết quả"
                     />
                   </div>
 
-                  <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
+                  <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                    <div>
+                      {isEditMode ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteKeyResult()}
+                          disabled={isDeletingKeyResult || isSubmitting}
+                          className="inline-flex h-10 items-center rounded-xl border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {isDeletingKeyResult ? "Đang xóa..." : "Xóa KR"}
+                        </button>
+                      ) : null}
+                    </div>
+
+                    <div className="flex items-center gap-2">
                     <Link
                       href={
-                        isEditMode ? `/goals/${goal.id}/key-results/${keyResultId}` : `/goals/${goal.id}`
+                        isEditMode
+                          ? `/goals/${goal.id}/key-results/${keyResultId}`
+                          : `/goals/${goal.id}`
                       }
                       className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 hover:bg-slate-50"
                     >
@@ -1549,7 +1663,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                     </Link>
                     <button
                       type="submit"
-                      disabled={isSubmitting}
+                      disabled={isSubmitting || isDeletingKeyResult}
                       className="h-10 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
                     >
                       {isSubmitting
@@ -1560,6 +1674,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                           ? "Lưu thay đổi KR"
                           : "Tạo KR"}
                     </button>
+                    </div>
                   </div>
                 </form>
               ) : null}
@@ -1567,6 +1682,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
           </main>
         </div>
       </div>
+      {leaveConfirmDialog}
     </div>
   );
 }

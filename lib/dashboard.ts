@@ -42,6 +42,7 @@ export type DashboardPriorityTaskItem = {
 export type DashboardDeadlineItem = {
   id: string;
   name: string;
+  progress: number;
   statusLabel: string;
   statusClassName: string;
   priorityLabel: string;

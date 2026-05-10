@@ -5,7 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarIcon } from "lucide-react";
 import { format } from "date-fns";
 import { vi } from "date-fns/locale";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useLeaveFormConfirm } from "@/components/use-leave-form-confirm";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { Button } from "@/components/ui/button";
@@ -71,6 +72,13 @@ const toMonthStartIso = (value: Date) => {
   const year = value.getFullYear();
   const month = String(value.getMonth() + 1).padStart(2, "0");
   return `${year}-${month}-01`;
+};
+
+const toMonthKey = (value: Date) => value.getFullYear() * 12 + value.getMonth();
+
+const isDateInPastMonth = (value: Date) => {
+  const now = new Date();
+  return toMonthKey(value) < toMonthKey(now);
 };
 
 const fromIsoDateParam = (value: string | null) => {
@@ -220,7 +228,7 @@ const getAncestors = (
   return Array.from(scoped);
 };
 
-export default function CreateTimeRequestPage() {
+function CreateTimeRequestPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryCorrectionDate = searchParams.get("date");
@@ -240,9 +248,14 @@ export default function CreateTimeRequestPage() {
   const [formError, setFormError] = useState<string>("");
   const [submitSuccess, setSubmitSuccess] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const { leaveConfirmDialog, runWithoutConfirm } = useLeaveFormConfirm({
+    enabled: !isSubmitting,
+  });
+  const currentMonthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
   const isApprovedLeaveRequest = requestType === "approved_leave";
   const isUnauthorizedLeaveRequest = requestType === "unauthorized_leave";
   const isRemoteRequest = requestType === "remote";
+  const isPastMonthSelection = correctionDate ? isDateInPastMonth(correctionDate) : false;
   const requiresMinutesInput = isApprovedLeaveRequest;
   const parsedMinutesPreview = parseMinutesInput(minutesInput);
   const roundedLeaveMinutesPreview =
@@ -452,6 +465,10 @@ export default function CreateTimeRequestPage() {
     }
     if (!correctionDate) {
       setFormError("Vui lòng chọn ngày cần điều chỉnh.");
+      return;
+    }
+    if (isDateInPastMonth(correctionDate)) {
+      setFormError("Không thể tạo yêu cầu cho tháng trước.");
       return;
     }
     if (isRemoteRequest) {
@@ -786,8 +803,10 @@ export default function CreateTimeRequestPage() {
       }
 
       setSubmitSuccess("Tạo yêu cầu thành công.");
-      router.push("/timesheet");
-      router.refresh();
+      runWithoutConfirm(() => {
+        router.push("/timesheet/requests");
+        router.refresh();
+      });
     } catch (error) {
       reviewerDebug.error = error instanceof Error ? error.message : "Không thể gửi yêu cầu.";
       setFormError(error instanceof Error ? error.message : "Không thể gửi yêu cầu.");
@@ -802,14 +821,14 @@ export default function CreateTimeRequestPage() {
   return (
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
       <div className="flex min-h-screen w-full">
-        <WorkspaceSidebar active="timesheet" />
+        <WorkspaceSidebar active="timeRequestForms" />
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <WorkspacePageHeader
             title="Tạo yêu cầu điều chỉnh công"
             items={[
               { label: "Chấm công", href: "/timesheet" },
-              { label: "Yêu cầu công" },
+              { label: "Yêu cầu thời gian", href: "/timesheet/requests" },
               { label: "Tạo mới" },
             ]}
           />
@@ -825,6 +844,12 @@ export default function CreateTimeRequestPage() {
                 {submitSuccess ? (
                   <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
                     {submitSuccess}
+                  </div>
+                ) : null}
+                {isPastMonthSelection ? (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    Không thể tạo yêu cầu cho tháng trước. Vui lòng chọn ngày trong tháng hiện tại
+                    hoặc tháng tương lai.
                   </div>
                 ) : null}
                 <div className="space-y-2">
@@ -873,6 +898,7 @@ export default function CreateTimeRequestPage() {
                           mode="single"
                           selected={correctionDate}
                           onSelect={setCorrectionDate}
+                          disabled={{ before: currentMonthStart }}
                           locale={vi}
                           initialFocus
                         />
@@ -974,25 +1000,11 @@ export default function CreateTimeRequestPage() {
                         />
                       </div>
                     </div>
-                    <div className="mt-3 rounded-xl border border-indigo-100 bg-white px-4 py-3">
-                      <p className="text-xs font-semibold tracking-[0.08em] text-indigo-500 uppercase">
-                        Tổng thời gian làm việc từ xa
-                      </p>
-                      <p className="mt-2 text-lg font-semibold text-indigo-900">
-                        {computedRemoteMinutes !== null
-                          ? formatDurationShort(computedRemoteMinutes)
-                          : "--"}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        Hệ thống tự tính `minutes` từ chênh lệch giữa giờ bắt đầu và giờ kết thúc
-                        làm việc từ xa.
-                      </p>
-                    </div>
                   </div>
                 ) : (
                   <div className="space-y-2">
                     <label className="text-sm font-semibold text-slate-800">
-                      Số phút điều chỉnh {requiresMinutesInput ? "*" : "(tùy chọn)"}
+                      Số phút điều chỉnh {requiresMinutesInput ? "*" : ""}
                     </label>
                     <input
                       type="number"
@@ -1009,15 +1021,6 @@ export default function CreateTimeRequestPage() {
                       }
                       className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                     />
-                    <p className="text-xs text-slate-500">
-                      {isApprovedLeaveRequest
-                        ? requiresMinutesInput
-                          ? "Nhập tổng thời gian thiếu cho trường hợp nghỉ, về sớm hoặc đi muộn."
-                          : "Có thể để trống. Nếu có nhập, hệ thống sẽ làm tròn lên theo giờ."
-                        : isUnauthorizedLeaveRequest
-                          ? "Nhập đúng số phút thiếu cho trường hợp nghỉ, về sớm hoặc đi muộn không phép."
-                          : "Lưu trực tiếp vào cột minutes của bảng time_requests."}
-                    </p>
                     {isApprovedLeaveRequest ? (
                       <p className="text-xs font-medium text-amber-700">
                         {parsedMinutesPreview !== null &&
@@ -1043,14 +1046,18 @@ export default function CreateTimeRequestPage() {
 
                 <div className="flex items-center justify-end gap-3 border-t border-slate-100 pt-4">
                   <Link
-                    href="/timesheet"
+                    href="/timesheet/requests"
                     className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50"
                   >
                     Hủy
                   </Link>
                   <button
                     type="submit"
-                    disabled={isSubmitting || (isApprovedLeaveRequest && isLoadingLeaveBalance)}
+                    disabled={
+                      isPastMonthSelection ||
+                      isSubmitting ||
+                      (isApprovedLeaveRequest && isLoadingLeaveBalance)
+                    }
                     className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
                   >
                     {isSubmitting ? "Đang gửi..." : "Gửi yêu cầu"}
@@ -1061,6 +1068,15 @@ export default function CreateTimeRequestPage() {
           </main>
         </div>
       </div>
+      {leaveConfirmDialog}
     </div>
+  );
+}
+
+export default function CreateTimeRequestPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#f3f5fa]" />}>
+      <CreateTimeRequestPageContent />
+    </Suspense>
   );
 }

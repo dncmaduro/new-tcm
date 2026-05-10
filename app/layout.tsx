@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
-import { Geist_Mono, Noto_Sans } from "next/font/google";
+import { Geist_Mono, Quicksand } from "next/font/google";
 import "@mantine/core/styles.css";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
-const appSans = Noto_Sans({
+const appSans = Quicksand({
   variable: "--font-app-sans",
   subsets: ["vietnamese"],
   weight: ["400", "500", "600", "700"],

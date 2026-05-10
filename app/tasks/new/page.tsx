@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
+import { useLeaveFormConfirm } from "@/components/use-leave-form-confirm";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
@@ -20,8 +21,7 @@ import {
   normalizeKeyResultUnitForType,
   type KeyResultUnitValue,
 } from "@/lib/constants/key-results";
-import { computeMetricProgress } from "@/lib/okr";
-import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
+import { useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import {
   Select,
   SelectContent,
@@ -67,19 +67,11 @@ type KeyResultOption = {
   endDate: string | null;
 };
 
-type TaskCreatePermissionDebug = {
-  checkedAt: string;
-  step: string;
-  authUserId: string | null;
-  profileId: string | null;
-  profileName: string | null;
-  leaderRoleIds: string[];
-  leaderRolesRaw: Array<{ id: string; name: string | null }>;
-  userRoleRows: Array<{ department_id: string | null; role_id: string | null }>;
-  departments: Array<{ id: string; name: string; parent_department_id: string | null }>;
-  rootDepartments: Array<{ id: string; name: string }>;
-  canCreateTask: boolean;
-  error: string | null;
+type PrefillResolution = {
+  resolvedGoalId: string | null;
+  resolvedKeyResultId: string | null;
+  resolvedKeyResult: KeyResultOption | null;
+  warning: string | null;
 };
 
 type TaskFormState = {
@@ -101,6 +93,13 @@ type TaskFormState = {
   endDate: string;
 };
 
+type FormToggleSwitchProps = {
+  id: string;
+  checked: boolean;
+  onCheckedChange: (next: boolean) => void;
+  disabled?: boolean;
+};
+
 const defaultForm: TaskFormState = {
   goalId: "",
   keyResultId: "",
@@ -120,6 +119,113 @@ const defaultForm: TaskFormState = {
   endDate: "",
 };
 
+const MAX_BULK_TASK_CREATE_COUNT = 200;
+
+const getSearchParamValue = (searchParams: ReturnType<typeof useSearchParams>, key: string) => {
+  const value = searchParams.get(key)?.trim();
+  return value ? value : null;
+};
+
+const FormToggleSwitch = ({
+  id,
+  checked,
+  onCheckedChange,
+  disabled = false,
+}: FormToggleSwitchProps) => (
+  <button
+    id={id}
+    type="button"
+    role="switch"
+    aria-checked={checked}
+    aria-disabled={disabled}
+    disabled={disabled}
+    onClick={() => onCheckedChange(!checked)}
+    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+      checked ? "bg-blue-600" : "bg-slate-300"
+    } ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
+  >
+    <span
+      className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+        checked ? "translate-x-5" : "translate-x-1"
+      }`}
+    />
+  </button>
+);
+
+const resolveTaskPrefill = ({
+  queryGoalId,
+  queryKeyResultId,
+  queryDepartmentId,
+  goals,
+  keyResults,
+  keyResultFromQuery,
+}: {
+  queryGoalId: string | null;
+  queryKeyResultId: string | null;
+  queryDepartmentId: string | null;
+  goals: GoalOption[];
+  keyResults: KeyResultOption[];
+  keyResultFromQuery: KeyResultOption | null;
+}): PrefillResolution => {
+  if (queryKeyResultId) {
+    const resolvedKeyResult =
+      keyResultFromQuery ?? keyResults.find((item) => item.id === queryKeyResultId) ?? null;
+    if (!resolvedKeyResult) {
+      return {
+        resolvedGoalId: queryGoalId ?? null,
+        resolvedKeyResultId: null,
+        resolvedKeyResult: null,
+        warning:
+          "Không tìm thấy Key Result từ URL. Có thể Key Result không tồn tại hoặc bạn không có quyền SELECT.",
+      };
+    }
+
+    const resolvedGoalId = resolvedKeyResult?.goalId ?? queryGoalId ?? null;
+    const warning =
+      queryGoalId && resolvedKeyResult?.goalId && queryGoalId !== resolvedKeyResult.goalId
+        ? "Key Result không thuộc mục tiêu trên URL. Hệ thống đã ưu tiên mục tiêu thật của Key Result."
+        : null;
+    return {
+      resolvedGoalId,
+      resolvedKeyResultId: resolvedKeyResult.id,
+      resolvedKeyResult,
+      warning,
+    };
+  }
+
+  if (queryGoalId) {
+    const resolvedGoal = goals.find((goal) => goal.id === queryGoalId) ?? null;
+    const resolvedGoalId = resolvedGoal?.id ?? queryGoalId;
+    const resolvedKeyResult = keyResults.find((item) => item.goalId === resolvedGoalId) ?? null;
+    return {
+      resolvedGoalId,
+      resolvedKeyResultId: resolvedKeyResult?.id ?? null,
+      resolvedKeyResult,
+      warning: null,
+    };
+  }
+
+  if (queryDepartmentId) {
+    const resolvedGoal = goals.find((goal) => goal.departmentId === queryDepartmentId) ?? null;
+    const resolvedKeyResult = resolvedGoal
+      ? (keyResults.find((item) => item.goalId === resolvedGoal.id) ?? null)
+      : null;
+    return {
+      resolvedGoalId: resolvedGoal?.id ?? null,
+      resolvedKeyResultId: resolvedKeyResult?.id ?? null,
+      resolvedKeyResult,
+      warning: null,
+    };
+  }
+
+  return {
+    resolvedGoalId: null,
+    resolvedKeyResultId: null,
+    resolvedKeyResult: null,
+    warning: null,
+  };
+};
+
 function NewTaskPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -130,10 +236,17 @@ function NewTaskPageContent() {
   const [keyResultOptions, setKeyResultOptions] = useState<KeyResultOption[]>([]);
   const [profileOptions, setProfileOptions] = useState<ProfileOption[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isContinuousCreate, setIsContinuousCreate] = useState(false);
+  const [isBulkCreateEnabled, setIsBulkCreateEnabled] = useState(false);
   const [dataLoadError, setDataLoadError] = useState<string | null>(null);
+  const [prefillWarning, setPrefillWarning] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
   const [profileSearchKeyword, setProfileSearchKeyword] = useState("");
   const [isProfileSelectOpen, setIsProfileSelectOpen] = useState(false);
+  const { leaveConfirmDialog, runWithoutConfirm } = useLeaveFormConfirm({
+    enabled: !isSubmitting,
+  });
 
   const buildTaskMetricDraft = (
     taskType: TaskTypeValue,
@@ -156,10 +269,9 @@ function NewTaskPageContent() {
     };
   };
 
-  const showPermissionDebug = searchParams.get("debugPermission") === "1";
-  const queryGoalId = searchParams.get("goalId");
-  const queryKeyResultId = searchParams.get("keyResultId");
-  const queryDepartmentId = searchParams.get("departmentId");
+  const queryGoalId = getSearchParamValue(searchParams, "goalId");
+  const queryKeyResultId = getSearchParamValue(searchParams, "keyResultId");
+  const queryDepartmentId = getSearchParamValue(searchParams, "departmentId");
   const isCheckingPermission = workspaceAccess.isLoading;
   const creatorProfileId = workspaceAccess.profileId;
   const canCreateTask = workspaceAccess.canManage && !workspaceAccess.error;
@@ -168,25 +280,6 @@ function NewTaskPageContent() {
     (!isCheckingPermission && !workspaceAccess.canManage
       ? "Bạn chưa có quyền tạo công việc ở phòng ban gốc."
       : null);
-  const permissionDebug: TaskCreatePermissionDebug = useMemo(
-    () => ({
-      ...buildWorkspaceAccessDebug({
-        authUserId: workspaceAccess.authUserId,
-        profileId: workspaceAccess.profileId,
-        profileName: workspaceAccess.profileName,
-        leaderRoleIds: workspaceAccess.leaderRoleIds,
-        roles: workspaceAccess.roles,
-        memberships: workspaceAccess.memberships,
-        departments: workspaceAccess.departments,
-        managedDepartments: workspaceAccess.managedDepartments,
-        canManage: workspaceAccess.canManage,
-        error: workspaceAccess.error,
-        lastLoadedAt: workspaceAccess.lastLoadedAt,
-      }),
-      canCreateTask: workspaceAccess.canManage,
-    }),
-    [workspaceAccess],
-  );
 
   useEffect(() => {
     if (isCheckingPermission) {
@@ -248,7 +341,6 @@ function NewTaskPageContent() {
           supabase.from("departments").select("id,name"),
           supabase.from("profiles").select("id,name,email").order("name", { ascending: true }),
         ]);
-
         if (!isActive) {
           return;
         }
@@ -261,7 +353,7 @@ function NewTaskPageContent() {
           {},
         );
 
-        const mappedGoals: GoalOption[] = (goalsData ?? []).map((goal) => {
+        let mappedGoals: GoalOption[] = (goalsData ?? []).map((goal) => {
           const departmentId = goal.department_id ? String(goal.department_id) : null;
           return {
             id: String(goal.id),
@@ -272,7 +364,7 @@ function NewTaskPageContent() {
             endDate: goal.end_date ? String(goal.end_date) : null,
           };
         });
-        const baseKeyResults = ((keyResultsData ?? []) as Array<Record<string, unknown>>).map(
+        let baseKeyResults = ((keyResultsData ?? []) as Array<Record<string, unknown>>).map(
           (keyResult) => {
             const goalRow = Array.isArray(keyResult.goal)
               ? (keyResult.goal[0] ?? null)
@@ -310,6 +402,224 @@ function NewTaskPageContent() {
           },
         );
 
+        const upsertGoalOption = (nextGoal: GoalOption) => {
+          if (mappedGoals.some((goal) => goal.id === nextGoal.id)) {
+            mappedGoals = mappedGoals.map((goal) => (goal.id === nextGoal.id ? nextGoal : goal));
+            return;
+          }
+          mappedGoals = [...mappedGoals, nextGoal];
+        };
+
+        const upsertKeyResultOption = (nextKeyResult: KeyResultOption) => {
+          if (baseKeyResults.some((item) => item.id === nextKeyResult.id)) {
+            baseKeyResults = baseKeyResults.map((item) =>
+              item.id === nextKeyResult.id ? nextKeyResult : item,
+            );
+            return;
+          }
+          baseKeyResults = [...baseKeyResults, nextKeyResult];
+        };
+
+        let keyResultFromQuery: KeyResultOption | null = null;
+
+        if (queryKeyResultId) {
+          const { data: directKeyResultRow } = await supabase
+            .from("key_results")
+            .select(
+              `
+                id,
+                goal_id,
+                name,
+                type,
+                contribution_type,
+                start_value,
+                target,
+                current,
+                unit,
+                weight,
+                start_date,
+                end_date,
+                goal:goals!key_results_goal_id_fkey(
+                  id,
+                  name,
+                  type,
+                  department_id,
+                  start_date,
+                  end_date
+                )
+              `,
+            )
+            .eq("id", queryKeyResultId)
+            .maybeSingle();
+
+          if (directKeyResultRow?.id) {
+            const directGoal = Array.isArray(directKeyResultRow.goal)
+              ? (directKeyResultRow.goal[0] ?? null)
+              : (directKeyResultRow.goal ?? null);
+
+            keyResultFromQuery = {
+              id: String(directKeyResultRow.id),
+              goalId: directKeyResultRow.goal_id ? String(directKeyResultRow.goal_id) : null,
+              goalName: directGoal?.name ? String(directGoal.name) : "Chưa có mục tiêu",
+              goalType: directGoal?.type ? String(directGoal.type) : null,
+              name: String(directKeyResultRow.name),
+              type: directKeyResultRow.type ? String(directKeyResultRow.type) : null,
+              contributionType: directKeyResultRow.contribution_type
+                ? String(directKeyResultRow.contribution_type)
+                : null,
+              startValue:
+                typeof directKeyResultRow.start_value === "number"
+                  ? directKeyResultRow.start_value
+                  : Number(directKeyResultRow.start_value ?? 0),
+              target:
+                typeof directKeyResultRow.target === "number"
+                  ? directKeyResultRow.target
+                  : Number(directKeyResultRow.target ?? 0),
+              current:
+                typeof directKeyResultRow.current === "number"
+                  ? directKeyResultRow.current
+                  : Number(directKeyResultRow.current ?? 0),
+              unit: directKeyResultRow.unit ? String(directKeyResultRow.unit) : null,
+              weight:
+                typeof directKeyResultRow.weight === "number"
+                  ? directKeyResultRow.weight
+                  : Number(directKeyResultRow.weight ?? 1),
+              startDate: directKeyResultRow.start_date
+                ? String(directKeyResultRow.start_date)
+                : null,
+              endDate: directKeyResultRow.end_date ? String(directKeyResultRow.end_date) : null,
+            };
+            upsertKeyResultOption(keyResultFromQuery);
+
+            if (directGoal?.id) {
+              const departmentId = directGoal.department_id
+                ? String(directGoal.department_id)
+                : null;
+              upsertGoalOption({
+                id: String(directGoal.id),
+                name: String(directGoal.name),
+                departmentId,
+                departmentName: departmentId ? (departmentsById[departmentId] ?? null) : null,
+                startDate: directGoal.start_date ? String(directGoal.start_date) : null,
+                endDate: directGoal.end_date ? String(directGoal.end_date) : null,
+              });
+            }
+          }
+        }
+
+        if (queryGoalId && !mappedGoals.some((goal) => goal.id === queryGoalId)) {
+          const { data: extraGoalRow } = await supabase
+            .from("goals")
+            .select("id,name,department_id,start_date,end_date")
+            .eq("id", queryGoalId)
+            .maybeSingle();
+
+          if (extraGoalRow?.id) {
+            const departmentId = extraGoalRow.department_id
+              ? String(extraGoalRow.department_id)
+              : null;
+            upsertGoalOption({
+              id: String(extraGoalRow.id),
+              name: String(extraGoalRow.name),
+              departmentId,
+              departmentName: departmentId ? (departmentsById[departmentId] ?? null) : null,
+              startDate: extraGoalRow.start_date ? String(extraGoalRow.start_date) : null,
+              endDate: extraGoalRow.end_date ? String(extraGoalRow.end_date) : null,
+            });
+          }
+        }
+
+        if (
+          queryKeyResultId &&
+          !keyResultFromQuery &&
+          !baseKeyResults.some((item) => item.id === queryKeyResultId)
+        ) {
+          const { data: extraKeyResultRow } = await supabase
+            .from("key_results")
+            .select(
+              `
+                id,
+                goal_id,
+                name,
+                type,
+                contribution_type,
+                start_value,
+                target,
+                current,
+                unit,
+                weight,
+                start_date,
+                end_date,
+                goal:goals!key_results_goal_id_fkey(
+                  id,
+                  name,
+                  type,
+                  department_id,
+                  start_date,
+                  end_date
+                )
+              `,
+            )
+            .eq("id", queryKeyResultId)
+            .maybeSingle();
+
+          if (extraKeyResultRow?.id) {
+            const extraGoal = Array.isArray(extraKeyResultRow.goal)
+              ? (extraKeyResultRow.goal[0] ?? null)
+              : (extraKeyResultRow.goal ?? null);
+
+            const extraKeyResultOption: KeyResultOption = {
+              id: String(extraKeyResultRow.id),
+              goalId: extraKeyResultRow.goal_id ? String(extraKeyResultRow.goal_id) : null,
+              goalName: extraGoal?.name ? String(extraGoal.name) : "Chưa có mục tiêu",
+              goalType: extraGoal?.type ? String(extraGoal.type) : null,
+              name: String(extraKeyResultRow.name),
+              type: extraKeyResultRow.type ? String(extraKeyResultRow.type) : null,
+              contributionType: extraKeyResultRow.contribution_type
+                ? String(extraKeyResultRow.contribution_type)
+                : null,
+              startValue:
+                typeof extraKeyResultRow.start_value === "number"
+                  ? extraKeyResultRow.start_value
+                  : Number(extraKeyResultRow.start_value ?? 0),
+              target:
+                typeof extraKeyResultRow.target === "number"
+                  ? extraKeyResultRow.target
+                  : Number(extraKeyResultRow.target ?? 0),
+              current:
+                typeof extraKeyResultRow.current === "number"
+                  ? extraKeyResultRow.current
+                  : Number(extraKeyResultRow.current ?? 0),
+              unit: extraKeyResultRow.unit ? String(extraKeyResultRow.unit) : null,
+              weight:
+                typeof extraKeyResultRow.weight === "number"
+                  ? extraKeyResultRow.weight
+                  : Number(extraKeyResultRow.weight ?? 1),
+              startDate: extraKeyResultRow.start_date ? String(extraKeyResultRow.start_date) : null,
+              endDate: extraKeyResultRow.end_date ? String(extraKeyResultRow.end_date) : null,
+            };
+
+            upsertKeyResultOption(extraKeyResultOption);
+
+            const extraGoalId = extraKeyResultRow.goal_id
+              ? String(extraKeyResultRow.goal_id)
+              : null;
+            if (extraGoalId && !mappedGoals.some((goal) => goal.id === extraGoalId)) {
+              const departmentId = extraGoal?.department_id
+                ? String(extraGoal.department_id)
+                : null;
+              upsertGoalOption({
+                id: extraGoalId,
+                name: extraGoal?.name ? String(extraGoal.name) : "Chưa có mục tiêu",
+                departmentId,
+                departmentName: departmentId ? (departmentsById[departmentId] ?? null) : null,
+                startDate: extraGoal?.start_date ? String(extraGoal.start_date) : null,
+                endDate: extraGoal?.end_date ? String(extraGoal.end_date) : null,
+              });
+            }
+          }
+        }
+
         setKeyResultOptions(baseKeyResults);
 
         setGoalOptions(mappedGoals);
@@ -340,42 +650,30 @@ function NewTaskPageContent() {
           setDataLoadError(loadErrorMessages.join(" "));
         }
 
-        const preselectedKeyResult = queryKeyResultId
-          ? (baseKeyResults.find((item) => item.id === queryKeyResultId) ?? null)
-          : null;
-
-        const goalFromKeyResult = preselectedKeyResult
-          ? (mappedGoals.find((item) => item.id === preselectedKeyResult.goalId) ?? null)
-          : null;
-        const goalFromQuery = queryGoalId
-          ? (mappedGoals.find((item) => item.id === queryGoalId) ?? null)
-          : null;
-        const goalFromDepartment = queryDepartmentId
-          ? (mappedGoals.find((item) => item.departmentId === queryDepartmentId) ?? null)
-          : null;
-        const preselectedGoal = goalFromKeyResult ?? goalFromQuery ?? goalFromDepartment;
-
-        const preselectedGoalId = preselectedGoal?.id ?? "";
-        const preselectedGoalKeyResult =
-          preselectedKeyResult && preselectedKeyResult.goalId === preselectedGoalId
-            ? preselectedKeyResult
-            : (baseKeyResults.find((item) => item.goalId === preselectedGoalId) ?? null);
+        const { resolvedGoalId, resolvedKeyResultId, resolvedKeyResult, warning } =
+          resolveTaskPrefill({
+            queryGoalId,
+            queryKeyResultId,
+            queryDepartmentId,
+            goals: mappedGoals,
+            keyResults: baseKeyResults,
+            keyResultFromQuery,
+          });
+        setPrefillWarning(warning);
 
         setForm((prev) => ({
           ...prev,
-          goalId: preselectedGoalId,
-          keyResultId: preselectedGoalKeyResult?.id ?? "",
+          goalId: resolvedGoalId ?? "",
+          keyResultId: resolvedKeyResultId ?? "",
           profileId: mappedProfiles[0]?.id ?? "",
-          startDate: preselectedGoalKeyResult?.startDate ?? "",
-          endDate: preselectedGoalKeyResult?.endDate ?? "",
+          startDate: resolvedKeyResult?.startDate ?? "",
+          endDate: resolvedKeyResult?.endDate ?? "",
           isRecurring: false,
           hypothesis: "",
           result: "",
           ...buildTaskMetricDraft(
-            preselectedGoalKeyResult
-              ? normalizeKeyResultTypeValue(preselectedGoalKeyResult.type)
-              : prev.type,
-            preselectedGoalKeyResult,
+            resolvedKeyResult ? normalizeKeyResultTypeValue(resolvedKeyResult.type) : prev.type,
+            resolvedKeyResult,
           ),
         }));
       } catch {
@@ -383,6 +681,7 @@ function NewTaskPageContent() {
           setGoalOptions([]);
           setKeyResultOptions([]);
           setProfileOptions([]);
+          setPrefillWarning(null);
           setDataLoadError("Có lỗi khi tải dữ liệu tạo công việc.");
         }
       }
@@ -407,6 +706,14 @@ function NewTaskPageContent() {
       Number(form.current) >= 0,
     [form],
   );
+  const canBulkCreateByQuantity = form.type === "kpi" && form.unit === "count";
+  const parsedTargetForBulk = Number(form.target);
+  const isBulkTargetValid =
+    !isBulkCreateEnabled ||
+    (Number.isInteger(parsedTargetForBulk) &&
+      parsedTargetForBulk >= 1 &&
+      parsedTargetForBulk <= MAX_BULK_TASK_CREATE_COUNT);
+
   const filteredProfileOptions = useMemo(() => {
     const keyword = profileSearchKeyword.trim().toLowerCase();
     if (!keyword) {
@@ -425,18 +732,66 @@ function NewTaskPageContent() {
     [form.goalId, keyResultOptions],
   );
 
+  const displayGoalOptions = useMemo(() => {
+    if (!form.goalId || goalOptions.some((goal) => goal.id === form.goalId)) {
+      return goalOptions;
+    }
+
+    return [
+      {
+        id: form.goalId,
+        name: "Mục tiêu đã chọn",
+        departmentId: null,
+        departmentName: null,
+        startDate: null,
+        endDate: null,
+      },
+      ...goalOptions,
+    ];
+  }, [form.goalId, goalOptions]);
+
+  const displayKeyResultOptions = useMemo(() => {
+    if (
+      !form.keyResultId ||
+      availableKeyResults.some((keyResult) => keyResult.id === form.keyResultId)
+    ) {
+      return availableKeyResults;
+    }
+
+    return [
+      {
+        id: form.keyResultId,
+        goalId: form.goalId || null,
+        goalName: form.goalId ? "Mục tiêu đã chọn" : "Chưa có mục tiêu",
+        goalType: null,
+        name: "Key Result đã chọn",
+        type: null,
+        contributionType: null,
+        startValue: 0,
+        target: 0,
+        current: 0,
+        unit: null,
+        weight: 1,
+        startDate: null,
+        endDate: null,
+      },
+      ...availableKeyResults,
+    ];
+  }, [availableKeyResults, form.goalId, form.keyResultId]);
+
+  const selectedGoalForDisplay = useMemo(
+    () => displayGoalOptions.find((goal) => goal.id === form.goalId) ?? null,
+    [displayGoalOptions, form.goalId],
+  );
+  const selectedKeyResultForDisplay = useMemo(
+    () => displayKeyResultOptions.find((keyResult) => keyResult.id === form.keyResultId) ?? null,
+    [displayKeyResultOptions, form.keyResultId],
+  );
+
   const selectedKeyResult = useMemo(
     () => keyResultOptions.find((keyResult) => keyResult.id === form.keyResultId) ?? null,
     [form.keyResultId, keyResultOptions],
   );
-  const derivedProgress = (() => {
-    const safeCurrent = Number(form.current);
-    const safeTarget = Number(form.target);
-    if (!Number.isFinite(safeCurrent) || !Number.isFinite(safeTarget) || safeTarget <= 0) {
-      return 0;
-    }
-    return computeMetricProgress(safeCurrent, 0, safeTarget);
-  })();
   const taskTimelineInputError = useMemo(() => {
     if ((form.startDate && !form.endDate) || (!form.startDate && form.endDate)) {
       return "Vui lòng nhập đủ ngày bắt đầu và ngày kết thúc hoặc để trống cả hai.";
@@ -461,8 +816,16 @@ function NewTaskPageContent() {
     [form.endDate, form.startDate, selectedKeyResult?.endDate, selectedKeyResult?.startDate],
   );
 
+  useEffect(() => {
+    if (canBulkCreateByQuantity) {
+      return;
+    }
+    setIsBulkCreateEnabled(false);
+  }, [canBulkCreateByQuantity]);
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setSubmitSuccess(null);
 
     if (!canCreateTask) {
       setSubmitError("Bạn không có quyền tạo công việc.");
@@ -492,11 +855,23 @@ function NewTaskPageContent() {
       setSubmitError("Giá trị hiện tại phải lớn hơn hoặc bằng 0.");
       return;
     }
+    if (!isBulkTargetValid) {
+      setSubmitError(
+        `Khi bật tạo hàng loạt, "Chỉ tiêu cần đạt" phải là số nguyên từ 1 đến ${MAX_BULK_TASK_CREATE_COUNT}.`,
+      );
+      return;
+    }
 
     setSubmitError(null);
     setIsSubmitting(true);
 
     try {
+      const baseTaskName = form.name.trim();
+      const shouldBulkCreateByTarget = canBulkCreateByQuantity && isBulkCreateEnabled;
+      const effectiveCreateCount = shouldBulkCreateByTarget ? Number(form.target) : 1;
+      const targetPerTask = shouldBulkCreateByTarget ? 1 : safeTarget;
+      const currentPerTask = shouldBulkCreateByTarget ? 0 : safeCurrent;
+
       const payload = {
         key_result_id: form.keyResultId.trim(),
         assignee_id: form.profileId,
@@ -505,9 +880,9 @@ function NewTaskPageContent() {
         type: form.type,
         priority: form.priority,
         unit: form.unit,
-        target: safeTarget,
-        current: safeCurrent,
-        name: form.name.trim(),
+        target: targetPerTask,
+        current: currentPerTask,
+        name: baseTaskName,
         description: form.description.trim() || null,
         note: form.note.trim() || null,
         is_recurring: form.isRecurring,
@@ -518,17 +893,27 @@ function NewTaskPageContent() {
         end_date: form.endDate.trim() || null,
       };
 
-      let { error } = await supabase.from("tasks").insert(payload);
+      const payloads = Array.from({ length: effectiveCreateCount }, (_, index) => ({
+        ...payload,
+        name:
+          effectiveCreateCount > 1
+            ? `${baseTaskName} (${index + 1}/${effectiveCreateCount})`
+            : payload.name,
+      }));
+
+      let { error } = await supabase.from("tasks").insert(payloads);
       if (
         error &&
         typeof error.message === "string" &&
         (error.message.includes("column") || error.message.includes("schema")) &&
         error.message.includes("current")
       ) {
-        const retry = await supabase.from("tasks").insert({
-          ...payload,
-          current: undefined,
+        const payloadsWithoutCurrent = payloads.map((item) => {
+          const { current, ...rest } = item;
+          void current;
+          return rest;
         });
+        const retry = await supabase.from("tasks").insert(payloadsWithoutCurrent);
         error = retry.error;
       }
       if (error) {
@@ -542,12 +927,28 @@ function NewTaskPageContent() {
         return;
       }
 
-      router.push(
-        queryGoalId && queryKeyResultId
-          ? `/goals/${queryGoalId}/key-results/${queryKeyResultId}?taskCreated=1`
-          : "/tasks",
-      );
-      router.refresh();
+      if (isContinuousCreate) {
+        setForm(defaultForm);
+        setIsBulkCreateEnabled(false);
+        setProfileSearchKeyword("");
+        setIsProfileSelectOpen(false);
+        setSubmitError(null);
+        setSubmitSuccess(
+          effectiveCreateCount > 1
+            ? `Đã tạo ${effectiveCreateCount} công việc thành công. Biểu mẫu đã được làm mới để tạo tiếp.`
+            : "Đã tạo công việc thành công. Biểu mẫu đã được làm mới để tạo tiếp.",
+        );
+        return;
+      }
+
+      runWithoutConfirm(() => {
+        router.push(
+          queryGoalId && queryKeyResultId
+            ? `/goals/${queryGoalId}/key-results/${queryKeyResultId}?taskCreated=1`
+            : "/tasks",
+        );
+        router.refresh();
+      });
     } catch {
       setSubmitError("Có lỗi xảy ra khi tạo công việc.");
     } finally {
@@ -567,25 +968,11 @@ function NewTaskPageContent() {
           />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-7">
-            {showPermissionDebug && permissionDebug ? (
-              <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-950 px-4 py-3 text-xs text-slate-100">
-                <p className="mb-2 font-semibold text-sky-300">
-                  Debug quyền tạo công việc (debugPermission=1)
-                </p>
-                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed">
-                  {JSON.stringify(permissionDebug, null, 2)}
-                </pre>
-              </div>
-            ) : null}
-
             <section className="mx-auto w-full max-w-[920px] rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_24px_50px_-40px_rgba(15,23,42,0.4)] lg:p-6">
               <div className="mb-5">
                 <h1 className="text-2xl font-semibold tracking-[-0.02em] text-slate-900">
                   Thêm công việc mới
                 </h1>
-                <p className="mt-1 text-sm text-slate-500">
-                  Điền thông tin để tạo công việc mới và phân công cho thành viên phù hợp.
-                </p>
               </div>
 
               {isCheckingPermission ? (
@@ -608,9 +995,21 @@ function NewTaskPageContent() {
                     </div>
                   ) : null}
 
+                  {prefillWarning ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                      {prefillWarning}
+                    </div>
+                  ) : null}
+
                   {submitError ? (
                     <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                       {submitError}
+                    </div>
+                  ) : null}
+
+                  {submitSuccess ? (
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                      {submitSuccess}
                     </div>
                   ) : null}
 
@@ -624,7 +1023,7 @@ function NewTaskPageContent() {
                       onChange={(event) =>
                         setForm((prev) => ({ ...prev, name: event.target.value }))
                       }
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       placeholder="Ví dụ: Hoàn thành mục tiêu Media"
                     />
                   </div>
@@ -635,10 +1034,13 @@ function NewTaskPageContent() {
                       <Select
                         value={form.goalId || undefined}
                         onValueChange={(value) => {
+                          if (!value) return;
+
                           const nextGoalId = value;
                           const nextGoalKeyResults = keyResultOptions.filter(
                             (keyResult) => keyResult.goalId === nextGoalId,
                           );
+
                           const resolvedKeyResult =
                             nextGoalId && form.keyResultId
                               ? (keyResultOptions.find(
@@ -649,6 +1051,7 @@ function NewTaskPageContent() {
                                 nextGoalKeyResults[0] ??
                                 null)
                               : (nextGoalKeyResults[0] ?? null);
+
                           setForm((prev) => ({
                             ...prev,
                             goalId: nextGoalId,
@@ -665,10 +1068,19 @@ function NewTaskPageContent() {
                         }}
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="Chọn mục tiêu" />
+                          {selectedGoalForDisplay ? (
+                            <span>
+                              {selectedGoalForDisplay.name}
+                              {selectedGoalForDisplay.departmentName
+                                ? ` · ${selectedGoalForDisplay.departmentName}`
+                                : ""}
+                            </span>
+                          ) : (
+                            <SelectValue placeholder="Chọn mục tiêu" />
+                          )}
                         </SelectTrigger>
                         <SelectContent>
-                          {goalOptions.map((goal) => (
+                          {displayGoalOptions.map((goal) => (
                             <SelectItem key={goal.id} value={goal.id}>
                               {goal.name}
                               {goal.departmentName ? ` · ${goal.departmentName}` : ""}
@@ -683,8 +1095,11 @@ function NewTaskPageContent() {
                       <Select
                         value={form.keyResultId || undefined}
                         onValueChange={(value) => {
+                          if (!value) return;
+
                           const matchedKeyResult =
                             keyResultOptions.find((keyResult) => keyResult.id === value) ?? null;
+
                           setForm((prev) => ({
                             ...prev,
                             goalId: matchedKeyResult?.goalId ?? prev.goalId,
@@ -701,10 +1116,14 @@ function NewTaskPageContent() {
                         }}
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="Chọn key result" />
+                          {selectedKeyResultForDisplay ? (
+                            <span>{selectedKeyResultForDisplay.name}</span>
+                          ) : (
+                            <SelectValue placeholder="Chọn key result" />
+                          )}
                         </SelectTrigger>
                         <SelectContent>
-                          {availableKeyResults.map((keyResult) => (
+                          {displayKeyResultOptions.map((keyResult) => (
                             <SelectItem key={keyResult.id} value={keyResult.id}>
                               {keyResult.name}
                             </SelectItem>
@@ -727,7 +1146,7 @@ function NewTaskPageContent() {
                               startDate: event.target.value,
                             }))
                           }
-                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />
                       </div>
                       <div className="space-y-1.5">
@@ -744,7 +1163,7 @@ function NewTaskPageContent() {
                               endDate: event.target.value,
                             }))
                           }
-                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />
                       </div>
                       <p className="md:col-span-2 text-[11px] text-slate-500">
@@ -786,6 +1205,8 @@ function NewTaskPageContent() {
                         }}
                         value={form.profileId || undefined}
                         onValueChange={(value) => {
+                          if (!value) return;
+
                           setForm((prev) => ({ ...prev, profileId: value }));
                           setProfileSearchKeyword("");
                         }}
@@ -921,7 +1342,7 @@ function NewTaskPageContent() {
                             target: value,
                           }))
                         }
-                        className={`h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
+                        className={`h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
                           form.type === "okr"
                             ? "cursor-not-allowed bg-slate-50 text-slate-400"
                             : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
@@ -950,20 +1371,51 @@ function NewTaskPageContent() {
                     />
                   </div>
 
-                  <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
-                    <Link
-                      href="/tasks"
-                      className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 hover:bg-slate-50"
-                    >
-                      Hủy
-                    </Link>
-                    <button
-                      type="submit"
-                      disabled={isSubmitting || !isFormValid}
-                      className="h-10 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                    >
-                      {isSubmitting ? "Đang tạo..." : "Tạo công việc"}
-                    </button>
+                  {canBulkCreateByQuantity ? (
+                    <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <label
+                        htmlFor="bulk-create-enabled"
+                        className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-slate-700"
+                      >
+                        <input
+                          id="bulk-create-enabled"
+                          type="checkbox"
+                          checked={isBulkCreateEnabled}
+                          onChange={(event) => setIsBulkCreateEnabled(event.target.checked)}
+                          className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span>Tạo hàng loạt</span>
+                      </label>
+                    </div>
+                  ) : null}
+
+                  <div className="flex flex-col gap-3 border-t border-slate-100 pt-3 md:flex-row md:items-center md:justify-between">
+                    <div className="flex items-center gap-3">
+                      <FormToggleSwitch
+                        id="continuous-create"
+                        checked={isContinuousCreate}
+                        onCheckedChange={setIsContinuousCreate}
+                      />
+                      <span className="text-sm text-slate-700">
+                        Tạo liên tục: tạo xong sẽ ở lại form và xóa toàn bộ dữ liệu đã nhập.
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2">
+                      <Link
+                        href="/tasks"
+                        className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                      >
+                        Hủy
+                      </Link>
+                      <button
+                        type="submit"
+                        disabled={isSubmitting || !isFormValid}
+                        className="h-10 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                      >
+                        {isSubmitting ? "Đang tạo..." : "Tạo công việc"}
+                      </button>
+                    </div>
                   </div>
                 </form>
               ) : null}
@@ -971,6 +1423,7 @@ function NewTaskPageContent() {
           </main>
         </div>
       </div>
+      {leaveConfirmDialog}
     </div>
   );
 }

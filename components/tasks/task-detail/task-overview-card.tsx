@@ -77,14 +77,14 @@ export function TaskOverviewCard({
             <input
               value={form.name}
               onChange={(event) => onNameChange(event.target.value)}
-              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
             />
           </label>
 
           <label className="space-y-1.5">
             <span className="text-sm font-semibold text-slate-700">Loại task</span>
             <Select value={form.type} onValueChange={(value) => onTypeChange(value as TaskTypeValue)}>
-              <SelectTrigger className="h-11">
+              <SelectTrigger className="h-10">
                 <SelectValue placeholder="Chọn loại task" />
               </SelectTrigger>
               <SelectContent>
@@ -104,7 +104,7 @@ export function TaskOverviewCard({
               onValueChange={(value) => onUnitChange(normalizeKeyResultUnitForType(form.type, value) as KeyResultUnitValue)}
               disabled={form.type === "okr"}
             >
-              <SelectTrigger className="h-11">
+              <SelectTrigger className="h-10">
                 <SelectValue placeholder={form.type === "okr" ? "Task OKR dùng phần trăm" : "Chọn loại chỉ tiêu"} />
               </SelectTrigger>
               <SelectContent>
@@ -120,7 +120,7 @@ export function TaskOverviewCard({
           <label className="space-y-1.5">
             <span className="text-sm font-semibold text-slate-700">Độ ưu tiên</span>
             <Select value={form.priority} onValueChange={(value) => onPriorityChange(value as TaskPriority)}>
-              <SelectTrigger className="h-11">
+              <SelectTrigger className="h-10">
                 <SelectValue placeholder="Chọn độ ưu tiên" />
               </SelectTrigger>
               <SelectContent>
@@ -139,7 +139,7 @@ export function TaskOverviewCard({
               value={form.target}
               disabled={form.type === "okr"}
               onValueChange={onTargetChange}
-              className={`h-11 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
+              className={`h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
                 form.type === "okr"
                   ? "cursor-not-allowed bg-slate-50 text-slate-400"
                   : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"

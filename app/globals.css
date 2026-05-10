@@ -45,6 +45,25 @@ body {
   }
 }
 
+@keyframes sidebar-popout-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+[class*="uppercase"][class*="text-slate-4"],
+[class*="uppercase"][class*="text-slate-5"] {
+  text-transform: none !important;
+  color: #0f172a !important;
+  font-weight: 600 !important;
+  font-size: 0.8125rem !important;
+  line-height: 1.2rem !important;
+  letter-spacing: normal !important;
+}
+
 @keyframes loading-bar {
   0% {
     transform: translateX(-55%);

@@ -15,15 +15,8 @@ import {
   normalizeAttendanceId,
   type AttendanceTimeRow,
 } from "@/lib/attendance";
-import {
-  calculateAttendanceMetrics,
-  type AttendanceStatus,
-} from "@/lib/attendance-metrics";
-import {
-  buildHolidayMap,
-  fetchHolidaysInRange,
-  type Holiday,
-} from "@/lib/holidays";
+import { calculateAttendanceMetrics, type AttendanceStatus } from "@/lib/attendance-metrics";
+import { buildHolidayMap, fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
 import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
 
@@ -112,7 +105,6 @@ type TimesheetOverviewProps = {
 
 const weekDayLabels = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
 const ABSENT_NO_DATA_MISSING_MINUTES = 8 * 60;
-const REQUESTS_PAGE_SIZE = 10;
 
 function getMonthDateRange(value: Date) {
   const start = new Date(value.getFullYear(), value.getMonth(), 1);
@@ -190,7 +182,9 @@ function hasValidRemoteWindow(startValue: string | null, endValue: string | null
 
 function resolveRequestMinutes(item: TimeRequestRow) {
   if (item.type === "remote") {
-    return calculateWorkedMinutesBetweenTimestamps(item.remote_check_in, item.remote_check_out) ?? 0;
+    return (
+      calculateWorkedMinutesBetweenTimestamps(item.remote_check_in, item.remote_check_out) ?? 0
+    );
   }
 
   return typeof item.minutes === "number" && Number.isFinite(item.minutes)
@@ -279,12 +273,6 @@ export function TimesheetOverview({
   const [attendanceError, setAttendanceError] = useState<string>("");
   const [attendanceBinding, setAttendanceBinding] = useState<AttendanceBinding | null>(null);
   const [correctionRequests, setCorrectionRequests] = useState<CorrectionRequest[]>([]);
-  const [requestFilter, setRequestFilter] = useState<"all" | "pending" | "approved" | "rejected">(
-    "all",
-  );
-  const [requestPage, setRequestPage] = useState(1);
-  const [isLoadingRequests, setIsLoadingRequests] = useState<boolean>(false);
-  const [requestsError, setRequestsError] = useState<string>("");
   const [openedFormDateIso, setOpenedFormDateIso] = useState<string | null>(null);
   const [isExportingCsv, setIsExportingCsv] = useState(false);
 
@@ -316,8 +304,6 @@ export function TimesheetOverview({
 
   useEffect(() => {
     if (!profileId) {
-      setIsLoadingRequests(false);
-      setRequestsError(profileError ?? "");
       setCorrectionRequests([]);
       return;
     }
@@ -325,9 +311,6 @@ export function TimesheetOverview({
     let isActive = true;
 
     const loadCorrectionRequests = async () => {
-      setIsLoadingRequests(true);
-      setRequestsError("");
-
       try {
         const { start, end } = getMonthDateRange(selectedMonth);
         const startIso = toIsoDate(start.getFullYear(), start.getMonth() + 1, start.getDate());
@@ -371,18 +354,11 @@ export function TimesheetOverview({
         });
 
         setCorrectionRequests(mapped);
-      } catch (error) {
+      } catch {
         if (!isActive) {
           return;
         }
-        const message =
-          error instanceof Error ? error.message : "Không thể tải yêu cầu điều chỉnh công.";
-        setRequestsError(message);
         setCorrectionRequests([]);
-      } finally {
-        if (isActive) {
-          setIsLoadingRequests(false);
-        }
       }
     };
 
@@ -495,7 +471,8 @@ export function TimesheetOverview({
               dateIso: row.date,
               checkIn: toLocalTimeHHmm(row.check_in),
               checkOut: toLocalTimeHHmm(row.check_out),
-              workingMinutes: calculateWorkedMinutesBetweenTimestamps(row.check_in, row.check_out) ?? 0,
+              workingMinutes:
+                calculateWorkedMinutesBetweenTimestamps(row.check_in, row.check_out) ?? 0,
               requiredWorkingMinutes: 0,
               lateMinutes: 0,
               earlyLeaveMinutes: 0,
@@ -508,7 +485,12 @@ export function TimesheetOverview({
             return;
           }
 
-          const metrics = calculateAttendanceMetrics(row.date, row.check_in, row.check_out, holidays);
+          const metrics = calculateAttendanceMetrics(
+            row.date,
+            row.check_in,
+            row.check_out,
+            holidays,
+          );
           byDay.set(day, {
             day,
             dateIso: row.date,
@@ -548,11 +530,7 @@ export function TimesheetOverview({
             continue;
           }
           const dateValue = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), day);
-          const dateIso = toIsoDate(
-            selectedMonth.getFullYear(),
-            selectedMonth.getMonth() + 1,
-            day,
-          );
+          const dateIso = toIsoDate(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, day);
           const isSunday = dateValue.getDay() === 0;
           const holiday = holidayMap.get(dateIso) ?? null;
           if (isSunday) {
@@ -620,6 +598,10 @@ export function TimesheetOverview({
 
   const calendarYear = selectedMonth.getFullYear();
   const calendarMonth = selectedMonth.getMonth() + 1;
+  const selectedMonthKey = selectedMonth.getFullYear() * 12 + selectedMonth.getMonth();
+  const now = new Date();
+  const currentMonthKey = now.getFullYear() * 12 + now.getMonth();
+  const isSelectedPastMonth = selectedMonthKey < currentMonthKey;
   const firstWeekdayIndex = new Date(calendarYear, calendarMonth - 1, 1).getDay();
   const totalDays = new Date(calendarYear, calendarMonth, 0).getDate();
   const cellCount = Math.ceil((firstWeekdayIndex + totalDays) / 7) * 7;
@@ -772,7 +754,8 @@ export function TimesheetOverview({
             ? Math.max(0, day.missingMinutes)
             : 0;
         const requiredWorkingMinutes =
-          typeof day.requiredWorkingMinutes === "number" && Number.isFinite(day.requiredWorkingMinutes)
+          typeof day.requiredWorkingMinutes === "number" &&
+          Number.isFinite(day.requiredWorkingMinutes)
             ? Math.max(0, day.requiredWorkingMinutes)
             : 0;
 
@@ -818,26 +801,6 @@ export function TimesheetOverview({
     }
     return { day, meta: dayMap[day] };
   });
-
-  const filteredCorrectionRequests = useMemo(() => {
-    if (requestFilter === "all") {
-      return correctionRequests;
-    }
-    return correctionRequests.filter((item) => item.status === requestFilter);
-  }, [correctionRequests, requestFilter]);
-  const totalRequestPages = useMemo(
-    () => Math.max(1, Math.ceil(filteredCorrectionRequests.length / REQUESTS_PAGE_SIZE)),
-    [filteredCorrectionRequests.length],
-  );
-  const safeRequestPage = Math.min(requestPage, totalRequestPages);
-  const paginatedCorrectionRequests = useMemo(() => {
-    const start = (safeRequestPage - 1) * REQUESTS_PAGE_SIZE;
-    return filteredCorrectionRequests.slice(start, start + REQUESTS_PAGE_SIZE);
-  }, [filteredCorrectionRequests, safeRequestPage]);
-
-  useEffect(() => {
-    setRequestPage(1);
-  }, [requestFilter, selectedMonth]);
 
   const activeRequests = openedFormDateIso
     ? correctionRequests.filter((item) => item.correctionDateISO === openedFormDateIso)
@@ -918,7 +881,8 @@ export function TimesheetOverview({
       const dayRequests = requestsByDate[dateIso] ?? [];
       const holiday = holidayByDate.get(dateIso) ?? null;
       const hasAttendanceData =
-        (meta?.checkIn && meta.checkIn !== "--:--") || (meta?.checkOut && meta.checkOut !== "--:--");
+        (meta?.checkIn && meta.checkIn !== "--:--") ||
+        (meta?.checkOut && meta.checkOut !== "--:--");
 
       let statusLabel = "Chưa có dữ liệu";
       if (holiday && !hasAttendanceData) {
@@ -1065,12 +1029,6 @@ export function TimesheetOverview({
         ))}
       </section>
 
-      {isProfileLoading || isLoadingAttendance ? (
-        <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
-          Đang tải dữ liệu chấm công...
-        </div>
-      ) : null}
-
       {profileError || attendanceError ? (
         <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {profileError || attendanceError}
@@ -1083,7 +1041,9 @@ export function TimesheetOverview({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setSelectedMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
+              onClick={() =>
+                setSelectedMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))
+              }
               className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
               ‹
@@ -1096,7 +1056,9 @@ export function TimesheetOverview({
             </button>
             <button
               type="button"
-              onClick={() => setSelectedMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
+              onClick={() =>
+                setSelectedMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))
+              }
               className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
               ›
@@ -1159,6 +1121,8 @@ export function TimesheetOverview({
             const isRemoteSource = meta?.sourceType === "remote";
             const holiday = meta?.holiday ?? holidayByDate.get(dateIso) ?? null;
             const isHolidayDate = Boolean(holiday);
+            const shouldShowMissingHoursLabel =
+              hasMissingHours && !isSundayColumn && !isHolidayDate;
             const missingHoursLabel =
               typeof meta?.missingMinutes === "number"
                 ? formatDurationLabel(meta.missingMinutes)
@@ -1193,7 +1157,10 @@ export function TimesheetOverview({
                       </Tooltip>
                     ) : null}
                   </div>
-                  {createRequestHref && hasMissingHours && !isSundayColumn ? (
+                  {createRequestHref &&
+                  hasMissingHours &&
+                  !isSundayColumn &&
+                  !isSelectedPastMonth ? (
                     <Tooltip
                       label={`Tạo yêu cầu điều chỉnh cho ngày ${formatDateVi(dateIso)}`}
                       withArrow
@@ -1213,38 +1180,38 @@ export function TimesheetOverview({
                       </ActionIcon>
                     </Tooltip>
                   ) : (
-                    <span className="h-7 w-7" />
+                    <span className="h-6 w-6" />
                   )}
                 </div>
 
                 <div className="mt-3 space-y-1 pr-0">
                   <div className="grid grid-cols-2 gap-1">
                     <p
-                      className={`rounded-md border px-1.5 py-0.5 text-center text-[11px] font-semibold ${
+                      className={`rounded-md border px-1.5 py-0.5 text-center text-[11px] leading-4 font-semibold ${
                         isSundayColumn
                           ? "border-slate-200 bg-slate-100 text-slate-400"
                           : isRemoteSource
                             ? "border-indigo-200 bg-indigo-50 text-indigo-700"
-                          : hasMissingHours
-                            ? "border-rose-200 bg-rose-50 text-rose-700"
-                          : isHolidayDate
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                            : "border-slate-200 bg-slate-50 text-slate-700"
+                            : hasMissingHours
+                              ? "border-rose-200 bg-rose-50 text-rose-700"
+                              : isHolidayDate
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                : "border-slate-200 bg-slate-50 text-slate-700"
                       }`}
                     >
                       {meta?.checkIn ?? "--:--"}
                     </p>
                     <p
-                      className={`rounded-md border px-1.5 py-0.5 text-center text-[11px] font-semibold ${
+                      className={`rounded-md border px-1.5 py-0.5 text-center text-[11px] leading-4 font-semibold ${
                         isSundayColumn
                           ? "border-slate-200 bg-slate-100 text-slate-400"
                           : isRemoteSource
                             ? "border-indigo-200 bg-indigo-50 text-indigo-700"
-                          : hasMissingHours
-                            ? "border-rose-200 bg-rose-50 text-rose-700"
-                          : isHolidayDate
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                            : "border-slate-200 bg-slate-50 text-slate-700"
+                            : hasMissingHours
+                              ? "border-rose-200 bg-rose-50 text-rose-700"
+                              : isHolidayDate
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                : "border-slate-200 bg-slate-50 text-slate-700"
                       }`}
                     >
                       {meta?.checkOut ?? "--:--"}
@@ -1259,11 +1226,13 @@ export function TimesheetOverview({
                     </div>
                   ) : null}
                   <p
-                    className={`text-center text-[11px] font-semibold text-rose-600 ${
-                      hasMissingHours && !isSundayColumn && !isHolidayDate ? "" : "hidden"
+                    className={`min-h-4 text-center text-[11px] leading-4 font-semibold ${
+                      shouldShowMissingHoursLabel ? "text-rose-600" : "invisible"
                     }`}
                   >
-                    Thiếu giờ: {missingHoursLabel}
+                    {shouldShowMissingHoursLabel
+                      ? `Thiếu giờ: ${missingHoursLabel}`
+                      : "Thiếu giờ: --"}
                   </p>
                 </div>
 
@@ -1282,149 +1251,6 @@ export function TimesheetOverview({
             );
           })}
         </div>
-      </section>
-
-      <section className="mt-5 rounded-2xl border border-slate-200 bg-white">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-4">
-          <h2 className="text-2xl font-semibold text-slate-900">Yêu cầu điều chỉnh công</h2>
-          <div className="inline-flex rounded-xl bg-slate-100 p-1">
-            <button
-              type="button"
-              onClick={() => setRequestFilter("all")}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                requestFilter === "all" ? "bg-white text-slate-700" : "text-slate-500"
-              }`}
-            >
-              Tất cả
-            </button>
-            <button
-              type="button"
-              onClick={() => setRequestFilter("pending")}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                requestFilter === "pending" ? "bg-white text-slate-700" : "text-slate-500"
-              }`}
-            >
-              Chờ duyệt
-            </button>
-            <button
-              type="button"
-              onClick={() => setRequestFilter("approved")}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                requestFilter === "approved" ? "bg-white text-slate-700" : "text-slate-500"
-              }`}
-            >
-              Đã duyệt
-            </button>
-            <button
-              type="button"
-              onClick={() => setRequestFilter("rejected")}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                requestFilter === "rejected" ? "bg-white text-slate-700" : "text-slate-500"
-              }`}
-            >
-              Từ chối
-            </button>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[920px] text-left">
-            <thead>
-              <tr className="text-xs tracking-[0.08em] text-slate-400 uppercase">
-                <th className="px-5 py-3 font-semibold">Ngày gửi</th>
-                <th className="px-5 py-3 font-semibold">Ngày cần sửa</th>
-                <th className="px-5 py-3 font-semibold">Loại điều chỉnh</th>
-                <th className="px-5 py-3 font-semibold">Lý do</th>
-                <th className="px-5 py-3 font-semibold">Trạng thái</th>
-                <th className="px-5 py-3 font-semibold text-right">Thao tác</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isProfileLoading || isLoadingRequests ? (
-                <tr className="border-t border-slate-100">
-                  <td colSpan={6} className="px-5 py-8 text-center text-sm text-slate-500">
-                    Đang tải yêu cầu...
-                  </td>
-                </tr>
-              ) : profileError || requestsError ? (
-                <tr className="border-t border-slate-100">
-                  <td colSpan={6} className="px-5 py-8 text-center text-sm text-rose-600">
-                    {profileError || requestsError}
-                  </td>
-                </tr>
-              ) : filteredCorrectionRequests.length === 0 ? (
-                <tr className="border-t border-slate-100">
-                  <td colSpan={6} className="px-5 py-8 text-center text-sm text-slate-500">
-                    Chưa có yêu cầu điều chỉnh công.
-                  </td>
-                </tr>
-              ) : (
-                paginatedCorrectionRequests.map((item) => (
-                  <tr key={item.id} className="border-t border-slate-100">
-                    <td className="px-5 py-4 text-sm font-medium text-slate-700">
-                      {formatDateVi(item.requestDateISO)}
-                    </td>
-                    <td className="px-5 py-4 text-sm text-slate-600">
-                      <div className="space-y-1">
-                        <p>{formatDateVi(item.correctionDateISO)}</p>
-                        {holidayByDate.has(item.correctionDateISO) ? (
-                          <>
-                            <span className="inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-                              Ngày nghỉ
-                            </span>
-                            {holidayByDate.get(item.correctionDateISO)?.name?.trim() ? (
-                              <p className="text-[11px] text-emerald-700">
-                                {holidayByDate.get(item.correctionDateISO)?.name?.trim()}
-                              </p>
-                            ) : null}
-                          </>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td className="px-5 py-4">
-                      <span className="rounded bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">
-                        {item.type}
-                      </span>
-                    </td>
-                    <td className="px-5 py-4 text-sm text-slate-500">
-                      <p className="max-w-[280px] truncate">{item.reason}</p>
-                    </td>
-                    <td className="px-5 py-4">
-                      <RequestStatus status={item.status} />
-                    </td>
-                    <td className="px-5 py-4 text-right text-lg text-slate-400">◉</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-        {filteredCorrectionRequests.length > 0 ? (
-          <div className="flex items-center justify-between border-t border-slate-100 px-5 py-3 text-sm">
-            <p className="text-slate-500">
-              Trang {safeRequestPage}/{totalRequestPages} · {filteredCorrectionRequests.length} yêu
-              cầu
-            </p>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setRequestPage((prev) => Math.max(1, prev - 1))}
-                disabled={safeRequestPage <= 1}
-                className="h-9 rounded-lg border border-slate-200 bg-white px-3 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Trước
-              </button>
-              <button
-                type="button"
-                onClick={() => setRequestPage((prev) => Math.min(totalRequestPages, prev + 1))}
-                disabled={safeRequestPage >= totalRequestPages}
-                className="h-9 rounded-lg border border-slate-200 bg-white px-3 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Sau
-              </button>
-            </div>
-          </div>
-        ) : null}
       </section>
 
       {openedFormDateIso ? (
@@ -1471,9 +1297,11 @@ export function TimesheetOverview({
                       </div>
                       <RequestStatus status={item.status} />
                     </div>
-                    {item.typeValue === "remote" && hasValidRemoteWindow(item.remoteCheckIn, item.remoteCheckOut) ? (
+                    {item.typeValue === "remote" &&
+                    hasValidRemoteWindow(item.remoteCheckIn, item.remoteCheckOut) ? (
                       <p className="mt-2 text-xs font-medium text-indigo-600">
-                        Làm việc từ xa: {toLocalTimeHHmm(item.remoteCheckIn)} - {toLocalTimeHHmm(item.remoteCheckOut)}
+                        Làm việc từ xa: {toLocalTimeHHmm(item.remoteCheckIn)} -{" "}
+                        {toLocalTimeHHmm(item.remoteCheckOut)}
                       </p>
                     ) : null}
                     <p className="mt-2 text-sm text-slate-700">{item.reason}</p>

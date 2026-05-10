@@ -112,7 +112,7 @@ export default function ChangePasswordPage() {
                         currentPassword: event.target.value,
                       }))
                     }
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                     placeholder="Không bắt buộc"
                   />
                 </div>
@@ -128,7 +128,7 @@ export default function ChangePasswordPage() {
                         newPassword: event.target.value,
                       }))
                     }
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                     placeholder="Tối thiểu 8 ký tự"
                   />
                 </div>
@@ -144,7 +144,7 @@ export default function ChangePasswordPage() {
                         confirmPassword: event.target.value,
                       }))
                     }
-                    className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                     placeholder="Nhập lại mật khẩu mới"
                   />
                 </div>

@@ -185,12 +185,12 @@ const defaultPayload: DashboardPayload = {
   upcomingDeadlines: [],
   recentActivities: [],
   weeklyPerformance: {
-    title: "Công việc tuần này",
+    title: "Task tuần này",
     completedTasks: 0,
     totalTasks: 0,
     progress: 0,
     note: null,
-    ctaLabel: "Xem công việc",
+    ctaLabel: "Xem danh sách task",
     ctaHref: "/tasks",
   },
 };
@@ -1090,6 +1090,7 @@ export function useDashboardData() {
             return {
               id: task.id,
               name: task.name,
+              progress: task.progress,
               statusLabel: badgeMeta.statusLabel,
               statusClassName: badgeMeta.statusClassName,
               priorityLabel: badgeMeta.priorityLabel,

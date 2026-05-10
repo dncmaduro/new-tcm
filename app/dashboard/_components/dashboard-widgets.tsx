@@ -69,15 +69,11 @@ function CardState({
   }
 
   if (error) {
-    return (
-      <div className="px-5 py-10 text-sm text-slate-500">
-        Không tải được dữ liệu. Vui lòng thử lại.
-      </div>
-    );
+    return <div className="px-5 py-10 text-sm text-slate-500">Không có data</div>;
   }
 
   if (empty) {
-    return <div className="px-5 py-10 text-sm text-slate-500">{emptyText}</div>;
+    return <div className="px-5 py-10 text-sm text-slate-500">Không có data</div>;
   }
 
   return null;
@@ -198,7 +194,7 @@ export function DashboardPriorityTasks({
           loading={loading}
           error={error}
           empty={tasks.length === 0}
-          emptyText="Không có công việc cần xử lý ngay."
+          emptyText="Không có data"
         />
       ) : (
         <div className="divide-y divide-slate-100">
@@ -250,57 +246,44 @@ export function DashboardGoalProgress({
   error: string | null;
 }) {
   return (
-    <CardShell
-      title={title}
-      action={
-        <Link href={actionHref} className="text-sm font-semibold text-blue-600 hover:text-blue-700">
-          {actionLabel}
-        </Link>
-      }
-    >
+	    <CardShell
+	      title={title}
+	      action={
+	        <Link href={actionHref} className="text-sm font-semibold text-blue-600 hover:text-blue-700">
+	          {actionLabel}
+	        </Link>
+	      }
+	    >
       {loading || error || items.length === 0 ? (
         <CardState
           loading={loading}
           error={error}
           empty={items.length === 0}
-          emptyText="Chưa có dữ liệu."
+          emptyText="Không có data"
         />
-      ) : (
-        <div className="space-y-5 px-5 py-5">
-          {items.map((item) => (
-            <div key={item.id} className="space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <p className="text-sm font-semibold text-slate-900">{item.label}</p>
-                {item.href ? (
-                  <Link
-                    href={item.href}
-                    className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 transition hover:border-blue-200 hover:text-blue-700"
-                  >
-                    Xem
-                  </Link>
-                ) : null}
-              </div>
-              <div className="flex items-center justify-between gap-3 text-sm">
-                <span className="text-slate-500">Tiến độ</span>
-                <span className="font-semibold text-slate-900">{item.progress}%</span>
-              </div>
-              <ProgressBar
-                value={item.progress}
-                tone={item.progress >= 80 ? "emerald" : item.progress >= 50 ? "blue" : "amber"}
-              />
-              <div className="flex items-center justify-between gap-3 text-sm">
-                <span className="text-slate-500">Hạn</span>
-                <span className="font-medium text-slate-700">
-                  {item.endDateAt ? formatDateShortVi(item.endDateAt) : item.timeLabel}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </CardShell>
-  );
-}
+	      ) : (
+	        <div className="space-y-5 px-5 py-5">
+	          {items.map((item) => (
+	            <div key={item.id} className="space-y-3">
+	              <div className="flex items-center justify-between gap-3">
+	                <p className="min-w-0 truncate text-sm font-semibold text-slate-900">
+	                  {item.label}
+	                </p>
+	                <span className="shrink-0 text-sm font-semibold text-slate-900">
+	                  {item.progress}%
+	                </span>
+	              </div>
+	              <ProgressBar
+	                value={item.progress}
+	                tone={item.progress >= 80 ? "emerald" : item.progress >= 50 ? "blue" : "amber"}
+	              />
+	            </div>
+	          ))}
+	        </div>
+	      )}
+	    </CardShell>
+	  );
+	}
 
 export function DashboardCompletedTrend({
   points,
@@ -321,7 +304,7 @@ export function DashboardCompletedTrend({
           loading={loading}
           error={error}
           empty={!hasData}
-          emptyText="Chưa có dữ liệu để hiển thị."
+          emptyText="Không có data"
         />
       ) : (
         <div className="px-5 py-5">
@@ -378,29 +361,17 @@ export function DashboardAttendanceToday({
     : data.workedMinutes;
 
   return (
-    <CardShell
-      title="Chấm công hôm nay"
-      action={
-        <Link href="/timesheet" className="text-sm font-semibold text-blue-600 hover:text-blue-700">
-          Chấm công
-        </Link>
-      }
-    >
+    <CardShell title="Chấm công hôm nay">
       {loading || error || (data.empty && !data.isHoliday) ? (
         <CardState
           loading={loading}
           error={error}
           empty={data.empty && !data.isHoliday}
-          emptyText="Chưa có dữ liệu chấm công hôm nay."
+          emptyText="Không có data"
         />
       ) : (
         <div className="space-y-4 px-5 py-5">
-          <div className="rounded-xl bg-slate-50 p-3">
-            <p className="text-xs text-slate-400">Trạng thái</p>
-            <p className="mt-1 text-lg font-semibold text-slate-900">{data.statusLabel}</p>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-xl bg-slate-50 p-3">
               <p className="text-xs text-slate-400">Giờ vào</p>
               <p className="mt-1 text-base font-semibold text-slate-900">
@@ -412,17 +383,6 @@ export function DashboardAttendanceToday({
               <p className="mt-1 text-base font-semibold text-slate-900">
                 {formatTimeVi(data.checkOutAt)}
               </p>
-            </div>
-            <div className="rounded-xl bg-slate-50 p-3">
-              <p className="text-xs text-slate-400">Tổng thời gian</p>
-              <div className="mt-1 flex items-end justify-between gap-3">
-                <p className="text-base font-semibold text-slate-900">
-                  {formatDurationClock(workedMinutes * 60)}
-                </p>
-                <span className="text-sm font-semibold text-slate-500">
-                  {formatHoursShort(workedMinutes)}
-                </span>
-              </div>
             </div>
           </div>
         </div>
@@ -454,19 +414,22 @@ export function DashboardUpcomingDeadlines({
           loading={loading}
           error={error}
           empty={items.length === 0}
-          emptyText="Không có hạn cần theo dõi."
+          emptyText="Không có data"
         />
       ) : (
-        <div className="divide-y divide-slate-100">
+        <div className="space-y-5 px-5 py-5">
           {items.map((item) => (
-            <div key={item.id} className="flex items-start justify-between gap-3 px-5 py-4">
-              <Link
-                href={`/tasks/${item.id}`}
-                className="text-sm font-semibold text-slate-900 hover:text-blue-700"
-              >
+            <div key={item.id} className="space-y-3">
+              <Link href={`/tasks/${item.id}`} className="text-sm font-semibold text-slate-900 hover:text-blue-700">
                 {item.name}
               </Link>
-              <span className="text-sm text-slate-500">{formatDateShortVi(item.dueDateAt)}</span>
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="font-semibold text-slate-900">{item.progress}%</span>
+              </div>
+              <ProgressBar
+                value={item.progress}
+                tone={item.progress >= 80 ? "emerald" : item.progress >= 50 ? "blue" : "amber"}
+              />
             </div>
           ))}
         </div>
@@ -491,7 +454,7 @@ export function DashboardRecentActivities({
           loading={loading}
           error={error}
           empty={items.length === 0}
-          emptyText="Chưa có hoạt động gần đây."
+          emptyText="Không có data"
         />
       ) : (
         <div className="divide-y divide-slate-100">

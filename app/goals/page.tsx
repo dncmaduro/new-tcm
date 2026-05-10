@@ -12,8 +12,10 @@ import {
   useState,
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Info } from "lucide-react";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -42,6 +44,11 @@ import { formatTimelineRangeVi } from "@/lib/timeline";
 
 type Mode = "canvas" | "list";
 const GOALS_LIST_PAGE_SIZE = 10;
+type ListFilterChip = {
+  key: "department" | "type" | "status" | "quarter" | "year";
+  label: string;
+  value: string;
+};
 
 type GoalKeyResultPreview = {
   id: string;
@@ -709,7 +716,7 @@ const getCanvasConnectorPath = (fromNode: CanvasEdgeFrame, toNode: CanvasEdgeFra
 
 function ProgressBar({ value }: { value: number }) {
   return (
-    <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+    <div className="h-2 w-full  rounded-full bg-slate-100">
       <div className="h-full rounded-full bg-blue-600" style={{ width: `${value}%` }} />
     </div>
   );
@@ -812,6 +819,88 @@ function GoalsPageContent() {
         ...new Set(nodes.map((node) => node.year).filter((year): year is number => year !== null)),
       ].sort((a, b) => b - a),
     [nodes],
+  );
+
+  const clearListFilters = useCallback(() => {
+    setKeywordFilter("");
+    setDepartmentFilter("all");
+    setTypeFilter("all");
+    setStatusFilter("all");
+  }, []);
+
+  const clearAllFilters = useCallback(() => {
+    clearListFilters();
+    setQuarterFilter("all");
+    setYearFilter("all");
+  }, [clearListFilters]);
+
+  const listSelectFilterCount = useMemo(() => {
+    let count = 0;
+    if (departmentFilter !== "all") {
+      count += 1;
+    }
+    if (typeFilter !== "all") {
+      count += 1;
+    }
+    if (statusFilter !== "all") {
+      count += 1;
+    }
+    if (quarterFilter !== "all") {
+      count += 1;
+    }
+    if (yearFilter !== "all") {
+      count += 1;
+    }
+    return count;
+  }, [departmentFilter, quarterFilter, statusFilter, typeFilter, yearFilter]);
+
+  const listFilterChips = useMemo<ListFilterChip[]>(() => {
+    const chips: ListFilterChip[] = [];
+
+    if (departmentFilter !== "all") {
+      chips.push({
+        key: "department",
+        label: "Phòng ban",
+        value: departmentFilter,
+      });
+    }
+    if (typeFilter !== "all") {
+      chips.push({
+        key: "type",
+        label: "Loại",
+        value: formatGoalTypeLabel(normalizeGoalTypeValue(typeFilter)),
+      });
+    }
+    if (statusFilter !== "all") {
+      const statusLabel =
+        GOAL_STATUSES.find((item) => item.value === statusFilter)?.label ?? statusFilter;
+      chips.push({
+        key: "status",
+        label: "Trạng thái",
+        value: statusLabel,
+      });
+    }
+    if (quarterFilter !== "all") {
+      chips.push({
+        key: "quarter",
+        label: "Quý",
+        value: `Q${quarterFilter}`,
+      });
+    }
+    if (yearFilter !== "all") {
+      chips.push({
+        key: "year",
+        label: "Năm",
+        value: yearFilter,
+      });
+    }
+
+    return chips;
+  }, [departmentFilter, quarterFilter, statusFilter, typeFilter, yearFilter]);
+
+  const hasAnyActiveListFilter = useMemo(
+    () => keywordFilter.trim().length > 0 || listSelectFilterCount > 0,
+    [keywordFilter, listSelectFilterCount],
   );
 
   const filteredNodes = useMemo(() => {
@@ -1871,6 +1960,13 @@ function GoalsPageContent() {
     router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false });
   };
 
+  const handleViewModeChange = (nextMode: Mode) => {
+    if (nextMode === mode) {
+      return;
+    }
+    updateUrlState({ nextMode });
+  };
+
   const consumeSuppressedCanvasClick = () => {
     if (!suppressCanvasClickRef.current) {
       return false;
@@ -1962,9 +2058,31 @@ function GoalsPageContent() {
       const nextY =
         (event.clientY - rect.top - dragOffsetRef.current.y - currentViewportOffset.y) /
         currentCanvasScale;
+      const dragPadding = 12;
       if (draggingTarget.type === "goal") {
-        const clampedX = Math.max(20, Math.min(nextX, WORLD_WIDTH - CARD_WIDTH - 20));
-        const clampedY = Math.max(20, Math.min(nextY, WORLD_HEIGHT - CARD_HEIGHT - 20));
+        const cardScreenWidth = CARD_WIDTH * currentCanvasScale;
+        const cardScreenHeight = CARD_HEIGHT * currentCanvasScale;
+        const unclampedScreenLeft =
+          rect.left + currentViewportOffset.x + nextX * currentCanvasScale;
+        const unclampedScreenTop = rect.top + currentViewportOffset.y + nextY * currentCanvasScale;
+        const clampedScreenLeft = Math.max(
+          rect.left + dragPadding,
+          Math.min(unclampedScreenLeft, rect.right - cardScreenWidth - dragPadding),
+        );
+        const clampedScreenTop = Math.max(
+          rect.top + dragPadding,
+          Math.min(unclampedScreenTop, rect.bottom - cardScreenHeight - dragPadding),
+        );
+        const viewportClampedX =
+          (clampedScreenLeft - rect.left - currentViewportOffset.x) / currentCanvasScale;
+        const viewportClampedY =
+          (clampedScreenTop - rect.top - currentViewportOffset.y) / currentCanvasScale;
+        const worldMinX = 20;
+        const worldMaxX = WORLD_WIDTH - CARD_WIDTH - 20;
+        const worldMinY = 20;
+        const worldMaxY = WORLD_HEIGHT - CARD_HEIGHT - 20;
+        const clampedX = Math.max(worldMinX, Math.min(viewportClampedX, worldMaxX));
+        const clampedY = Math.max(worldMinY, Math.min(viewportClampedY, worldMaxY));
 
         pendingGoalPositionRef.current = {
           id: draggingTarget.id,
@@ -1977,8 +2095,28 @@ function GoalsPageContent() {
         return;
       }
 
-      const clampedX = Math.max(20, Math.min(nextX, WORLD_WIDTH - KR_CARD_WIDTH - 20));
-      const clampedY = Math.max(20, Math.min(nextY, WORLD_HEIGHT - KR_CARD_HEIGHT - 20));
+      const cardScreenWidth = KR_CARD_WIDTH * currentCanvasScale;
+      const cardScreenHeight = KR_CARD_HEIGHT * currentCanvasScale;
+      const unclampedScreenLeft = rect.left + currentViewportOffset.x + nextX * currentCanvasScale;
+      const unclampedScreenTop = rect.top + currentViewportOffset.y + nextY * currentCanvasScale;
+      const clampedScreenLeft = Math.max(
+        rect.left + dragPadding,
+        Math.min(unclampedScreenLeft, rect.right - cardScreenWidth - dragPadding),
+      );
+      const clampedScreenTop = Math.max(
+        rect.top + dragPadding,
+        Math.min(unclampedScreenTop, rect.bottom - cardScreenHeight - dragPadding),
+      );
+      const viewportClampedX =
+        (clampedScreenLeft - rect.left - currentViewportOffset.x) / currentCanvasScale;
+      const viewportClampedY =
+        (clampedScreenTop - rect.top - currentViewportOffset.y) / currentCanvasScale;
+      const worldMinX = 20;
+      const worldMaxX = WORLD_WIDTH - KR_CARD_WIDTH - 20;
+      const worldMinY = 20;
+      const worldMaxY = WORLD_HEIGHT - KR_CARD_HEIGHT - 20;
+      const clampedX = Math.max(worldMinX, Math.min(viewportClampedX, worldMaxX));
+      const clampedY = Math.max(worldMinY, Math.min(viewportClampedY, worldMaxY));
       pendingKeyResultPositionRef.current = {
         id: draggingTarget.id,
         position: {
@@ -2033,6 +2171,7 @@ function GoalsPageContent() {
     }
 
     event.preventDefault();
+    event.stopPropagation();
     const rect = canvasRef.current.getBoundingClientRect();
     const pointer = {
       x: event.clientX - rect.left,
@@ -2234,58 +2373,123 @@ function GoalsPageContent() {
 
   return (
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
-      <div className="flex min-h-screen w-full">
+      <div className="flex h-screen w-full overflow-hidden">
         <WorkspaceSidebar active="goals" />
 
-        <div className="flex h-screen w-full flex-1 flex-col overflow-hidden lg:pl-[var(--workspace-sidebar-width)]">
+        <div className="flex h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <main
-            className={`grid h-screen w-full ${
+            className={`grid h-screen w-full overflow-hidden ${
               isDetailOpen ? "xl:grid-cols-[minmax(0,1fr)_390px]" : "xl:grid-cols-1"
             }`}
           >
-            <section className="flex min-h-0 flex-col border-r border-slate-200">
+            <section className="flex min-h-0 flex-col overflow-hidden border-r border-slate-200">
               <WorkspacePageHeader title="Mục tiêu" items={[{ label: "Mục tiêu" }]} />
 
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-[#f3f5fa] px-4 py-4 lg:px-7">
-                <div className="rounded-xl border border-slate-200 bg-white p-1">
-                  <button
-                    type="button"
-                    onClick={() => updateUrlState({ nextMode: "canvas" })}
-                    className={`rounded-lg px-4 py-1.5 text-sm font-semibold transition ${
-                      mode === "canvas"
-                        ? "bg-slate-100 text-slate-900"
-                        : "text-slate-500 hover:text-slate-800"
-                    }`}
-                  >
-                    Canvas
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => updateUrlState({ nextMode: "list" })}
-                    className={`rounded-lg px-4 py-1.5 text-sm font-semibold transition ${
-                      mode === "list"
-                        ? "bg-slate-100 text-slate-900"
-                        : "text-slate-500 hover:text-slate-800"
-                    }`}
-                  >
-                    Danh sách
-                  </button>
+              <div className="border-b border-slate-200 bg-[#f3f5fa] px-4 lg:px-7">
+                <div className="flex flex-wrap items-center justify-between gap-3 py-4">
+                  <div className="inline-flex h-10 items-center rounded-xl bg-slate-100 p-1">
+                    <button
+                      type="button"
+                      onClick={() => handleViewModeChange("canvas")}
+                      className={`inline-flex h-8 items-center rounded-lg px-4 text-sm font-semibold transition ${
+                        mode === "canvas"
+                          ? "bg-white text-slate-900 shadow-sm"
+                          : "text-slate-500 hover:text-slate-700"
+                      }`}
+                    >
+                      Sơ đồ
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleViewModeChange("list")}
+                      className={`inline-flex h-8 items-center rounded-lg px-4 text-sm font-semibold transition ${
+                        mode === "list"
+                          ? "bg-white text-slate-900 shadow-sm"
+                          : "text-slate-500 hover:text-slate-700"
+                      }`}
+                    >
+                      Danh sách
+                    </button>
+                  </div>
+
+                  {!isCheckingCreatePermission && canCreateGoal ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const defaultDepartmentId = rootDepartments[0]?.id;
+                        const next = defaultDepartmentId
+                          ? `/goals/new?departmentId=${defaultDepartmentId}`
+                          : "/goals/new";
+                        router.push(next);
+                      }}
+                      className="h-10 cursor-pointer rounded-xl bg-blue-600 px-5 text-sm font-medium text-white transition hover:bg-blue-700"
+                    >
+                      Thêm mục tiêu
+                    </button>
+                  ) : null}
                 </div>
 
-                {!isCheckingCreatePermission && canCreateGoal ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const defaultDepartmentId = rootDepartments[0]?.id;
-                      const next = defaultDepartmentId
-                        ? `/goals/new?departmentId=${defaultDepartmentId}`
-                        : "/goals/new";
-                      router.push(next);
-                    }}
-                    className="h-9 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
-                  >
-                    + Thêm mục tiêu
-                  </button>
+                {mode === "canvas" ? (
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/80 py-3">
+                    <div className="flex flex-1 flex-wrap items-center gap-3">
+                      <Select value={quarterFilter} onValueChange={setQuarterFilter}>
+                        <SelectTrigger className="h-10 w-full sm:w-[180px] lg:w-[170px] border-slate-200 bg-white text-sm text-slate-700 shadow-none hover:border-slate-300 focus-visible:border-blue-400 focus-visible:ring-2 focus-visible:ring-blue-100">
+                          <SelectValue placeholder="Tất cả quý" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Tất cả quý</SelectItem>
+                          <SelectItem value="1">Q1</SelectItem>
+                          <SelectItem value="2">Q2</SelectItem>
+                          <SelectItem value="3">Q3</SelectItem>
+                          <SelectItem value="4">Q4</SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      <Select value={yearFilter} onValueChange={setYearFilter}>
+                        <SelectTrigger className="h-10 w-full sm:w-[180px] lg:w-[170px] border-slate-200 bg-white text-sm text-slate-700 shadow-none hover:border-slate-300 focus-visible:border-blue-400 focus-visible:ring-2 focus-visible:ring-blue-100">
+                          <SelectValue placeholder="Tất cả năm" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Tất cả năm</SelectItem>
+                          {yearFilterOptions.map((year) => (
+                            <SelectItem key={year} value={String(year)}>
+                              {year}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="inline-flex h-10 items-center overflow-hidden rounded-xl border border-slate-200 bg-white">
+                      <button
+                        type="button"
+                        onClick={() => applyCanvasZoom(canvasScaleRef.current - 0.08)}
+                        className="inline-flex h-full w-10 items-center justify-center text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-800"
+                      >
+                        -
+                      </button>
+                      <div className="flex h-full items-center gap-2 border-x border-slate-200 px-3">
+                        <button
+                          type="button"
+                          onClick={fitCanvasToNodes}
+                          disabled={filteredNodes.length === 0}
+                          className="text-sm font-medium text-slate-600 transition hover:text-slate-800 disabled:cursor-not-allowed disabled:text-slate-400"
+                        >
+                          Vừa khung
+                        </button>
+                        <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-500">
+                          Thu phóng {Math.round(canvasScale * 100)}%
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => applyCanvasZoom(canvasScaleRef.current + 0.08)}
+                        className="inline-flex h-full w-10 items-center justify-center text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-800"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
                 ) : null}
               </div>
 
@@ -2300,7 +2504,7 @@ function GoalsPageContent() {
                 </div>
               ) : null}
 
-              <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
                 {isLoadingGoals ? (
                   <div className="p-4 lg:p-7">
                     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 text-sm text-slate-600">
@@ -2321,85 +2525,6 @@ function GoalsPageContent() {
                   </div>
                 ) : mode === "canvas" ? (
                   <div className="space-y-4 p-4 lg:p-7">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex flex-wrap items-center gap-3">
-                        <p className="text-sm text-slate-500">
-                          Click item để focus cụm. Kéo từng card Goal hoặc KR để di chuyển riêng.
-                          Lăn chuột để zoom.
-                        </p>
-                        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5">
-                          <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                            Quý
-                          </span>
-                          <Select value={quarterFilter} onValueChange={setQuarterFilter}>
-                            <SelectTrigger className="h-8 min-w-[110px] border-none bg-transparent px-2 py-0 text-sm shadow-none focus-visible:ring-0">
-                              <SelectValue placeholder="Tất cả quý" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="all">Tất cả quý</SelectItem>
-                              <SelectItem value="1">Q1</SelectItem>
-                              <SelectItem value="2">Q2</SelectItem>
-                              <SelectItem value="3">Q3</SelectItem>
-                              <SelectItem value="4">Q4</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                            Năm
-                          </span>
-                          <Select value={yearFilter} onValueChange={setYearFilter}>
-                            <SelectTrigger className="h-8 min-w-[110px] border-none bg-transparent px-2 py-0 text-sm shadow-none focus-visible:ring-0">
-                              <SelectValue placeholder="Tất cả năm" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="all">Tất cả năm</SelectItem>
-                              {yearFilterOptions.map((year) => (
-                                <SelectItem key={year} value={String(year)}>
-                                  {year}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setQuarterFilter("all");
-                              setYearFilter("all");
-                            }}
-                            disabled={quarterFilter === "all" && yearFilter === "all"}
-                            className="h-8 rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            Xóa lọc
-                          </button>
-                        </div>
-                      </div>
-                      <div className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1">
-                        <button
-                          type="button"
-                          onClick={() => applyCanvasZoom(canvasScaleRef.current - 0.08)}
-                          className="h-7 w-7 rounded text-sm font-semibold text-slate-600 hover:bg-slate-100"
-                        >
-                          −
-                        </button>
-                        <button
-                          type="button"
-                          onClick={fitCanvasToNodes}
-                          disabled={filteredNodes.length === 0}
-                          className="h-7 rounded px-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                        >
-                          Vừa khung
-                        </button>
-                        <span className="inline-flex h-7 items-center rounded bg-slate-100 px-2 text-[11px] font-semibold text-slate-500">
-                          Thu phóng {Math.round(canvasScale * 100)}%
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => applyCanvasZoom(canvasScaleRef.current + 0.08)}
-                          className="h-7 w-7 rounded text-sm font-semibold text-slate-600 hover:bg-slate-100"
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
                     {filteredNodes.length === 0 ? (
                       <div className="flex h-[700px] items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-600">
                         Không có mục tiêu phù hợp với bộ lọc hiện tại.
@@ -2412,116 +2537,129 @@ function GoalsPageContent() {
                         onPointerUp={onPointerUpCanvas}
                         onPointerCancel={onPointerUpCanvas}
                         onWheel={onWheelCanvas}
-                        className={`relative h-[700px] overflow-hidden rounded-2xl border border-slate-200 bg-[#fbfcff] ${
+                        className={`relative h-[700px] overflow-hidden overscroll-contain rounded-2xl border border-slate-200 bg-[#fbfcff] select-none ${
                           isPanning || draggingTarget ? "cursor-grabbing" : "cursor-grab"
                         }`}
-                        style={{ touchAction: "none" }}
+                        style={{
+                          touchAction: "none",
+                          backgroundImage: "radial-gradient(#dbe4f3 1.1px, transparent 1.1px)",
+                          backgroundSize: "36px 36px",
+                        }}
                       >
-                        <div
-                          className="absolute left-0 top-0"
-                          style={{
-                            width: WORLD_WIDTH,
-                            height: WORLD_HEIGHT,
-                            transform: `translate(${viewportOffset.x}px, ${viewportOffset.y}px) scale(${canvasScale})`,
-                            transformOrigin: "0 0",
-                            willChange: isPanning || draggingTarget ? "transform" : "auto",
-                            backgroundImage: "radial-gradient(#dbe4f3 1.1px, transparent 1.1px)",
-                            backgroundSize: "36px 36px",
-                          }}
-                        >
-                          <svg
-                            className="pointer-events-none absolute inset-0"
-                            style={{ width: WORLD_WIDTH, height: WORLD_HEIGHT }}
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              aria-label="Hướng dẫn thao tác sơ đồ"
+                              onPointerDown={(event) => event.stopPropagation()}
+                              onWheel={(event) => event.stopPropagation()}
+                              className="absolute left-4 top-4 z-20 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white/90 text-slate-600 shadow-sm backdrop-blur transition hover:bg-white hover:text-slate-800"
+                            >
+                              <Info className="h-4 w-4" />
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            className="w-[320px] space-y-2 p-3 text-xs text-slate-600"
+                            align="start"
                           >
-                            {edges.map((edge) => {
-                              const fromGoalNode = goalNodeMap[edge.from];
-                              const fromKeyResultNode = canvasKeyResultNodeMap[edge.from];
-                              const toNode = canvasKeyResultNodeMap[edge.to];
-                              const fromNode = fromGoalNode
-                                ? {
-                                    x: fromGoalNode.x,
-                                    y: fromGoalNode.y,
-                                    width: CARD_WIDTH,
-                                    height: CARD_HEIGHT,
-                                  }
-                                : fromKeyResultNode
+                            <p className="font-semibold text-slate-800">Hướng dẫn thao tác</p>
+                            <ul className="list-disc space-y-1 pl-4">
+                              <li>Nhấp vào một mục để tập trung cụm.</li>
+                              <li>Kéo từng thẻ Mục tiêu hoặc KR để di chuyển riêng.</li>
+                              <li>Lăn chuột để phóng to/thu nhỏ.</li>
+                            </ul>
+                          </PopoverContent>
+                        </Popover>
+                        <div className="absolute inset-0 overflow-hidden">
+                          <div
+                            className="absolute left-0 top-0"
+                            style={{
+                              width: WORLD_WIDTH,
+                              height: WORLD_HEIGHT,
+                              transform: `translate(${viewportOffset.x}px, ${viewportOffset.y}px) scale(${canvasScale})`,
+                              transformOrigin: "0 0",
+                              willChange: isPanning || draggingTarget ? "transform" : "auto",
+                            }}
+                          >
+                            <svg
+                              className="pointer-events-none absolute inset-0"
+                              style={{ width: WORLD_WIDTH, height: WORLD_HEIGHT }}
+                            >
+                              {edges.map((edge) => {
+                                const fromGoalNode = goalNodeMap[edge.from];
+                                const fromKeyResultNode = canvasKeyResultNodeMap[edge.from];
+                                const toNode = canvasKeyResultNodeMap[edge.to];
+                                const fromNode = fromGoalNode
                                   ? {
-                                      x: fromKeyResultNode.x,
-                                      y: fromKeyResultNode.y,
-                                      width: KR_CARD_WIDTH,
-                                      height: KR_CARD_HEIGHT,
+                                      x: fromGoalNode.x,
+                                      y: fromGoalNode.y,
+                                      width: CARD_WIDTH,
+                                      height: CARD_HEIGHT,
                                     }
-                                  : null;
-                              if (!fromNode || !toNode) {
-                                return null;
-                              }
-
-                              const connectorPath = getCanvasConnectorPath(fromNode, {
-                                x: toNode.x,
-                                y: toNode.y,
-                                width: KR_CARD_WIDTH,
-                                height: KR_CARD_HEIGHT,
-                              });
-
-                              return (
-                                <path
-                                  key={`${edge.from}-${edge.to}`}
-                                  d={connectorPath}
-                                  stroke="#8ea8d2"
-                                  strokeWidth="2.8"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  fill="none"
-                                />
-                              );
-                            })}
-                          </svg>
-
-                          {canvasKeyResultNodes.map((keyResultNode) => (
-                            <div
-                              key={keyResultNode.id}
-                              style={{
-                                left: keyResultNode.x,
-                                top: keyResultNode.y,
-                                width: KR_CARD_WIDTH,
-                                minHeight: KR_CARD_HEIGHT,
-                              }}
-                              role="button"
-                              tabIndex={0}
-                              onPointerDown={(event) =>
-                                startDraggingCanvasCard(
-                                  event,
-                                  {
-                                    type: "key_result",
-                                    id: keyResultNode.id,
-                                    goalId: keyResultNode.goalId,
-                                    keyResultId: keyResultNode.keyResultId,
-                                  },
-                                  {
-                                    x: keyResultNode.x,
-                                    y: keyResultNode.y,
-                                  },
-                                )
-                              }
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                if (consumeSuppressedCanvasClick()) {
-                                  return;
+                                  : fromKeyResultNode
+                                    ? {
+                                        x: fromKeyResultNode.x,
+                                        y: fromKeyResultNode.y,
+                                        width: KR_CARD_WIDTH,
+                                        height: KR_CARD_HEIGHT,
+                                      }
+                                    : null;
+                                if (!fromNode || !toNode) {
+                                  return null;
                                 }
-                                updateUrlState({
-                                  nextGoalId: keyResultNode.goalId,
-                                  nextKeyResultId: keyResultNode.keyResultId,
-                                  nextDetailOpen: true,
+
+                                const connectorPath = getCanvasConnectorPath(fromNode, {
+                                  x: toNode.x,
+                                  y: toNode.y,
+                                  width: KR_CARD_WIDTH,
+                                  height: KR_CARD_HEIGHT,
                                 });
-                                focusCanvasCluster({
-                                  type: "key_result",
-                                  goalId: keyResultNode.goalId,
-                                  keyResultId: keyResultNode.keyResultId,
-                                });
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter" || event.key === " ") {
-                                  event.preventDefault();
+
+                                return (
+                                  <path
+                                    key={`${edge.from}-${edge.to}`}
+                                    d={connectorPath}
+                                    stroke="#8ea8d2"
+                                    strokeWidth="2.8"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    fill="none"
+                                  />
+                                );
+                              })}
+                            </svg>
+
+                            {canvasKeyResultNodes.map((keyResultNode) => (
+                              <div
+                                key={keyResultNode.id}
+                                style={{
+                                  left: keyResultNode.x,
+                                  top: keyResultNode.y,
+                                  width: KR_CARD_WIDTH,
+                                  minHeight: KR_CARD_HEIGHT,
+                                }}
+                                role="button"
+                                tabIndex={0}
+                                onPointerDown={(event) =>
+                                  startDraggingCanvasCard(
+                                    event,
+                                    {
+                                      type: "key_result",
+                                      id: keyResultNode.id,
+                                      goalId: keyResultNode.goalId,
+                                      keyResultId: keyResultNode.keyResultId,
+                                    },
+                                    {
+                                      x: keyResultNode.x,
+                                      y: keyResultNode.y,
+                                    },
+                                  )
+                                }
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (consumeSuppressedCanvasClick()) {
+                                    return;
+                                  }
                                   updateUrlState({
                                     nextGoalId: keyResultNode.goalId,
                                     nextKeyResultId: keyResultNode.keyResultId,
@@ -2532,223 +2670,238 @@ function GoalsPageContent() {
                                     goalId: keyResultNode.goalId,
                                     keyResultId: keyResultNode.keyResultId,
                                   });
-                                }
-                              }}
-                              className="absolute cursor-grab rounded-2xl border border-slate-200 bg-white/96 p-3 text-left shadow-[0_12px_26px_-24px_rgba(15,23,42,0.9)] outline-none transition hover:border-blue-300 hover:bg-white focus-visible:ring-2 focus-visible:ring-blue-100"
-                            >
-                              <div>
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="min-w-0">
-                                    <p className="text-[11px] font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                                      {keyResultNode.contributionType === "support"
-                                        ? "KR hỗ trợ"
-                                        : "KR"}
-                                    </p>
-                                    <p className="mt-1 line-clamp-2 text-sm font-semibold text-slate-900">
-                                      {keyResultNode.name}
-                                    </p>
-                                    {keyResultNode.contributionType === "support" ? (
-                                      <p className="mt-1 line-clamp-2 text-[11px] text-amber-700">
-                                        Hỗ trợ cho:{" "}
-                                        {keyResultNode.supportTargetSummary ?? "Chưa có"}
-                                      </p>
-                                    ) : null}
-                                  </div>
-                                  <span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">
-                                    {keyResultNode.progress}%
-                                  </span>
-                                </div>
-                                <div className="mt-3">
-                                  <ProgressBar value={keyResultNode.progress} />
-                                </div>
-                              </div>
-                              <div className="mt-3 flex justify-end">
-                                <Link
-                                  href={`/goals/${keyResultNode.goalId}/key-results/${keyResultNode.keyResultId}`}
-                                  onClick={(event) => event.stopPropagation()}
-                                  onPointerDown={(event) => event.stopPropagation()}
-                                  className="inline-flex h-7 items-center rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
-                                >
-                                  Mở KR
-                                </Link>
-                              </div>
-                            </div>
-                          ))}
-
-                          {canvasGoalNodes.map((goal) => (
-                            <div
-                              key={goal.id}
-                              className={`group absolute rounded-2xl border bg-white shadow-[0_14px_34px_-26px_rgba(15,23,42,0.6)] transition ${
-                                selectedId === goal.id
-                                  ? "border-blue-600 ring-2 ring-blue-100"
-                                  : "border-slate-200 hover:border-blue-300"
-                              }`}
-                              style={{
-                                left: goal.x,
-                                top: goal.y,
-                                width: CARD_WIDTH,
-                              }}
-                            >
-                              <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
-                                <div className="relative">
-                                  <button
-                                    type="button"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      setActiveGoalMenuId((prev) =>
-                                        prev === goal.id ? null : goal.id,
-                                      );
-                                    }}
-                                    onPointerDown={(event) => event.stopPropagation()}
-                                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-600 hover:bg-slate-50"
-                                  >
-                                    ...
-                                  </button>
-                                  {activeGoalMenuId === goal.id ? (
-                                    <div
-                                      className="absolute right-0 top-10 z-20 w-40 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg"
-                                      onClick={(event) => event.stopPropagation()}
-                                      onPointerDown={(event) => event.stopPropagation()}
-                                    >
-                                      <button
-                                        type="button"
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          setActiveGoalMenuId(null);
-                                          router.push(`/goals/new?editGoalId=${goal.id}`);
-                                        }}
-                                        onPointerDown={(event) => event.stopPropagation()}
-                                        className="flex w-full items-center px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                                      >
-                                        Sửa mục tiêu
-                                      </button>
-                                      <button
-                                        type="button"
-                                        disabled={deletingGoalId === goal.id}
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          void handleDeleteGoal(goal.id);
-                                        }}
-                                        onPointerDown={(event) => event.stopPropagation()}
-                                        className="flex w-full items-center px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                      >
-                                        {deletingGoalId === goal.id
-                                          ? "Đang xóa..."
-                                          : "Xóa mục tiêu"}
-                                      </button>
-                                    </div>
-                                  ) : null}
-                                </div>
-                              </div>
-
-                              <div
-                                data-goal-card="1"
-                                onPointerDown={(event) =>
-                                  startDraggingCanvasCard(
-                                    event,
-                                    { type: "goal", id: goal.id },
-                                    { x: goal.x, y: goal.y },
-                                  )
-                                }
-                                onClick={() => {
-                                  if (consumeSuppressedCanvasClick()) {
-                                    return;
-                                  }
-                                  handleSelectGoal(goal.id);
                                 }}
-                                className="h-full w-full p-4 text-left"
-                                style={{ cursor: mode === "canvas" ? "grab" : "pointer" }}
-                                role="button"
-                                tabIndex={0}
                                 onKeyDown={(event) => {
                                   if (event.key === "Enter" || event.key === " ") {
                                     event.preventDefault();
-                                    handleSelectGoal(goal.id);
+                                    updateUrlState({
+                                      nextGoalId: keyResultNode.goalId,
+                                      nextKeyResultId: keyResultNode.keyResultId,
+                                      nextDetailOpen: true,
+                                    });
+                                    focusCanvasCluster({
+                                      type: "key_result",
+                                      goalId: keyResultNode.goalId,
+                                      keyResultId: keyResultNode.keyResultId,
+                                    });
                                   }
                                 }}
+                                className="absolute cursor-grab rounded-2xl border border-slate-200 bg-white/96 p-3 text-left shadow-[0_12px_26px_-24px_rgba(15,23,42,0.9)] outline-none transition hover:border-blue-300 hover:bg-white focus-visible:ring-2 focus-visible:ring-blue-100"
                               >
-                                <div className="flex items-start justify-between gap-3 pr-12">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span
-                                      className={`inline-flex max-w-[150px] truncate rounded-lg px-2.5 py-1 text-[11px] font-semibold ${badgeMap[goal.mau]}`}
-                                      title={goal.teamNames.join(", ")}
-                                    >
-                                      {goal.teamSummary}
-                                    </span>
-                                    {goal.departmentCount > 1 ? (
-                                      <span className="inline-flex rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
-                                        {goal.departmentCount} phòng ban
-                                      </span>
-                                    ) : null}
-                                    <span
-                                      className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ${healthBadgeMap[goal.healthStatus]}`}
-                                    >
-                                      {goalHealthLabelMap[goal.healthStatus]}
-                                    </span>
-                                  </div>
-                                </div>
-
-                                <p className="mt-4 line-clamp-2 text-[22px] font-semibold leading-tight tracking-[-0.02em] text-slate-900">
-                                  {goal.tieuDe}
-                                </p>
-                                <p className="mt-2 line-clamp-1 text-xs font-medium text-slate-500">
-                                  Owners · {goal.ownersSummary}
-                                </p>
-
-                                <div className="mt-4 grid grid-cols-3 gap-2">
-                                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
-                                      KR
-                                    </p>
-                                    <p className="mt-1 text-lg font-semibold text-slate-900">
-                                      {goal.keyResultCount}
-                                    </p>
-                                  </div>
-                                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
-                                      Task
-                                    </p>
-                                    <p className="mt-1 text-lg font-semibold text-slate-900">
-                                      {goal.taskCount}
-                                    </p>
-                                  </div>
-                                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-                                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
-                                      Tiến độ
-                                    </p>
-                                    <p className="mt-1 text-lg font-semibold text-slate-900">
-                                      {goal.progress}%
-                                    </p>
-                                  </div>
-                                </div>
-
-                                {goal.keyResultCount > 0 ? (
-                                  <div className="mt-3 space-y-1">
-                                    <div className="flex items-center justify-between text-[11px] text-slate-500">
-                                      <span>{goal.statusLabel}</span>
-                                      <span>{goal.keyResultCount} KR</span>
+                                <div>
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <p className="text-[11px] font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                                        {keyResultNode.contributionType === "support"
+                                          ? "KR hỗ trợ"
+                                          : "KR"}
+                                      </p>
+                                      <p className="mt-1 line-clamp-2 text-sm font-semibold text-slate-900">
+                                        {keyResultNode.name}
+                                      </p>
+                                      {keyResultNode.contributionType === "support" ? (
+                                        <p className="mt-1 line-clamp-2 text-[11px] text-amber-700">
+                                          Hỗ trợ cho:{" "}
+                                          {keyResultNode.supportTargetSummary ?? "Chưa có"}
+                                        </p>
+                                      ) : null}
                                     </div>
-                                    <ProgressBar value={goal.progress} />
+                                    <span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700">
+                                      {keyResultNode.progress}%
+                                    </span>
                                   </div>
-                                ) : (
-                                  <p className="mt-3 text-xs font-medium text-slate-500">
-                                    Chưa có KR để theo dõi tiến độ.
-                                  </p>
-                                )}
-
-                                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-                                  <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">
-                                    Khung thời gian
-                                  </p>
-                                  <p className="mt-1 text-sm font-semibold text-slate-700">
-                                    {formatTimelineRangeVi(goal.startDate, goal.endDate, {
-                                      fallback: "Chưa đặt khung thời gian",
-                                    })}
-                                  </p>
+                                  <div className="mt-3">
+                                    <ProgressBar value={keyResultNode.progress} />
+                                  </div>
+                                </div>
+                                <div className="mt-3 flex justify-end">
+                                  <Link
+                                    href={`/goals/${keyResultNode.goalId}/key-results/${keyResultNode.keyResultId}`}
+                                    onClick={(event) => event.stopPropagation()}
+                                    onPointerDown={(event) => event.stopPropagation()}
+                                    className="inline-flex h-7 items-center rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
+                                  >
+                                    Mở KR
+                                  </Link>
                                 </div>
                               </div>
-                            </div>
-                          ))}
+                            ))}
+
+                            {canvasGoalNodes.map((goal) => (
+                              <div
+                                key={goal.id}
+                                className={`group absolute rounded-2xl border bg-white shadow-[0_14px_34px_-26px_rgba(15,23,42,0.6)] transition ${
+                                  selectedId === goal.id
+                                    ? "border-blue-600 ring-2 ring-blue-100"
+                                    : "border-slate-200 hover:border-blue-300"
+                                }`}
+                                style={{
+                                  left: goal.x,
+                                  top: goal.y,
+                                  width: CARD_WIDTH,
+                                }}
+                              >
+                                <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
+                                  <div className="relative">
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        setActiveGoalMenuId((prev) =>
+                                          prev === goal.id ? null : goal.id,
+                                        );
+                                      }}
+                                      onPointerDown={(event) => event.stopPropagation()}
+                                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                                    >
+                                      ...
+                                    </button>
+                                    {activeGoalMenuId === goal.id ? (
+                                      <div
+                                        className="absolute right-0 top-10 z-20 w-40  rounded-xl border border-slate-200 bg-white shadow-lg"
+                                        onClick={(event) => event.stopPropagation()}
+                                        onPointerDown={(event) => event.stopPropagation()}
+                                      >
+                                        <button
+                                          type="button"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            setActiveGoalMenuId(null);
+                                            router.push(`/goals/new?editGoalId=${goal.id}`);
+                                          }}
+                                          onPointerDown={(event) => event.stopPropagation()}
+                                          className="flex w-full items-center px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                                        >
+                                          Sửa mục tiêu
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={deletingGoalId === goal.id}
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            void handleDeleteGoal(goal.id);
+                                          }}
+                                          onPointerDown={(event) => event.stopPropagation()}
+                                          className="flex w-full items-center px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                        >
+                                          {deletingGoalId === goal.id
+                                            ? "Đang xóa..."
+                                            : "Xóa mục tiêu"}
+                                        </button>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </div>
+
+                                <div
+                                  data-goal-card="1"
+                                  onPointerDown={(event) =>
+                                    startDraggingCanvasCard(
+                                      event,
+                                      { type: "goal", id: goal.id },
+                                      { x: goal.x, y: goal.y },
+                                    )
+                                  }
+                                  onClick={() => {
+                                    if (consumeSuppressedCanvasClick()) {
+                                      return;
+                                    }
+                                    handleSelectGoal(goal.id);
+                                  }}
+                                  className="h-full w-full p-4 text-left"
+                                  style={{ cursor: mode === "canvas" ? "grab" : "pointer" }}
+                                  role="button"
+                                  tabIndex={0}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter" || event.key === " ") {
+                                      event.preventDefault();
+                                      handleSelectGoal(goal.id);
+                                    }
+                                  }}
+                                >
+                                  <div className="flex items-start justify-between gap-3 pr-12">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span
+                                        className={`inline-flex max-w-[150px] truncate rounded-lg px-2.5 py-1 text-[11px] font-semibold ${badgeMap[goal.mau]}`}
+                                        title={goal.teamNames.join(", ")}
+                                      >
+                                        {goal.teamSummary}
+                                      </span>
+                                      {goal.departmentCount > 1 ? (
+                                        <span className="inline-flex rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                                          {goal.departmentCount} phòng ban
+                                        </span>
+                                      ) : null}
+                                      <span
+                                        className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ${healthBadgeMap[goal.healthStatus]}`}
+                                      >
+                                        {goalHealthLabelMap[goal.healthStatus]}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <p className="mt-4 line-clamp-2 text-[22px] font-semibold leading-tight tracking-[-0.02em] text-slate-900">
+                                    {goal.tieuDe}
+                                  </p>
+                                  <p className="mt-2 line-clamp-1 text-xs font-medium text-slate-500">
+                                    Phụ trách · {goal.ownersSummary}
+                                  </p>
+
+                                  <div className="mt-4 grid grid-cols-3 gap-2">
+                                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                                      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
+                                        KR
+                                      </p>
+                                      <p className="mt-1 text-lg font-semibold text-slate-900">
+                                        {goal.keyResultCount}
+                                      </p>
+                                    </div>
+                                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                                      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
+                                        Công việc
+                                      </p>
+                                      <p className="mt-1 text-lg font-semibold text-slate-900">
+                                        {goal.taskCount}
+                                      </p>
+                                    </div>
+                                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                                      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
+                                        Tiến độ
+                                      </p>
+                                      <p className="mt-1 text-lg font-semibold text-slate-900">
+                                        {goal.progress}%
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  {goal.keyResultCount > 0 ? (
+                                    <div className="mt-3 space-y-1">
+                                      <div className="flex items-center justify-between text-[11px] text-slate-500">
+                                        <span>{goal.statusLabel}</span>
+                                        <span>{goal.keyResultCount} KR</span>
+                                      </div>
+                                      <ProgressBar value={goal.progress} />
+                                    </div>
+                                  ) : (
+                                    <p className="mt-3 text-xs font-medium text-slate-500">
+                                      Chưa có KR để theo dõi tiến độ.
+                                    </p>
+                                  )}
+
+                                  <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                                    <p className="text-[11px] uppercase tracking-[0.08em] text-slate-400">
+                                      Khung thời gian
+                                    </p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-700">
+                                      {formatTimelineRangeVi(goal.startDate, goal.endDate, {
+                                        fallback: "Chưa đặt khung thời gian",
+                                      })}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       </div>
                     )}
@@ -2765,115 +2918,107 @@ function GoalsPageContent() {
                             Hiển thị {filteredNodes.length}/{nodes.length} mục tiêu
                           </p>
                         </div>
-                        <div className="grid gap-3 xl:grid-cols-[minmax(260px,1.1fr)_minmax(0,2fr)]">
-                          <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                            <p className="text-[11px] font-semibold tracking-[0.08em] text-slate-500 uppercase">
-                              Tìm kiếm
-                            </p>
-                            <input
-                              value={keywordFilter}
-                              onChange={(event) => setKeywordFilter(event.target.value)}
-                              placeholder="Tìm theo tên/mô tả..."
-                              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                            />
+                        <div className="flex flex-wrap items-center gap-3">
+                          <input
+                            value={keywordFilter}
+                            onChange={(event) => setKeywordFilter(event.target.value)}
+                            placeholder="Tìm theo tên/mô tả..."
+                            className="h-10 w-full grow rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 placeholder:text-slate-400 outline-none shadow-none transition hover:border-slate-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 md:w-[260px] lg:w-[280px]"
+                          />
+
+                          <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
+                            <SelectTrigger className="h-10 min-w-[200px] rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-none hover:border-slate-300 focus-visible:border-blue-400 focus-visible:ring-2 focus-visible:ring-blue-100 sm:w-[180px] lg:w-[170px]">
+                              <SelectValue placeholder="Tất cả phòng ban" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">Tất cả phòng ban</SelectItem>
+                              {departmentFilterOptions.map((department) => (
+                                <SelectItem key={department} value={department}>
+                                  {department}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+
+                          <Select value={typeFilter} onValueChange={setTypeFilter}>
+                            <SelectTrigger className="h-10 min-w-[200px] rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-none hover:border-slate-300 focus-visible:border-blue-400 focus-visible:ring-2 focus-visible:ring-blue-100 sm:w-[180px] lg:w-[170px]">
+                              <SelectValue placeholder="Tất cả loại" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">Tất cả loại</SelectItem>
+                              {GOAL_TYPES.map((type) => (
+                                <SelectItem key={type.value} value={type.value}>
+                                  {type.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+
+                          <Select value={quarterFilter} onValueChange={setQuarterFilter}>
+                            <SelectTrigger className="h-10 min-w-[200px] rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-none hover:border-slate-300 focus-visible:border-blue-400 focus-visible:ring-2 focus-visible:ring-blue-100 sm:w-[180px] lg:w-[170px]">
+                              <SelectValue placeholder="Tất cả quý" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">Tất cả quý</SelectItem>
+                              <SelectItem value="1">Q1</SelectItem>
+                              <SelectItem value="2">Q2</SelectItem>
+                              <SelectItem value="3">Q3</SelectItem>
+                              <SelectItem value="4">Q4</SelectItem>
+                            </SelectContent>
+                          </Select>
+
+                          <Select value={yearFilter} onValueChange={setYearFilter}>
+                            <SelectTrigger className="h-10 min-w-[200px] rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-none hover:border-slate-300 focus-visible:border-blue-400 focus-visible:ring-2 focus-visible:ring-blue-100 sm:w-[180px] lg:w-[170px]">
+                              <SelectValue placeholder="Tất cả năm" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">Tất cả năm</SelectItem>
+                              {yearFilterOptions.map((year) => (
+                                <SelectItem key={year} value={String(year)}>
+                                  {year}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+
+                          {hasAnyActiveListFilter ? (
                             <button
                               type="button"
-                              onClick={() => {
-                                setKeywordFilter("");
-                                setDepartmentFilter("all");
-                                setTypeFilter("all");
-                                setStatusFilter("all");
-                                setQuarterFilter("all");
-                                setYearFilter("all");
-                              }}
-                              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                              onClick={clearAllFilters}
+                              className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
                             >
                               Xóa bộ lọc
                             </button>
-                          </div>
-
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                              <p className="text-[11px] font-semibold tracking-[0.08em] text-slate-500 uppercase">
-                                Phân loại
-                              </p>
-                              <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Tất cả phòng ban" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="all">Tất cả phòng ban</SelectItem>
-                                  {departmentFilterOptions.map((department) => (
-                                    <SelectItem key={department} value={department}>
-                                      {department}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              <Select value={typeFilter} onValueChange={setTypeFilter}>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Tất cả loại" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="all">Tất cả loại</SelectItem>
-                                  {GOAL_TYPES.map((type) => (
-                                    <SelectItem key={type.value} value={type.value}>
-                                      {type.label}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-
-                            <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                              <p className="text-[11px] font-semibold tracking-[0.08em] text-slate-500 uppercase">
-                                Trạng thái & thời gian
-                              </p>
-                              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Tất cả trạng thái" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="all">Tất cả trạng thái</SelectItem>
-                                  {GOAL_STATUSES.map((status) => (
-                                    <SelectItem key={status.value} value={status.value}>
-                                      {status.label}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-
-                              <div className="grid grid-cols-2 gap-2">
-                                <Select value={quarterFilter} onValueChange={setQuarterFilter}>
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Tất cả quý" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="all">Tất cả quý</SelectItem>
-                                    <SelectItem value="1">Q1</SelectItem>
-                                    <SelectItem value="2">Q2</SelectItem>
-                                    <SelectItem value="3">Q3</SelectItem>
-                                    <SelectItem value="4">Q4</SelectItem>
-                                  </SelectContent>
-                                </Select>
-
-                                <Select value={yearFilter} onValueChange={setYearFilter}>
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Tất cả năm" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="all">Tất cả năm</SelectItem>
-                                    {yearFilterOptions.map((year) => (
-                                      <SelectItem key={year} value={String(year)}>
-                                        {year}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                            </div>
-                          </div>
+                          ) : null}
                         </div>
+
+                        {listFilterChips.length > 0 ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            {listFilterChips.map((chip) => (
+                              <button
+                                key={`${chip.key}:${chip.value}`}
+                                type="button"
+                                onClick={() => {
+                                  if (chip.key === "department") {
+                                    setDepartmentFilter("all");
+                                  } else if (chip.key === "type") {
+                                    setTypeFilter("all");
+                                  } else if (chip.key === "status") {
+                                    setStatusFilter("all");
+                                  } else if (chip.key === "quarter") {
+                                    setQuarterFilter("all");
+                                  } else if (chip.key === "year") {
+                                    setYearFilter("all");
+                                  }
+                                }}
+                                className="inline-flex h-8 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-100"
+                              >
+                                {chip.label}: {chip.value}
+                                <span aria-hidden>×</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
                       <div className="overflow-x-auto">
                         <table className="w-full min-w-[1220px] text-left">
@@ -2883,9 +3028,7 @@ function GoalsPageContent() {
                                 Mục tiêu
                               </th>
                               <th className="px-5 py-3 font-semibold">Phòng ban</th>
-                              <th className="px-5 py-3 font-semibold">Owners</th>
                               <th className="px-5 py-3 font-semibold">Loại</th>
-                              <th className="px-5 py-3 font-semibold">Trạng thái</th>
                               <th className="px-5 py-3 font-semibold">Kỳ</th>
                               <th className="px-5 py-3 font-semibold">Tiến độ</th>
                               <th className="px-5 py-3 font-semibold">Tạo lúc</th>
@@ -2921,25 +3064,7 @@ function GoalsPageContent() {
                                   >
                                     {goal.teamSummary}
                                   </td>
-                                  <td
-                                    className="px-5 py-4 text-sm text-slate-600"
-                                    title={goal.owners.map((owner) => owner.name).join(", ")}
-                                  >
-                                    {goal.ownersSummary}
-                                  </td>
                                   <td className="px-5 py-4 text-sm text-slate-600">{goal.nhom}</td>
-                                  <td className="px-5 py-4 text-sm text-slate-600">
-                                    <div className="space-y-2">
-                                      <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                                        {goal.statusLabel}
-                                      </span>
-                                      <span
-                                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${healthBadgeMap[goal.healthStatus]}`}
-                                      >
-                                        {goalHealthLabelMap[goal.healthStatus]}
-                                      </span>
-                                    </div>
-                                  </td>
                                   <td className="px-5 py-4 text-sm text-slate-600">{goal.quy}</td>
                                   <td className="px-5 py-4">
                                     {goal.keyResultCount > 0 ? (
@@ -2963,7 +3088,7 @@ function GoalsPageContent() {
                             ) : (
                               <tr>
                                 <td
-                                  colSpan={8}
+                                  colSpan={6}
                                   className="px-5 py-8 text-center text-sm text-slate-500"
                                 >
                                   Không có mục tiêu phù hợp với bộ lọc hiện tại.
@@ -3008,7 +3133,7 @@ function GoalsPageContent() {
             </section>
 
             {isDetailOpen && selectedGoal ? (
-              <aside className="flex h-full min-h-0 flex-col border-t border-slate-200 bg-white xl:border-l xl:border-t-0">
+              <aside className="flex h-full min-h-0 flex-col overflow-hidden border-t border-slate-200 bg-white xl:border-l xl:border-t-0">
                 <div className="flex items-center justify-between border-b border-slate-100 px-5 py-5 xl:px-6">
                   <h2 className="text-2xl font-semibold tracking-[-0.02em] text-slate-900">
                     {selectedKeyResult ? "Chi tiết KR" : "Chi tiết mục tiêu"}
@@ -3120,81 +3245,17 @@ function GoalsPageContent() {
 
                         <div className="grid grid-cols-2 gap-6">
                           <div>
-                            <p className="text-sm text-slate-400">Phòng ban chính</p>
-                            <p className="mt-2 text-base font-medium text-slate-800">
-                              {selectedGoal.phongBan}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-sm text-slate-400">Team tham gia</p>
-                            <p className="mt-2 text-base font-medium text-slate-800">
-                              {selectedGoal.departmentCount}
-                            </p>
-                          </div>
-                          <div>
                             <p className="text-sm text-slate-400">Quý</p>
                             <p className="mt-2 text-base font-medium text-slate-800">
                               {selectedGoal.quy}
                             </p>
                           </div>
                           <div>
-                            <p className="text-sm text-slate-400">Loại goal</p>
-                            <p className="mt-2 text-base font-medium text-slate-800">
-                              {selectedGoal.nhom}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-sm text-slate-400">Owners</p>
-                            {selectedGoal.owners.length > 0 ? (
-                              <div className="mt-2 flex flex-wrap gap-2">
-                                {selectedGoal.owners.slice(0, 4).map((owner) => (
-                                  <span
-                                    key={owner.id}
-                                    className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700"
-                                  >
-                                    {owner.name}
-                                  </span>
-                                ))}
-                                {selectedGoal.owners.length > 4 ? (
-                                  <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                                    +{selectedGoal.owners.length - 4}
-                                  </span>
-                                ) : null}
-                              </div>
-                            ) : (
-                              <p className="mt-2 text-base font-medium text-slate-800">
-                                Chưa có owners
-                              </p>
-                            )}
-                          </div>
-                          <div>
-                            <p className="text-sm text-slate-400">Target goal</p>
+                            <p className="text-sm text-slate-400">Chỉ tiêu</p>
                             <p className="mt-2 text-base font-medium text-slate-800">
                               {selectedGoal.target !== null || selectedGoal.unit
-                                ? `${formatKeyResultMetric(selectedGoal.target, selectedGoal.unit)} · ${formatKeyResultUnit(selectedGoal.unit)}`
+                                ? `${formatKeyResultMetric(selectedGoal.target, selectedGoal.unit)}`
                                 : "Chưa đặt"}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div>
-                          <p className="text-sm text-slate-400">Trạng thái</p>
-                          <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                            <div className="flex items-center gap-2">
-                              <span className="text-lg font-semibold text-slate-800">
-                                {selectedGoal.statusLabel}
-                              </span>
-                              <span
-                                className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ${healthBadgeMap[selectedGoal.healthStatus]}`}
-                              >
-                                {goalHealthLabelMap[selectedGoal.healthStatus]}
-                              </span>
-                            </div>
-                            <p className="mt-2 text-sm text-slate-500">
-                              Khung thời gian{" "}
-                              {formatTimelineRangeVi(selectedGoal.startDate, selectedGoal.endDate, {
-                                fallback: "Chưa đặt khung thời gian",
-                              })}
                             </p>
                           </div>
                         </div>
@@ -3208,9 +3269,6 @@ function GoalsPageContent() {
                               </p>
                             </div>
                             <ProgressBar value={selectedGoal.progress} />
-                            <p className="mt-2 text-xs text-slate-500 italic">
-                              * {getGoalProgressHelp(selectedGoal.loai)}
-                            </p>
                           </div>
                         ) : (
                           <div className="rounded-2xl border border-dashed border-blue-200 bg-blue-50/60 p-4">
@@ -3258,7 +3316,7 @@ function GoalsPageContent() {
                   </div>
                 </div>
                 <div className="border-t border-slate-200 bg-white/95 px-5 py-4 shadow-[0_-8px_24px_-20px_rgba(15,23,42,0.35)] backdrop-blur xl:px-6">
-                  <div className="space-y-3">
+                  <div className="space-y-3 flex gap-3">
                     {selectedKeyResult ? (
                       <>
                         <Link
@@ -3290,13 +3348,6 @@ function GoalsPageContent() {
                         </Link>
                       </>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => setIsGoalLogsOpen(true)}
-                      className="h-11 w-full rounded-xl border border-slate-200 bg-white text-base font-semibold text-slate-700"
-                    >
-                      Xem nhật ký kiểm tra
-                    </button>
                   </div>
                 </div>
               </aside>
@@ -3372,7 +3423,7 @@ function GoalsPageContent() {
                           </p>
 
                           {changedKeys.length > 0 ? (
-                            <div className="mt-3 overflow-hidden rounded-lg border border-slate-200 bg-white">
+                            <div className="mt-3  rounded-lg border border-slate-200 bg-white">
                               <div className="grid grid-cols-[1.2fr_1fr_1fr] gap-0 border-b border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold tracking-[0.05em] text-slate-500 uppercase">
                                 <p>Trường</p>
                                 <p>Trước</p>
