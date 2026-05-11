@@ -361,6 +361,20 @@ const buildTaskAccessibilityLabel = (task: TaskItem) =>
     },
   )}`;
 
+const buildGoalAccessibilityLabel = (goal: GoalTimelineItem) =>
+  `${goal.name}. Tiến độ ${goal.progress}%. ${formatTimelineRangeVi(goal.startDate, goal.endDate, {
+    fallback: "Chưa có mốc thời gian",
+  })}`;
+
+const buildKeyResultAccessibilityLabel = (keyResult: KeyResultTimelineItem) =>
+  `${keyResult.name}. Tiến độ ${keyResult.progress}%. ${formatTimelineRangeVi(
+    keyResult.startDate,
+    keyResult.endDate,
+    {
+      fallback: "Chưa có mốc thời gian",
+    },
+  )}`;
+
 function ProgressBar({ value }: { value: number }) {
   const normalizedValue = clampProgress(value);
   const getBarColor = () => {
@@ -610,14 +624,143 @@ function TaskTimelineBar({
     }, 90);
   };
 
-  const handleOpenChange = (nextOpen: boolean) => {
-    clearCloseTimer();
+  const handlePointerMove = (event: React.PointerEvent<HTMLElement | HTMLDivElement>) => {
+    setPointerPosition({ x: event.clientX, y: event.clientY });
+  };
 
-    if (!nextOpen) {
-      suppressHoverUntilRef.current = Date.now() + 160;
+  useEffect(() => {
+    return () => {
+      clearCloseTimer();
+    };
+  }, []);
+
+  const hoverCardPosition = useMemo(() => {
+    if (!pointerPosition || typeof window === "undefined") {
+      return {
+        x: VIEWPORT_PADDING,
+        y: VIEWPORT_PADDING,
+      };
     }
 
-    setOpen(nextOpen);
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    let nextX = pointerPosition.x + HOVER_CARD_OFFSET;
+    let nextY = pointerPosition.y + HOVER_CARD_OFFSET;
+
+    if (nextX + HOVER_CARD_WIDTH + VIEWPORT_PADDING > viewportWidth) {
+      nextX = Math.max(VIEWPORT_PADDING, pointerPosition.x - HOVER_CARD_WIDTH - HOVER_CARD_OFFSET);
+    }
+    if (nextY + HOVER_CARD_HEIGHT + VIEWPORT_PADDING > viewportHeight) {
+      nextY = Math.max(VIEWPORT_PADDING, viewportHeight - HOVER_CARD_HEIGHT - VIEWPORT_PADDING);
+    }
+
+    return {
+      x: Math.max(VIEWPORT_PADDING, nextX),
+      y: Math.max(VIEWPORT_PADDING, nextY),
+    };
+  }, [pointerPosition]);
+
+  return (
+    <>
+      <Link
+        href={`/tasks/${task.id}`}
+        onPointerEnter={(event) => {
+          handlePointerMove(event);
+          openPopover();
+        }}
+        onPointerMove={handlePointerMove}
+        onPointerLeave={closePopover}
+        className={`absolute top-1/2 flex h-10 -translate-y-1/2 cursor-pointer items-center overflow-hidden rounded-lg border-2 px-3 text-left shadow-sm transition hover:brightness-[0.95] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 ${
+          statusColors.barBg
+        } ${statusColors.border} text-slate-900 font-medium ${
+          isClamped ? "ring-2 ring-white/70" : ""
+        }`}
+        style={{ left, width }}
+        aria-label={buildTaskAccessibilityLabel(task)}
+      >
+        <TimelineBarContent label={task.name} progress={task.progress} width={width} />
+      </Link>
+
+      {open ? (
+        <div
+          onPointerEnter={openPopover}
+          onPointerMove={handlePointerMove}
+          onPointerLeave={closePopover}
+          className="fixed z-[70] w-[380px] max-w-[calc(100vw-24px)] rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"
+          style={{
+            left: hoverCardPosition.x,
+            top: hoverCardPosition.y,
+          }}
+        >
+          <div className="space-y-3">
+            <p className="text-base font-semibold text-slate-900">
+              {task.name} - {getTaskPriorityLabel(task.priority)}
+            </p>
+            <div className="h-px bg-slate-100" />
+            <div className="space-y-2 text-sm">
+              <div className="flex items-start justify-between gap-3">
+                <span className="text-slate-600">Người phụ trách</span>
+                <span className="text-right font-semibold text-slate-900">{task.assigneeName}</span>
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <span className="text-slate-600">Tiến độ</span>
+                <span className="text-right font-semibold text-slate-900">{task.progress}%</span>
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <span className="text-slate-600">Ngày bắt đầu - kết thúc</span>
+                <span className="text-right font-semibold text-slate-900">
+                  {formatDateOnlyVi(task.startDate, "—")} - {formatDateOnlyVi(task.endDate, "—")}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function GoalTimelineBar({
+  goal,
+  left,
+  width,
+  isClamped,
+}: {
+  goal: GoalTimelineItem;
+  left: number;
+  width: number;
+  isClamped: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressHoverUntilRef = useRef(0);
+  const [pointerPosition, setPointerPosition] = useState<{ x: number; y: number } | null>(null);
+  const HOVER_CARD_OFFSET = 14;
+  const VIEWPORT_PADDING = 12;
+  const HOVER_CARD_WIDTH = 360;
+  const HOVER_CARD_HEIGHT = 246;
+
+  const clearCloseTimer = () => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+
+  const openPopover = () => {
+    clearCloseTimer();
+    if (Date.now() < suppressHoverUntilRef.current) {
+      return;
+    }
+    setOpen(true);
+  };
+
+  const closePopover = () => {
+    clearCloseTimer();
+    closeTimerRef.current = setTimeout(() => {
+      suppressHoverUntilRef.current = Date.now() + 160;
+      setOpen(false);
+    }, 90);
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLElement | HTMLDivElement>) => {
@@ -658,62 +801,213 @@ function TaskTimelineBar({
 
   return (
     <>
-      <button
-        type="button"
+      <Link
+        href={goal.id !== "no-goal" ? `/goals/${goal.id}` : "/goals"}
         onPointerEnter={(event) => {
           handlePointerMove(event);
           openPopover();
         }}
         onPointerMove={handlePointerMove}
         onPointerLeave={closePopover}
-        onPointerDown={(event) => {
-          if (event.pointerType !== "mouse") {
-            handlePointerMove(event);
-            clearCloseTimer();
-            handleOpenChange(!open);
-          }
-        }}
-        className={`absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-lg border-2 px-3 text-left shadow-sm transition hover:brightness-[0.95] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 ${
-          statusColors.barBg
-        } ${statusColors.border} text-slate-900 font-medium ${
+        onFocus={openPopover}
+        onBlur={closePopover}
+        className={`absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl border border-slate-300 bg-slate-200 px-3 text-left shadow-sm transition hover:bg-slate-300 ${
           isClamped ? "ring-2 ring-white/70" : ""
         }`}
         style={{ left, width }}
-        aria-label={buildTaskAccessibilityLabel(task)}
+        aria-label={buildGoalAccessibilityLabel(goal)}
       >
-        <TimelineBarContent label={task.name} progress={task.progress} width={width} />
-      </button>
+        <TimelineBarContent label={goal.name} progress={goal.progress} width={width} />
+      </Link>
 
       {open ? (
         <div
           onPointerEnter={openPopover}
           onPointerMove={handlePointerMove}
           onPointerLeave={closePopover}
-          className="fixed z-[70] w-[380px] max-w-[calc(100vw-24px)] rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"
+          className="fixed z-[70] w-[360px] max-w-[calc(100vw-24px)] rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"
           style={{
             left: hoverCardPosition.x,
             top: hoverCardPosition.y,
           }}
         >
           <div className="space-y-3">
-            <p className="text-base font-semibold text-slate-900">
-              {task.name} - {getTaskPriorityLabel(task.priority)}
-            </p>
+            <p className="text-base font-semibold text-slate-900">{goal.name}</p>
             <div className="h-px bg-slate-100" />
             <div className="space-y-2 text-sm">
               <div className="flex items-start justify-between gap-3">
-                <span className="text-slate-600">Người phụ trách</span>
-                <span className="text-right font-semibold text-slate-900">{task.assigneeName}</span>
+                <span className="text-slate-600">Quý</span>
+                <span className="text-right font-semibold text-slate-900">
+                  {formatGoalQuarterLabel(goal.quarter, goal.year)}
+                </span>
               </div>
               <div className="flex items-start justify-between gap-3">
                 <span className="text-slate-600">Tiến độ</span>
-                <span className="text-right font-semibold text-slate-900">{task.progress}%</span>
+                <span className="text-right font-semibold text-slate-900">{goal.progress}%</span>
               </div>
               <div className="flex items-start justify-between gap-3">
                 <span className="text-slate-600">Ngày bắt đầu - kết thúc</span>
                 <span className="text-right font-semibold text-slate-900">
-                  {formatDateOnlyVi(task.startDate, "—")} - {formatDateOnlyVi(task.endDate, "—")}
+                  {formatDateOnlyVi(goal.startDate, "—")} - {formatDateOnlyVi(goal.endDate, "—")}
                 </span>
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <span className="text-slate-600">Số KR</span>
+                <span className="text-right font-semibold text-slate-900">{goal.keyResultCount}</span>
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <span className="text-slate-600">Số task</span>
+                <span className="text-right font-semibold text-slate-900">{goal.taskCount}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function KeyResultTimelineBar({
+  keyResult,
+  left,
+  width,
+  isClamped,
+}: {
+  keyResult: KeyResultTimelineItem;
+  left: number;
+  width: number;
+  isClamped: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressHoverUntilRef = useRef(0);
+  const [pointerPosition, setPointerPosition] = useState<{ x: number; y: number } | null>(null);
+  const HOVER_CARD_OFFSET = 14;
+  const VIEWPORT_PADDING = 12;
+  const HOVER_CARD_WIDTH = 360;
+  const HOVER_CARD_HEIGHT = 246;
+
+  const clearCloseTimer = () => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  };
+
+  const openPopover = () => {
+    clearCloseTimer();
+    if (Date.now() < suppressHoverUntilRef.current) {
+      return;
+    }
+    setOpen(true);
+  };
+
+  const closePopover = () => {
+    clearCloseTimer();
+    closeTimerRef.current = setTimeout(() => {
+      suppressHoverUntilRef.current = Date.now() + 160;
+      setOpen(false);
+    }, 90);
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLElement | HTMLDivElement>) => {
+    setPointerPosition({ x: event.clientX, y: event.clientY });
+  };
+
+  useEffect(() => {
+    return () => {
+      clearCloseTimer();
+    };
+  }, []);
+
+  const hoverCardPosition = useMemo(() => {
+    if (!pointerPosition || typeof window === "undefined") {
+      return {
+        x: VIEWPORT_PADDING,
+        y: VIEWPORT_PADDING,
+      };
+    }
+
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    let nextX = pointerPosition.x + HOVER_CARD_OFFSET;
+    let nextY = pointerPosition.y + HOVER_CARD_OFFSET;
+
+    if (nextX + HOVER_CARD_WIDTH + VIEWPORT_PADDING > viewportWidth) {
+      nextX = Math.max(VIEWPORT_PADDING, pointerPosition.x - HOVER_CARD_WIDTH - HOVER_CARD_OFFSET);
+    }
+    if (nextY + HOVER_CARD_HEIGHT + VIEWPORT_PADDING > viewportHeight) {
+      nextY = Math.max(VIEWPORT_PADDING, viewportHeight - HOVER_CARD_HEIGHT - VIEWPORT_PADDING);
+    }
+
+    return {
+      x: Math.max(VIEWPORT_PADDING, nextX),
+      y: Math.max(VIEWPORT_PADDING, nextY),
+    };
+  }, [pointerPosition]);
+
+  return (
+    <>
+      <Link
+        href={
+          keyResult.goalId !== "no-goal"
+            ? `/goals/${keyResult.goalId}/key-results/${keyResult.id}`
+            : "/tasks"
+        }
+        onPointerEnter={(event) => {
+          handlePointerMove(event);
+          openPopover();
+        }}
+        onPointerMove={handlePointerMove}
+        onPointerLeave={closePopover}
+        onFocus={openPopover}
+        onBlur={closePopover}
+        className={`absolute top-1/2 flex h-10 -translate-y-1/2 cursor-pointer items-center overflow-hidden rounded-xl border border-slate-300 bg-slate-200 px-3 text-left shadow-sm transition hover:bg-slate-300 ${
+          isClamped ? "ring-2 ring-white/70" : ""
+        }`}
+        style={{ left, width }}
+        aria-label={buildKeyResultAccessibilityLabel(keyResult)}
+      >
+        <TimelineBarContent label={keyResult.name} progress={keyResult.progress} width={width} />
+      </Link>
+
+      {open ? (
+        <div
+          onPointerEnter={openPopover}
+          onPointerMove={handlePointerMove}
+          onPointerLeave={closePopover}
+          className="fixed z-[70] w-[360px] max-w-[calc(100vw-24px)] rounded-2xl border border-slate-200 bg-white p-4 shadow-xl"
+          style={{
+            left: hoverCardPosition.x,
+            top: hoverCardPosition.y,
+          }}
+        >
+          <div className="space-y-3">
+            <p className="text-base font-semibold text-slate-900">{keyResult.name}</p>
+            <div className="h-px bg-slate-100" />
+            <div className="space-y-2 text-sm">
+              <div className="flex items-start justify-between gap-3">
+                <span className="text-slate-600">Mục tiêu</span>
+                <span className="text-right font-semibold text-slate-900">{keyResult.goalName}</span>
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <span className="text-slate-600">Tiến độ</span>
+                <span className="text-right font-semibold text-slate-900">{keyResult.progress}%</span>
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <span className="text-slate-600">Chỉ số</span>
+                <span className="text-right font-semibold text-slate-900">{keyResult.metric}</span>
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <span className="text-slate-600">Ngày bắt đầu - kết thúc</span>
+                <span className="text-right font-semibold text-slate-900">
+                  {formatDateOnlyVi(keyResult.startDate, "—")} -{" "}
+                  {formatDateOnlyVi(keyResult.endDate, "—")}
+                </span>
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <span className="text-slate-600">Số task</span>
+                <span className="text-right font-semibold text-slate-900">{keyResult.taskCount}</span>
               </div>
             </div>
           </div>
@@ -2284,18 +2578,12 @@ function TasksPageContent() {
                                     style={{ left: todayIndicatorOffset }}
                                   />
                                 ) : null}
-                                <Link
-                                  href={goal.id !== "no-goal" ? `/goals/${goal.id}` : "/goals"}
-                                  title={`${goal.name}\nQuý: ${formatGoalQuarterLabel(goal.quarter, goal.year)}\nTiến độ: ${goal.progress}%`}
-                                  className="absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl border border-slate-300 bg-slate-200 px-3 text-left shadow-sm transition hover:bg-slate-300"
-                                  style={{ left: barLayout.left, width: barLayout.width }}
-                                >
-                                  <TimelineBarContent
-                                    label={goal.name}
-                                    progress={goal.progress}
-                                    width={barLayout.width}
-                                  />
-                                </Link>
+                                <GoalTimelineBar
+                                  goal={goal}
+                                  left={barLayout.left}
+                                  width={barLayout.width}
+                                  isClamped={barLayout.isClamped}
+                                />
                               </div>
                             </div>
                           );
@@ -2386,18 +2674,12 @@ function TasksPageContent() {
                                     style={{ left: todayIndicatorOffset }}
                                   />
                                 ) : null}
-                                <Link
-                                  href="/tasks"
-                                  title={`${keyResult.name}\nTiến độ: ${keyResult.progress}%`}
-                                  className="absolute top-1/2 flex h-10 -translate-y-1/2 items-center overflow-hidden rounded-xl border border-slate-300 bg-slate-200 px-3 text-left shadow-sm transition hover:bg-slate-300"
-                                  style={{ left: barLayout.left, width: barLayout.width }}
-                                >
-                                  <TimelineBarContent
-                                    label={keyResult.name}
-                                    progress={keyResult.progress}
-                                    width={barLayout.width}
-                                  />
-                                </Link>
+                                <KeyResultTimelineBar
+                                  keyResult={keyResult}
+                                  left={barLayout.left}
+                                  width={barLayout.width}
+                                  isClamped={barLayout.isClamped}
+                                />
                               </div>
                             </div>
                           );

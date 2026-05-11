@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { getTimeRequestReason, getTimeRequestTypeLabel, type TimeRequestType } from "@/lib/constants/time-requests";
+import { formatDateDdMmYyyy } from "@/lib/date-format";
 import { supabase } from "@/lib/supabase";
 import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
 
@@ -61,14 +62,7 @@ function toDateOnlyIso(value: string | null | undefined) {
 }
 
 function formatDateVi(isoDate: string) {
-  if (!isoDate) {
-    return "--";
-  }
-  const date = new Date(`${isoDate}T00:00:00`);
-  if (Number.isNaN(date.getTime())) {
-    return "--";
-  }
-  return new Intl.DateTimeFormat("vi-VN", { dateStyle: "short" }).format(date);
+  return formatDateDdMmYyyy(isoDate, "--", "--");
 }
 
 function formatMonthLabel(value: Date) {

@@ -4,6 +4,7 @@ import {
   getTaskPriorityLabel,
   getTaskPriorityScore,
 } from "@/lib/constants/tasks";
+import { formatDateDdMmYyyy } from "@/lib/date-format";
 import { getComputedTaskProgress, buildGoalProgressMap, buildKeyResultProgressMap } from "@/lib/okr";
 
 export type DashboardRoleScope = "member" | "leader" | "director";
@@ -177,16 +178,7 @@ const toValidDate = (value: string | null | undefined) => {
 };
 
 export const formatDateShortVi = (value: string | null) => {
-  if (!value) {
-    return "Chưa đặt";
-  }
-
-  const date = toValidDate(value);
-  if (!date) {
-    return "Không hợp lệ";
-  }
-
-  return new Intl.DateTimeFormat("vi-VN", { dateStyle: "short" }).format(date);
+  return formatDateDdMmYyyy(value, "Chưa đặt", "Không hợp lệ");
 };
 
 export const formatTimeVi = (value: string | null) => {

@@ -27,7 +27,6 @@ import {
   GOAL_STATUSES,
   GOAL_TYPES,
   formatGoalTypeLabel,
-  getGoalProgressHelp,
   normalizeGoalTypeValue,
 } from "@/lib/constants/goals";
 import { buildGoalProgressMap, buildKeyResultProgressMap } from "@/lib/okr";
@@ -38,6 +37,7 @@ import {
   loadGoalOwnersByGoalIds,
   type GoalOwnerProfile,
 } from "@/lib/goal-owners";
+import { formatDateTimeDdMmYyyy } from "@/lib/date-format";
 import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
 import { formatTimelineRangeVi } from "@/lib/timeline";
@@ -340,17 +340,7 @@ const getGoalHealthStatus = ({
 };
 
 const formatDateTimeVi = (value: string | null) => {
-  if (!value) {
-    return "Chưa có";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Không hợp lệ";
-  }
-  return new Intl.DateTimeFormat("vi-VN", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(date);
+  return formatDateTimeDdMmYyyy(value, "Chưa có", "Không hợp lệ");
 };
 
 const toGoalLogActionLabel = (action: ActivityLogAction | string | null) => {

@@ -1,6 +1,11 @@
+import { formatDateDdMmYyyy } from "@/lib/date-format";
 import { getTimelineRange, startOfLocalDay } from "@/lib/timeline";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const toLocalDateIso = (value: Date) =>
+  `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(
+    value.getDate(),
+  ).padStart(2, "0")}`;
 
 export type TimelineScale = "day" | "week" | "month";
 
@@ -130,21 +135,21 @@ export const formatTimelinePeriodLabel = (date: Date, scale: TimelineScale) => {
   if (scale === "day") {
     return {
       label: new Intl.DateTimeFormat("vi-VN", { weekday: "short" }).format(date),
-      subLabel: new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit" }).format(date),
+      subLabel: formatDateDdMmYyyy(toLocalDateIso(date), "--", "--"),
     };
   }
 
   if (scale === "week") {
     const end = endOfScale(date, scale);
     return {
-      label: `Tuần ${new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit" }).format(date)}`,
-      subLabel: new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit" }).format(end),
+      label: `Tuần ${formatDateDdMmYyyy(toLocalDateIso(date), "--", "--")}`,
+      subLabel: formatDateDdMmYyyy(toLocalDateIso(end), "--", "--"),
     };
   }
 
   return {
-    label: new Intl.DateTimeFormat("vi-VN", { month: "long" }).format(date),
-    subLabel: new Intl.DateTimeFormat("vi-VN", { year: "numeric" }).format(date),
+    label: formatDateDdMmYyyy(toLocalDateIso(date), "--", "--"),
+    subLabel: formatDateDdMmYyyy(toLocalDateIso(endOfScale(date, scale)), "--", "--"),
   };
 };
 

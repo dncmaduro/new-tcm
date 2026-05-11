@@ -16,6 +16,7 @@ import {
   type AttendanceTimeRow,
 } from "@/lib/attendance";
 import { calculateAttendanceMetrics, type AttendanceStatus } from "@/lib/attendance-metrics";
+import { formatDateDdMmYyyy } from "@/lib/date-format";
 import { buildHolidayMap, fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
 import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
@@ -144,14 +145,7 @@ function formatDurationLabel(totalMinutes: number) {
 }
 
 function formatDateVi(isoDate: string) {
-  if (!isoDate) {
-    return "--";
-  }
-  const date = new Date(`${isoDate}T00:00:00`);
-  if (Number.isNaN(date.getTime())) {
-    return "--";
-  }
-  return new Intl.DateTimeFormat("vi-VN", { dateStyle: "short" }).format(date);
+  return formatDateDdMmYyyy(isoDate, "--", "--");
 }
 
 function formatWeekdayVi(isoDate: string) {
@@ -1002,7 +996,7 @@ export function TimesheetOverview({
     },
     {
       label: "Tổng tăng ca",
-      value: formatDurationLabel(adjustedAttendanceStats.overtimeMinutes),
+      value: formatDurationLabel(requestDurationSummary.requestedOvertimeMinutes),
       accent: "text-emerald-500",
     },
     {
@@ -1087,7 +1081,7 @@ export function TimesheetOverview({
           {weekDayLabels.map((label, index) => (
             <div
               key={label}
-              className={`h-12 border-l text-center text-xs font-bold tracking-[0.08em] leading-[48px] uppercase first:border-l-0 ${
+              className={`flex h-12 items-center justify-center border-l text-center text-xs font-bold uppercase tracking-[0.08em] first:border-l-0 ${
                 index === 0
                   ? "border-slate-200 bg-slate-100 text-slate-300"
                   : "border-slate-100 text-slate-400"

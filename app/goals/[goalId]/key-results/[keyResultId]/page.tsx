@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
+import { ActivityHistoryDialog } from "@/components/activity-history-dialog";
 import { formatGoalTypeLabel } from "@/lib/constants/goals";
 import {
   formatKeyResultContributionTypeLabel,
@@ -17,11 +18,13 @@ import {
   normalizeKeyResultContributionTypeValue,
   usesPercentSupportAllocation,
 } from "@/lib/constants/key-results";
+import { formatDateTimeDdMmYyyy } from "@/lib/date-format";
 import { TASK_TYPES } from "@/lib/constants/tasks";
 import {
   buildKeyResultProgressMap,
   computeWeightedProgress,
   getComputedTaskProgress,
+  getKeyResultComputedProgress,
 } from "@/lib/okr";
 import { useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
@@ -114,6 +117,9 @@ type KeyResultLinkOption = {
   name: string;
   type: string | null;
   contributionType: string | null;
+  startValue: number | null;
+  current: number | null;
+  target: number | null;
   unit: string | null;
 };
 
@@ -142,19 +148,7 @@ const taskTypeLabelMap = TASK_TYPES.reduce<Record<string, string>>((acc, type) =
 }, {});
 
 const formatDateTime = (value: string | null) => {
-  if (!value) {
-    return "Chưa có";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Không hợp lệ";
-  }
-
-  return new Intl.DateTimeFormat("vi-VN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
+  return formatDateTimeDdMmYyyy(value, "Chưa có", "Không hợp lệ");
 };
 
 const formatOptionalMetric = (value: number | null, unit: string | null) => {
@@ -214,6 +208,24 @@ const normalizeKeyResultLinkOption = (value: Record<string, unknown>): KeyResult
     name: String(value.name),
     type: value.type ? String(value.type) : null,
     contributionType: value.contribution_type ? String(value.contribution_type) : null,
+    startValue:
+      typeof value.start_value === "number"
+        ? value.start_value
+        : value.start_value === null || value.start_value === undefined
+          ? null
+          : Number(value.start_value),
+    current:
+      typeof value.current === "number"
+        ? value.current
+        : value.current === null || value.current === undefined
+          ? null
+          : Number(value.current),
+    target:
+      typeof value.target === "number"
+        ? value.target
+        : value.target === null || value.target === undefined
+          ? null
+          : Number(value.target),
     unit: value.unit ? String(value.unit) : null,
   };
 };
@@ -242,17 +254,25 @@ const normalizeSupportLinkRow = (value: Record<string, unknown>): SupportLinkRow
 const keyResultLinkHref = (keyResult: KeyResultLinkOption | null) =>
   keyResult?.goalId ? `/goals/${keyResult.goalId}/key-results/${keyResult.id}` : null;
 
-function MetricCard({ label, value, className = "" }: { label: string; value: string; className?: string }) {
+const keyResultEditHref = (keyResult: KeyResultLinkOption | null) =>
+  keyResult?.goalId ? `/goals/${keyResult.goalId}/key-results/${keyResult.id}/edit` : null;
+
+function ProgressBar({ value }: { value: number }) {
+  const clampedValue = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0;
+
   return (
-    <div className={`rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 ${className}`}>
-      <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">{label}</p>
-      <p className="mt-1.5 text-[36px] leading-none font-semibold text-slate-900">{value}</p>
+    <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+      <div
+        className="h-full rounded-full bg-blue-600 transition-all"
+        style={{ width: `${clampedValue}%` }}
+      />
     </div>
   );
 }
 
 export default function KeyResultDetailPage() {
   const params = useParams<{ goalId: string; keyResultId: string }>();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const workspaceAccess = useWorkspaceAccess();
   const goalId = typeof params.goalId === "string" ? params.goalId : "";
@@ -276,6 +296,7 @@ export default function KeyResultDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSavingCurrentMetric, setIsSavingCurrentMetric] = useState(false);
+  const [isDeletingKeyResult, setIsDeletingKeyResult] = useState(false);
 
   const isCheckingCreatePermission = workspaceAccess.isLoading;
   const canCreateTask = workspaceAccess.canManage && !workspaceAccess.error;
@@ -314,7 +335,7 @@ export default function KeyResultDetailPage() {
       supabase
         .from("key_results")
         .select(
-          "id,goal_id,name,type,contribution_type,unit,goal:goals!key_results_goal_id_fkey(id,name),created_at",
+          "id,goal_id,name,type,contribution_type,start_value,current,target,unit,goal:goals!key_results_goal_id_fkey(id,name),created_at",
         )
         .eq("contribution_type", "direct")
         .neq("id", currentKeyResultId)
@@ -364,7 +385,7 @@ export default function KeyResultDetailPage() {
         ? await supabase
             .from("key_results")
             .select(
-              "id,goal_id,name,type,contribution_type,unit,goal:goals!key_results_goal_id_fkey(id,name)",
+              "id,goal_id,name,type,contribution_type,start_value,current,target,unit,goal:goals!key_results_goal_id_fkey(id,name)",
             )
             .in("id", missingRelatedIds)
         : { data: [], error: null };
@@ -741,6 +762,34 @@ export default function KeyResultDetailPage() {
     setIsSavingCurrentMetric(false);
   };
 
+  const handleDeleteKeyResult = async () => {
+    if (!goal || !keyResult || isDeletingKeyResult) {
+      return;
+    }
+
+    const relatedWarning =
+      tasks.length > 0
+        ? ` KR này đang có ${tasks.length} công việc liên kết và có thể ảnh hưởng dữ liệu liên quan.`
+        : "";
+    if (!window.confirm(`Xóa KR "${keyResult.name}"?${relatedWarning}`)) {
+      return;
+    }
+
+    setIsDeletingKeyResult(true);
+    setActionError(null);
+    setNotice(null);
+
+    const { error } = await supabase.from("key_results").delete().eq("id", keyResult.id);
+
+    if (error) {
+      setActionError(error.message || "Không thể xóa KR.");
+      setIsDeletingKeyResult(false);
+      return;
+    }
+
+    router.push(`${goalHref}?krDeleted=1`);
+  };
+
   return (
     <div className="h-screen overflow-hidden bg-[#f3f5fa] text-slate-900">
       <div className="flex h-full w-full">
@@ -757,24 +806,6 @@ export default function KeyResultDetailPage() {
           />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-7">
-            <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
-              {workspaceAccess.canManage && !workspaceAccess.error && keyResult ? (
-                <Link
-                  href={editKeyResultHref}
-                  className="inline-flex h-9 items-center rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm font-semibold text-amber-800 hover:bg-amber-100"
-                >
-                  Chỉnh sửa KR
-                </Link>
-              ) : null}
-              {workspaceAccess.canManage && !workspaceAccess.error && keyResult ? (
-                <Link
-                  href={createTaskHref}
-                  className="inline-flex h-9 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
-                >
-                  + Thêm công việc
-                </Link>
-              ) : null}
-            </div>
             {!hasValidParams ? (
               <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-5 text-sm text-rose-700">
                 Thiếu mã mục tiêu hoặc mã KR.
@@ -832,101 +863,105 @@ export default function KeyResultDetailPage() {
                           <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-700">
                             {formatKeyResultContributionTypeLabel(keyResult.contribution_type)}
                           </span>
-                          <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
+                          {/* <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
                             {responsibleDepartmentName ?? "Chưa gán phòng ban"}
                           </span>
                           <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
                             {formatKeyResultUnit(keyResult.unit)}
-                          </span>
+                          </span> */}
                         </div>
                       </div>
-
-                      <div className="ml-auto flex w-full flex-wrap items-end justify-end gap-3 xl:w-auto">
-                        <MetricCard
-                          label="Bắt đầu"
-                          value={formatKeyResultMetric(keyResult.start_value, keyResult.unit)}
-                          className="w-[170px]"
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <ActivityHistoryDialog
+                          entityType="key_result"
+                          entityId={keyResult.id}
+                          title="Lịch sử hoạt động của KR"
                         />
-                        <div className="w-[200px] rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                                Hiện tại
-                              </p>
-                              {isEditingCurrentMetric ? (
-                                <div className="mt-2 space-y-2">
-                                  <FormattedNumberInput
-                                    value={currentMetricDraft}
-                                    onValueChange={(value) => setCurrentMetricDraft(value)}
-                                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                                  />
-                                  <p className="text-[11px] text-slate-500">
-                                    Đơn vị tiến độ: {formatKeyResultUnit(keyResult.unit)}.
-                                  </p>
-                                </div>
-                              ) : (
-                                <p className="mt-1.5 text-[36px] leading-none font-semibold text-slate-900">
-                                  {formatKeyResultMetric(keyResult.current, keyResult.unit)}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="mt-3 flex flex-wrap items-center gap-2">
-                            {isEditingCurrentMetric ? (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setCurrentMetricDraft(toNumericInput(keyResult.current));
-                                    setIsEditingCurrentMetric(false);
-                                  }}
-                                  disabled={isSavingCurrentMetric}
-                                  className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  Hủy
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => void handleSaveCurrentMetric()}
-                                  disabled={isSavingCurrentMetric}
-                                  className="inline-flex h-9 items-center rounded-xl bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                                >
-                                  {isSavingCurrentMetric ? "Đang lưu..." : "Lưu tiến độ"}
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setCurrentMetricDraft(toNumericInput(keyResult.current));
-                                  setIsEditingCurrentMetric(true);
-                                }}
-                                className="inline-flex h-9 items-center rounded-xl border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-700 hover:bg-blue-100"
-                              >
-                                Cập nhật tiến độ
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                        <MetricCard
-                          label="Mục tiêu"
-                          value={formatKeyResultMetric(keyResult.target, keyResult.unit)}
-                          className="w-[170px]"
-                        />
+                        {workspaceAccess.canManage && !workspaceAccess.error ? (
+                          <>
+                            <Link
+                              href={editKeyResultHref}
+                              className="inline-flex h-9 items-center rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm font-semibold text-amber-800 hover:bg-amber-100"
+                            >
+                              Sửa KR
+                            </Link>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteKeyResult()}
+                              disabled={isDeletingKeyResult}
+                              className="inline-flex h-9 items-center rounded-xl border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {isDeletingKeyResult ? "Đang xóa KR..." : "Xóa KR"}
+                            </button>
+                          </>
+                        ) : null}
                       </div>
                     </div>
 
                     <div className="mt-5">
                       <div className="mb-2 flex items-center justify-between text-sm">
-                        <span className="font-semibold text-slate-700">Tiến độ KR</span>
+                        <span className="font-semibold text-slate-700"></span>
                         <span className="font-semibold text-slate-900">{keyResultProgress}%</span>
                       </div>
-                      <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
-                        <div
-                          className="h-full rounded-full bg-blue-600"
-                          style={{ width: `${keyResultProgress}%` }}
-                        />
+                      <div className="mb-2 flex flex-wrap items-start justify-between gap-2 text-sm">
+                        <span className="font-semibold text-slate-700">Tiến độ KR</span>
+                        <div className="text-right font-semibold text-slate-900">
+                          {isEditingCurrentMetric ? (
+                            <div className="space-y-2">
+                              <FormattedNumberInput
+                                value={currentMetricDraft}
+                                onValueChange={(value) => setCurrentMetricDraft(value)}
+                                className="h-10 w-full min-w-[220px] rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                              />
+                              <p className="text-[11px] font-medium text-slate-500">
+                                Đơn vị tiến độ: {formatKeyResultUnit(keyResult.unit)}.
+                              </p>
+                            </div>
+                          ) : (
+                            <>
+                              {formatKeyResultMetric(keyResult.current, keyResult.unit)}
+                              {" / "}
+                              {formatKeyResultMetric(keyResult.target, keyResult.unit)}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <ProgressBar value={keyResultProgress} />
+                      <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+                        {isEditingCurrentMetric ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCurrentMetricDraft(toNumericInput(keyResult.current));
+                                setIsEditingCurrentMetric(false);
+                              }}
+                              disabled={isSavingCurrentMetric}
+                              className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Hủy
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleSaveCurrentMetric()}
+                              disabled={isSavingCurrentMetric}
+                              className="inline-flex h-9 items-center rounded-xl bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                            >
+                              {isSavingCurrentMetric ? "Đang lưu..." : "Lưu tiến độ"}
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCurrentMetricDraft(toNumericInput(keyResult.current));
+                              setIsEditingCurrentMetric(true);
+                            }}
+                            className="inline-flex h-9 items-center rounded-xl border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                          >
+                            Cập nhật tiến độ
+                          </button>
+                        )}
                       </div>
                       <p className="mt-2 text-xs text-slate-500">{progressHint}</p>
                     </div>
@@ -1072,57 +1107,102 @@ export default function KeyResultDetailPage() {
                         ) : null}
 
                         {inboundSupportLinks.length > 0 ? (
-                          <div className="mt-4 space-y-3">
-                            {inboundSupportLinks.map((link) => {
-                              const href = keyResultLinkHref(link.supportKeyResult);
-                              const allocationSummary = getSupportAllocationSummary({
-                                allocatedValue: link.allocated_value,
-                                allocatedPercent: link.allocated_percent,
-                                unit: link.supportKeyResult?.unit ?? null,
-                              });
-                              return (
-                                <div
-                                  key={link.id}
-                                  className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
-                                >
-                                  <div className="flex flex-wrap items-start justify-between gap-3">
-                                    <div>
-                                      <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                                        KR hỗ trợ
-                                      </p>
-                                      {href ? (
-                                        <Link
-                                          href={href}
-                                          className="mt-1 inline-flex text-lg font-semibold text-slate-900 hover:text-blue-700"
-                                        >
-                                          {link.supportKeyResult?.name ?? "KR hỗ trợ"}
-                                        </Link>
-                                      ) : (
-                                        <p className="mt-1 text-lg font-semibold text-slate-900">
-                                          {link.supportKeyResult?.name ?? "KR hỗ trợ"}
-                                        </p>
-                                      )}
-                                      <p className="mt-1 text-xs text-slate-500">
-                                        {link.supportKeyResult?.goalName ?? "Chưa có mục tiêu"} ·{" "}
-                                        {formatKeyResultTypeLabel(link.supportKeyResult?.type)} ·{" "}
-                                        {formatKeyResultContributionTypeLabel(
-                                          link.supportKeyResult?.contributionType,
-                                        )}
-                                      </p>
-                                    </div>
+                          <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                            <div className="overflow-x-auto">
+                              <table className="w-full min-w-[980px] text-left">
+                                <thead>
+                                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-[0.08em] text-slate-400">
+                                    <th className="px-4 py-3 font-semibold">Tên KR</th>
+                                    <th className="px-4 py-3 font-semibold">Type</th>
+                                    <th className="px-4 py-3 font-semibold">Tiến độ</th>
+                                    <th className="px-4 py-3 font-semibold">Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {inboundSupportLinks.map((link) => {
+                                    const detailHref = keyResultLinkHref(link.supportKeyResult);
+                                    const editHref = keyResultEditHref(link.supportKeyResult);
+                                    const supportProgress = link.supportKeyResult
+                                      ? getKeyResultComputedProgress({
+                                          id: link.supportKeyResult.id,
+                                          start_value: link.supportKeyResult.startValue,
+                                          current: link.supportKeyResult.current,
+                                          target: link.supportKeyResult.target,
+                                        })
+                                      : 0;
 
-                                    <div>
-                                      <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
-                                        {allocationSummary.shortLabel}: {allocationSummary.value}
-                                      </span>
-                                    </div>
-                                  </div>
-                                  <p className="mt-3 text-sm text-slate-600">
-                                    {link.note?.trim() || "Chưa có ghi chú liên kết."}
-                                  </p>
-                                </div>
-                              );
-                            })}
+                                    return (
+                                      <tr
+                                        key={link.id}
+                                        className="border-b border-slate-100 align-top hover:bg-slate-50/70"
+                                      >
+                                        <td className="px-4 py-4">
+                                          <p className="text-sm font-semibold text-slate-900">
+                                            {link.supportKeyResult?.name ?? "KR hỗ trợ"}
+                                          </p>
+                                          <p className="mt-1 text-xs text-slate-500">
+                                            {link.supportKeyResult?.goalName ?? "Chưa có mục tiêu"}
+                                          </p>
+                                        </td>
+                                        <td className="px-4 py-4 text-sm font-medium text-slate-700">
+                                          {formatKeyResultTypeLabel(link.supportKeyResult?.type)}
+                                        </td>
+                                        <td className="px-4 py-4">
+                                          <div className="w-[180px]">
+                                            <div className="flex items-center justify-between gap-2 text-xs font-semibold">
+                                              <span className="text-slate-800">
+                                                {supportProgress}%
+                                              </span>
+                                              <span className="text-slate-400">
+                                                {link.supportKeyResult
+                                                  ? `${formatKeyResultMetric(link.supportKeyResult.current, link.supportKeyResult.unit)} / ${formatKeyResultMetric(link.supportKeyResult.target, link.supportKeyResult.unit)}`
+                                                  : "-"}
+                                              </span>
+                                            </div>
+                                            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
+                                              <div
+                                                className="h-full rounded-full bg-blue-600"
+                                                style={{ width: `${supportProgress}%` }}
+                                              />
+                                            </div>
+                                          </div>
+                                        </td>
+                                        <td className="px-4 py-4">
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            {detailHref ? (
+                                              <Link
+                                                href={detailHref}
+                                                className="inline-flex h-8 items-center rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                                              >
+                                                Chi tiết KR
+                                              </Link>
+                                            ) : (
+                                              <span className="text-xs text-slate-400">
+                                                Không khả dụng
+                                              </span>
+                                            )}
+                                            {workspaceAccess.canManage &&
+                                            !workspaceAccess.error &&
+                                            editHref ? (
+                                              <Link
+                                                href={editHref}
+                                                className="inline-flex h-8 items-center rounded-lg border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                                              >
+                                                Sửa KR
+                                              </Link>
+                                            ) : (
+                                              <span className="text-xs text-slate-400">
+                                                Không khả dụng
+                                              </span>
+                                            )}
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
                           </div>
                         ) : null}
                       </>
@@ -1135,10 +1215,6 @@ export default function KeyResultDetailPage() {
                         <h2 className="text-base font-semibold text-slate-900">
                           Công việc thực thi của KR
                         </h2>
-                        <p className="mt-1 text-sm text-slate-500">
-                          Công việc chỉ theo dõi phần thực thi. Tiến độ đo lường của KR vẫn lấy trực
-                          tiếp từ giá trị hiện tại và chỉ tiêu.
-                        </p>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
@@ -1165,10 +1241,6 @@ export default function KeyResultDetailPage() {
                       <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center">
                         <p className="text-lg font-semibold text-slate-900">
                           KR này chưa có công việc.
-                        </p>
-                        <p className="mt-2 text-sm text-slate-500">
-                          Hãy thêm công việc để bắt đầu triển khai. Công việc sẽ không tự cộng vào
-                          tiến độ của KR.
                         </p>
                         {canCreateTask ? (
                           <Link
@@ -1324,7 +1396,9 @@ export default function KeyResultDetailPage() {
                     <div className="mt-4 space-y-3 text-sm">
                       <div className="flex items-start justify-between gap-3">
                         <span className="text-slate-500">Tên KR</span>
-                        <span className="text-right font-medium text-slate-800">{keyResult.name}</span>
+                        <span className="text-right font-medium text-slate-800">
+                          {keyResult.name}
+                        </span>
                       </div>
                       <div className="flex items-start justify-between gap-3">
                         <span className="text-slate-500">Loại mục tiêu</span>

@@ -6,6 +6,7 @@ import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
+import { ActivityHistoryDialog } from "@/components/activity-history-dialog";
 import {
   GOAL_STATUSES,
   formatGoalParticipationRoleLabel,
@@ -20,7 +21,6 @@ import {
   formatKeyResultContributionTypeLabel,
   formatKeyResultMetric,
   formatKeyResultTypeLabel,
-  formatKeyResultUnit,
   normalizeKeyResultUnitForType,
   normalizeKeyResultContributionTypeValue,
   normalizeKeyResultTypeValue,
@@ -28,6 +28,7 @@ import {
   type KeyResultContributionTypeValue,
   type KeyResultTypeValue,
 } from "@/lib/constants/key-results";
+import { formatDateDdMmYyyy, formatDateTimeDdMmYyyy } from "@/lib/date-format";
 import {
   buildGoalProgressMap,
   buildGoalDepartmentPerformanceMap,
@@ -42,11 +43,7 @@ import {
 } from "@/lib/goal-owners";
 import { useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
-import {
-  formatTimelineRangeVi,
-  getTimelineMissingReason,
-  isDateRangeOrdered,
-} from "@/lib/timeline";
+import { formatTimelineRangeVi, isDateRangeOrdered } from "@/lib/timeline";
 
 type GoalDetailRow = {
   id: string;
@@ -133,19 +130,7 @@ const statusLabelMap = GOAL_STATUSES.reduce<Record<string, string>>((acc, item) 
 }, {});
 
 const formatDateTime = (value: string | null) => {
-  if (!value) {
-    return "Chưa có";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Không hợp lệ";
-  }
-
-  return new Intl.DateTimeFormat("vi-VN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
+  return formatDateTimeDdMmYyyy(value, "Chưa có", "Không hợp lệ");
 };
 
 const formatQuarterYear = (quarter: number | null, year: number | null) => {
@@ -219,10 +204,8 @@ function ProgressBar({ value }: { value: number }) {
 function DepartmentStatColumn({ value, tone }: { value: number; tone: "primary" | "secondary" }) {
   const safeValue = Math.max(0, Math.min(100, Math.round(value)));
   return (
-    <div className="relative flex h-full w-10 items-end">
-      <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-[11px] font-semibold text-slate-700">
-        {safeValue}%
-      </span>
+    <div className="flex h-full w-10 flex-col items-center justify-end">
+      <span className="mb-1 text-[11px] font-semibold text-slate-700">{safeValue}%</span>
       <div
         className={`w-full rounded-t-sm ${tone === "primary" ? "bg-slate-800" : "bg-slate-400"}`}
         style={{ height: `${Math.max(safeValue, 2)}%` }}
@@ -903,42 +886,6 @@ function GoalDetailPageContent() {
           />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-7">
-            <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
-              {workspaceAccess.canManage && !workspaceAccess.error && hasValidGoalId ? (
-                <Link
-                  href={`/goals/new?editGoalId=${goalId}`}
-                  className="inline-flex h-9 items-center rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm font-semibold text-amber-800 hover:bg-amber-100"
-                >
-                  Sửa mục tiêu
-                </Link>
-              ) : null}
-              {workspaceAccess.canManage && !workspaceAccess.error && hasValidGoalId ? (
-                <button
-                  type="button"
-                  onClick={() => void handleDeleteGoal()}
-                  disabled={isDeletingGoal}
-                  className="inline-flex h-9 items-center rounded-xl border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isDeletingGoal ? "Đang xóa mục tiêu..." : "Xóa mục tiêu"}
-                </button>
-              ) : null}
-              {createKeyResultHref && !isCreateKeyResultButtonDisabled ? (
-                <Link
-                  href={createKeyResultHref}
-                  className="inline-flex h-9 items-center rounded-xl border border-blue-600 bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
-                >
-                  + Thêm KR
-                </Link>
-              ) : (
-                <button
-                  type="button"
-                  disabled
-                  className="inline-flex h-9 items-center rounded-xl border border-blue-300 bg-blue-300 px-4 text-sm font-semibold text-white opacity-60"
-                >
-                  + Thêm KR
-                </button>
-              )}
-            </div>
             {!hasValidGoalId ? (
               <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-5 text-sm text-rose-700">
                 Thiếu mã mục tiêu.
@@ -970,9 +917,6 @@ function GoalDetailPageContent() {
                           <span className="rounded-full bg-blue-50 px-2.5 py-1 font-semibold text-blue-700">
                             {goalTypeLabel}
                           </span>
-                          <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
-                            {goalStatusLabel}
-                          </span>
                           <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-700">
                             {formatQuarterYear(goal.quarter, goal.year)}
                           </span>
@@ -980,71 +924,31 @@ function GoalDetailPageContent() {
                             Người phụ trách · {goalOwnersSummary}
                           </span>
                         </div>
-                        {goalOwners.length > 0 ? (
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {goalOwners.map((owner) => (
-                              <span
-                                key={owner.id}
-                                className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700"
-                              >
-                                {owner.name}
-                              </span>
-                            ))}
-                          </div>
-                        ) : null}
                       </div>
-
-                      <div className="min-w-[280px] flex-1 xl:max-w-[540px]">
-                        <div className="grid overflow-hidden rounded-2xl border border-slate-200 bg-slate-200 sm:grid-cols-2">
-                          <div className="bg-slate-50 px-4 py-3">
-                            <p className="text-[11px] font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                              KR
-                            </p>
-                            <div className="mt-1 flex items-baseline gap-2">
-                              <p className="text-xl font-semibold text-slate-900">
-                                {keyResults.length}
-                              </p>
-                              <span className="text-xs text-slate-500">KR</span>
-                            </div>
-                          </div>
-                          <div className="border-t border-slate-200 bg-slate-50 px-4 py-3 sm:border-t-0 sm:border-l">
-                            <p className="text-[11px] font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                              Phòng Ban Tham Gia
-                            </p>
-                            <div className="mt-1 flex items-baseline gap-2">
-                              <p className="text-xl font-semibold text-slate-900">
-                                {goalDepartments.length || 1}
-                              </p>
-                              <span className="text-xs text-slate-500">phòng ban</span>
-                            </div>
-                          </div>
-                          <div className="border-t border-slate-200 bg-slate-50 px-4 py-3">
-                            <p className="text-[11px] font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                              Chỉ Tiêu
-                            </p>
-                            <p className="mt-1 truncate text-xl font-semibold text-slate-900">
-                              {hasGoalMetric
-                                ? formatKeyResultMetric(goalMetricTarget, goalMetricUnit)
-                                : "Chưa đặt"}
-                            </p>
-                            <p className="mt-0.5 text-xs text-slate-500">
-                              {formatKeyResultUnit(goalMetricUnit)}
-                            </p>
-                          </div>
-                          <div className="border-t border-slate-200 bg-slate-50 px-4 py-3 sm:border-l">
-                            <p className="text-[11px] font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                              Kỳ
-                            </p>
-                            <div className="mt-1 flex items-baseline gap-2">
-                              <p className="text-xl font-semibold text-slate-900">
-                                {goal.quarter ? `Q${goal.quarter}` : "--"}
-                              </p>
-                              <span className="text-xs text-slate-500">
-                                {goal.year ?? "Chưa đặt năm"}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <ActivityHistoryDialog
+                          entityType="goal"
+                          entityId={goal.id}
+                          title="Lịch sử hoạt động của mục tiêu"
+                        />
+                        {workspaceAccess.canManage && !workspaceAccess.error && hasValidGoalId ? (
+                          <>
+                            <Link
+                              href={`/goals/new?editGoalId=${goalId}`}
+                              className="inline-flex h-9 items-center rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm font-semibold text-amber-800 hover:bg-amber-100"
+                            >
+                              Sửa mục tiêu
+                            </Link>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteGoal()}
+                              disabled={isDeletingGoal}
+                              className="inline-flex h-9 items-center rounded-xl border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {isDeletingGoal ? "Đang xóa mục tiêu..." : "Xóa mục tiêu"}
+                            </button>
+                          </>
+                        ) : null}
                       </div>
                     </div>
 
@@ -1052,14 +956,15 @@ function GoalDetailPageContent() {
                       {keyResults.length > 0 ? (
                         <>
                           <div className="mb-2 flex items-center justify-between text-sm">
-                            <span className="font-semibold text-slate-700" title={goalProgressHelp}>
-                              Tiến độ mục tiêu
-                            </span>
+                            <span
+                              className="font-semibold text-slate-700"
+                              title={goalProgressHelp}
+                            ></span>
                             <span className="font-semibold text-slate-900">{goalProgress}%</span>
                           </div>
                           {goalType === "kpi" ? (
                             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
-                              <span className="font-medium text-slate-600">Chỉ số tiến độ</span>
+                              <span className="font-medium text-slate-600">Tiến độ mục tiêu</span>
                               <span className="font-semibold text-slate-900">
                                 {formatKeyResultMetric(
                                   kpiDirectSummary.totalCurrent,
@@ -1075,26 +980,6 @@ function GoalDetailPageContent() {
                             </div>
                           ) : null}
                           <ProgressBar value={goalProgress} />
-                          {goalType === "kpi" ? (
-                            <p className="mt-2 text-xs text-slate-600">
-                              {kpiDirectSummary.safeGoalTarget === null
-                                ? `${kpiDirectSummary.directCount} KR trực tiếp đang cộng dồn giá trị hiện tại.`
-                                : kpiDirectSummary.currentGap && kpiDirectSummary.currentGap > 0
-                                  ? `Còn thiếu ${formatKeyResultMetric(
-                                      kpiDirectSummary.currentGap,
-                                      goalMetricUnit,
-                                    )} để chạm KPI của mục tiêu.`
-                                  : (kpiDirectSummary.currentOver ?? 0) > 0
-                                    ? `Đã vượt ${formatKeyResultMetric(
-                                        kpiDirectSummary.currentOver ?? 0,
-                                        goalMetricUnit,
-                                      )} so với KPI của mục tiêu.`
-                                    : "Đã chạm đúng KPI của mục tiêu."}
-                            </p>
-                          ) : null}
-                          <p className="mt-2 text-xs text-slate-500" title={goalProgressHelp}>
-                            Dựa trên tiến độ của các KR, không lấy từ công việc.
-                          </p>
                           {goalType === "kpi" ? (
                             <div className="mt-4">
                               <div
@@ -1171,15 +1056,6 @@ function GoalDetailPageContent() {
                     </p>
                   </article>
 
-                  {!goal.description?.trim() ? (
-                    <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                      <h2 className="text-base font-semibold text-slate-900">Ghi chú nội bộ</h2>
-                      <p className="mt-2 text-sm leading-relaxed text-slate-700">
-                        {goal.note?.trim() || "Chưa có ghi chú."}
-                      </p>
-                    </article>
-                  ) : null}
-
                   <article className="order-5 rounded-2xl border border-slate-200 bg-white p-5">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
@@ -1236,16 +1112,12 @@ function GoalDetailPageContent() {
                     {departmentPerformanceItems.length > 0 ? (
                       departmentPerformanceView === "table" ? (
                         <div className="mt-4 overflow-x-auto">
-                          <table className="w-full min-w-[920px] text-left text-sm">
+                          <table className="w-full min-w-[760px] text-left text-sm">
                             <thead>
                               <tr className="border-b border-slate-200 text-[11px] uppercase tracking-[0.08em] text-slate-500">
                                 <th className="px-4 py-3 font-semibold">Phòng ban</th>
                                 <th className="px-4 py-3 font-semibold">Vai trò</th>
                                 <th className="px-4 py-3 text-right font-semibold">KR sở hữu</th>
-                                <th className="px-4 py-3 text-right font-semibold">
-                                  Tỷ trọng mục tiêu
-                                </th>
-                                <th className="px-4 py-3 text-right font-semibold">Tỷ trọng KR</th>
                                 <th className="px-4 py-3 text-right font-semibold">
                                   Tiến độ KR sở hữu
                                 </th>
@@ -1268,12 +1140,6 @@ function GoalDetailPageContent() {
                                   </td>
                                   <td className="px-4 py-3 text-right font-medium text-slate-900">
                                     {department.ownedKrCount}
-                                  </td>
-                                  <td className="px-4 py-3 text-right font-medium text-slate-900">
-                                    {department.goalWeight.toFixed(2)}
-                                  </td>
-                                  <td className="px-4 py-3 text-right font-medium text-slate-900">
-                                    {department.krWeight.toFixed(2)}
                                   </td>
                                   <td className="px-4 py-3 text-right font-medium text-slate-900">
                                     {department.departmentKrProgress}%
@@ -1309,8 +1175,8 @@ function GoalDetailPageContent() {
                                 ),
                               }}
                             >
-                              <div className="grid grid-cols-[40px_minmax(0,1fr)] gap-4">
-                                <div className="relative h-[260px]">
+                              <div className="grid grid-cols-[40px_minmax(0,1fr)] gap-4 pt-4">
+                                <div className="relative h-[280px]">
                                   {[100, 75, 50, 25, 0].map((tick) => (
                                     <div
                                       key={tick}
@@ -1323,7 +1189,7 @@ function GoalDetailPageContent() {
                                 </div>
 
                                 <div className="relative">
-                                  <div className="absolute inset-0 h-[260px]">
+                                  <div className="absolute inset-0 h-[280px]">
                                     {[100, 75, 50, 25, 0].map((tick) => (
                                       <div
                                         key={tick}
@@ -1344,7 +1210,7 @@ function GoalDetailPageContent() {
                                   >
                                     {departmentPerformanceChartItems.map((department) => (
                                       <div key={department.departmentId} className="min-w-[112px]">
-                                        <div className="flex h-[260px] items-end justify-center gap-3">
+                                        <div className="flex h-[280px] items-end justify-center gap-3">
                                           <DepartmentStatColumn
                                             value={department.performance}
                                             tone="primary"
@@ -1387,15 +1253,31 @@ function GoalDetailPageContent() {
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
                         <h2 className="text-base font-semibold text-slate-900">KR</h2>
-                        <p className="mt-1 text-sm text-slate-500">
+                        {/* <p className="mt-1 text-sm text-slate-500">
                           Hiển thị nhanh tiến độ, chỉ số hiện tại, mục tiêu và khung thời gian của
                           từng KR.
-                        </p>
+                        </p> */}
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
                           {keyResults.length} KR
                         </span>
+                        {createKeyResultHref && !isCreateKeyResultButtonDisabled ? (
+                          <Link
+                            href={createKeyResultHref}
+                            className="inline-flex h-9 items-center rounded-xl border border-blue-600 bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
+                          >
+                            + Thêm KR
+                          </Link>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled
+                            className="inline-flex h-9 items-center rounded-xl border border-blue-300 bg-blue-300 px-4 text-sm font-semibold text-white opacity-60"
+                          >
+                            + Thêm KR
+                          </button>
+                        )}
                       </div>
                     </div>
                     {!isCheckingCreatePermission && !canCreateKeyResult ? (
@@ -1411,7 +1293,7 @@ function GoalDetailPageContent() {
                       </div>
                     ) : null}
 
-                    {goalType === "kpi" ? (
+                    {/* {goalType === "kpi" ? (
                       <div
                         className={`mt-4 rounded-2xl border px-4 py-4 text-sm ${
                           kpiDirectSummary.safeGoalTarget !== null &&
@@ -1461,7 +1343,7 @@ function GoalDetailPageContent() {
                           </p>
                         ) : null}
                       </div>
-                    ) : null}
+                    ) : null} */}
 
                     {keyResultLoadError ? (
                       <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
@@ -1474,44 +1356,13 @@ function GoalDetailPageContent() {
                         <p className="mt-2 text-sm text-slate-500">
                           Hãy tạo KR để bắt đầu theo dõi mục tiêu.
                         </p>
-                        {createKeyResultHref && !isCreateKeyResultButtonDisabled ? (
-                          <Link
-                            href={createKeyResultHref}
-                            className="mt-4 inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
-                          >
-                            + Thêm KR
-                          </Link>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled
-                            className="mt-4 inline-flex h-10 items-center rounded-xl bg-blue-300 px-4 text-sm font-semibold text-white"
-                          >
-                            + Thêm KR
-                          </button>
-                        )}
                       </div>
                     ) : null}
 
                     {!keyResultLoadError && keyResults.length > 0 ? (
                       <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
-                        <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          <div>
-                            <p className="text-xs font-semibold tracking-[0.08em] text-slate-500 uppercase">
-                              Bảng KR
-                            </p>
-                            <p className="mt-1 text-xs text-slate-500">
-                              {goalType === "kpi"
-                                ? "Mục tiêu KPI cộng dồn giá trị hiện tại của KR trực tiếp."
-                                : "Mục tiêu OKR lấy trung bình tiến độ của các KR trực tiếp. KR hỗ trợ không được cộng vào tiến độ mục tiêu."}
-                            </p>
-                          </div>
-                          <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
-                            {keyResults.length} dòng
-                          </span>
-                        </div>
                         <div className="overflow-x-auto">
-                          <table className="w-full min-w-[1220px] text-left text-sm">
+                          <table className="w-full min-w-[1100px] text-left text-sm">
                             <thead className="bg-white">
                               <tr className="border-b border-slate-200 text-[11px] uppercase tracking-[0.08em] text-slate-500">
                                 <th className="px-4 py-3 font-semibold">KR</th>
@@ -1519,7 +1370,6 @@ function GoalDetailPageContent() {
                                 <th className="px-4 py-3 font-semibold">Phòng ban</th>
                                 <th className="px-4 py-3 font-semibold">Chỉ số</th>
                                 <th className="px-4 py-3 font-semibold">Thời gian</th>
-                                <th className="px-4 py-3 font-semibold">Tiến độ</th>
                                 <th className="px-4 py-3 text-right font-semibold">Thao tác</th>
                               </tr>
                             </thead>
@@ -1541,9 +1391,9 @@ function GoalDetailPageContent() {
                                         >
                                           {keyResult.name}
                                         </Link>
-                                        <p className="mt-1 text-xs text-slate-500">
+                                        {/* <p className="mt-1 text-xs text-slate-500">
                                           {keyResult.description?.trim() || "Chưa có mô tả."}
-                                        </p>
+                                        </p> */}
                                       </td>
                                       <td className="px-4 py-4">
                                         <div className="flex flex-wrap gap-2 text-xs">
@@ -1566,9 +1416,18 @@ function GoalDetailPageContent() {
                                           {" / "}
                                           {formatKeyResultMetric(keyResult.target, keyResult.unit)}
                                         </p>
-                                        <p className="mt-1 text-xs text-slate-500">
+                                        <div className="mt-3 w-40 space-y-2">
+                                          <ProgressBar value={keyResultProgress} />
+                                          <div className="flex items-center justify-between text-xs">
+                                            <span className="text-slate-500"></span>
+                                            <span className="font-semibold text-slate-900">
+                                              {keyResultProgress}%
+                                            </span>
+                                          </div>
+                                        </div>
+                                        {/* <p className="mt-1 text-xs text-slate-500">
                                           Hiện tại / KPI · {formatKeyResultUnit(keyResult.unit)}
-                                        </p>
+                                        </p> */}
                                       </td>
                                       <td className="px-4 py-4">
                                         <p className="font-medium text-slate-900">
@@ -1580,25 +1439,14 @@ function GoalDetailPageContent() {
                                             },
                                           )}
                                         </p>
-                                        <p className="mt-1 text-xs text-slate-500">
+                                        {/* <p className="mt-1 text-xs text-slate-500">
                                           {getTimelineMissingReason(
                                             keyResult.start_date,
                                             keyResult.end_date,
                                             "KR chưa có mốc thời gian",
                                             "Mốc thời gian KR không hợp lệ",
                                           ) ?? "Khung thời gian kế hoạch của KR."}
-                                        </p>
-                                      </td>
-                                      <td className="px-4 py-4">
-                                        <div className="w-36 space-y-2">
-                                          <div className="flex items-center justify-between text-xs">
-                                            <span className="text-slate-500">KR</span>
-                                            <span className="font-semibold text-slate-900">
-                                              {keyResultProgress}%
-                                            </span>
-                                          </div>
-                                          <ProgressBar value={keyResultProgress} />
-                                        </div>
+                                        </p> */}
                                       </td>
                                       <td className="px-4 py-4 whitespace-nowrap">
                                         <div className="flex justify-end gap-2 whitespace-nowrap">
@@ -1606,15 +1454,15 @@ function GoalDetailPageContent() {
                                             href={keyResultDetailHref}
                                             className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-slate-200 bg-white px-4 text-center text-sm font-semibold text-slate-700 hover:bg-slate-100"
                                           >
-                                            Chi tiết KR
+                                            Chi tiết
                                           </Link>
                                           {canCreateKeyResult ? (
                                             <button
                                               type="button"
                                               onClick={() => startEditingKeyResultScale(keyResult)}
-                                              className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-slate-200 bg-white px-4 text-center text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                                              className="inline-flex cursor-pointer h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-slate-200 bg-white px-4 text-center text-sm font-semibold text-slate-700 hover:bg-slate-100"
                                             >
-                                              Sửa KR
+                                              Sửa
                                             </button>
                                           ) : null}
                                         </div>
@@ -1624,7 +1472,7 @@ function GoalDetailPageContent() {
                                     {savedKeyResultId === keyResult.id ? (
                                       <tr className="border-b border-slate-100 bg-emerald-50/60">
                                         <td
-                                          colSpan={8}
+                                          colSpan={6}
                                           className="px-4 py-3 text-sm text-emerald-700"
                                         >
                                           Đã lưu KR.
@@ -1704,13 +1552,13 @@ function GoalDetailPageContent() {
                       <div className="flex items-start justify-between gap-3">
                         <span className="text-slate-500">Bắt đầu</span>
                         <span className="text-right font-medium text-slate-800">
-                          {goal.start_date || "Chưa đặt"}
+                          {formatDateDdMmYyyy(goal.start_date, "Chưa đặt", "Không hợp lệ")}
                         </span>
                       </div>
                       <div className="flex items-start justify-between gap-3">
                         <span className="text-slate-500">Kết thúc</span>
                         <span className="text-right font-medium text-slate-800">
-                          {goal.end_date || "Chưa đặt"}
+                          {formatDateDdMmYyyy(goal.end_date, "Chưa đặt", "Không hợp lệ")}
                         </span>
                       </div>
                       <div className="flex items-start justify-between gap-3">
@@ -1765,7 +1613,7 @@ function GoalDetailPageContent() {
 
                       <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                         <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                          TB tiến độ KR
+                          Trung bình tiến độ KR
                         </p>
                         <p className="mt-2 text-2xl font-semibold text-slate-900">
                           {averageKeyResultProgress}%
@@ -1785,44 +1633,25 @@ function GoalDetailPageContent() {
                         <>
                           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                             <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                              KPI từ KR trực tiếp
+                              Tiến độ hiện tại
                             </p>
                             <p className="mt-2 text-2xl font-semibold text-slate-900">
                               {formatKeyResultMetric(kpiDirectSummary.totalCurrent, goalMetricUnit)}
-                            </p>
-                            <p className="mt-1 text-xs text-slate-500">
-                              {kpiDirectSummary.directCount} KR trực tiếp đang đóng góp vào mục tiêu
-                              KPI
-                            </p>
-                          </div>
-
-                          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                            <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                              Tổng KPI KR
-                            </p>
-                            <p className="mt-2 text-2xl font-semibold text-slate-900">
                               {kpiDirectSummary.safeGoalTarget !== null
-                                ? `${kpiDirectSummary.targetCoveragePercent}%`
-                                : "Chưa rõ"}
-                            </p>
-                            <p className="mt-1 text-xs text-slate-500">
-                              {kpiDirectSummary.safeGoalTarget === null
-                                ? "Mục tiêu KPI chưa có chỉ tiêu để đối chiếu."
-                                : kpiDirectSummary.targetGap && kpiDirectSummary.targetGap > 0
-                                  ? `Thiếu ${formatKeyResultMetric(
-                                      kpiDirectSummary.targetGap,
-                                      goalMetricUnit,
-                                    )} chỉ tiêu để đủ KPI của mục tiêu`
-                                  : "Tổng chỉ tiêu KR trực tiếp đã phủ đủ KPI của mục tiêu"}
+                                ? ` / ${formatKeyResultMetric(
+                                    kpiDirectSummary.safeGoalTarget,
+                                    goalMetricUnit,
+                                  )}`
+                                : ""}
                             </p>
                           </div>
                         </>
                       ) : null}
 
-                      <div className="rounded-xl border border-slate-100 bg-blue-50/60 px-4 py-3 text-sm text-blue-800">
+                      {/* <div className="rounded-xl border border-slate-100 bg-blue-50/60 px-4 py-3 text-sm text-blue-800">
                         <p className="font-semibold">Cách tính tiến độ</p>
                         <p className="mt-1">{goalProgressHelp}</p>
-                      </div>
+                      </div> */}
                     </div>
                   </article>
 
@@ -1854,10 +1683,10 @@ function GoalDetailPageContent() {
                                 {formatGoalParticipationRoleLabel(department.role)}
                               </span>
                             </div>
-                            <p className="mt-2 text-xs text-slate-500">
+                            {/* <p className="mt-2 text-xs text-slate-500">
                               Tỷ trọng mục tiêu {department.goalWeight.toFixed(2)} · Tỷ trọng KR{" "}
                               {department.krWeight.toFixed(2)}
-                            </p>
+                            </p> */}
                           </div>
                         ))
                       ) : (

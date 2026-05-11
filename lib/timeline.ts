@@ -1,3 +1,5 @@
+import { formatDateDdMmYyyy } from "@/lib/date-format";
+
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export const parseDateValue = (value: string | null | undefined) => {
@@ -31,16 +33,7 @@ export const formatDateOnlyVi = (
   value: string | null | undefined,
   fallback = "Chưa đặt",
 ) => {
-  if (!value) {
-    return fallback;
-  }
-
-  const date = parseDateValue(value);
-  if (!date) {
-    return "Không hợp lệ";
-  }
-
-  return new Intl.DateTimeFormat("vi-VN", { dateStyle: "short" }).format(date);
+  return formatDateDdMmYyyy(value, fallback, "Không hợp lệ");
 };
 
 export const getTimelineRange = (

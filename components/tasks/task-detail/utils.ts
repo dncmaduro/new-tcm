@@ -11,6 +11,7 @@ import {
   type TaskStatusValue,
   type TaskTypeValue,
 } from "@/lib/constants/tasks";
+import { formatDateTimeDdMmYyyy } from "@/lib/date-format";
 import { getComputedTaskProgress } from "@/lib/okr";
 import type {
   KeyResultLiteRow,
@@ -75,19 +76,7 @@ export const getTaskStatusLabel = (status: string | null | undefined) =>
   TASK_STATUSES.find((item) => item.value === normalizeTaskStatus(status))?.label ?? "Cần làm";
 
 export const formatDateTime = (value: string | null) => {
-  if (!value) {
-    return "Chưa có";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Không hợp lệ";
-  }
-
-  return new Intl.DateTimeFormat("vi-VN", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(date);
+  return formatDateTimeDdMmYyyy(value, "Chưa có", "Không hợp lệ");
 };
 
 export const buildTaskFormState = (task: TaskRow): TaskFormState => {

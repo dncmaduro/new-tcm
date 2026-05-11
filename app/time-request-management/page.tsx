@@ -10,6 +10,7 @@ import {
   isMissingTimeRequestType,
   type TimeRequestType,
 } from "@/lib/constants/time-requests";
+import { formatDateDdMmYyyy, formatDateTimeDdMmYyyy } from "@/lib/date-format";
 import { buildHolidayMap, fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
 import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
@@ -71,29 +72,11 @@ const normalizeText = (value: string | null | undefined) =>
     .toLowerCase();
 
 const formatDateVi = (value: string | null) => {
-  if (!value) {
-    return "--";
-  }
-  const date = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(date.getTime())) {
-    return "--";
-  }
-  return new Intl.DateTimeFormat("vi-VN", { dateStyle: "short" }).format(date);
+  return formatDateDdMmYyyy(value, "--", "--");
 };
 
 const formatDateViLong = (value: string | null) => {
-  if (!value) {
-    return "--";
-  }
-  const date = new Date(value.includes("T") ? value : `${value}T00:00:00`);
-  if (Number.isNaN(date.getTime())) {
-    return "--";
-  }
-  return new Intl.DateTimeFormat("vi-VN", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  }).format(date);
+  return formatDateDdMmYyyy(value, "--", "--");
 };
 
 const formatTimeVi = (value: string | null) => {
@@ -112,17 +95,7 @@ const formatTimeVi = (value: string | null) => {
 };
 
 const formatDateTime = (value: string | null) => {
-  if (!value) {
-    return "--";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "--";
-  }
-  return new Intl.DateTimeFormat("vi-VN", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(date);
+  return formatDateTimeDdMmYyyy(value, "--", "--");
 };
 
 const toRequestStatus = (reviewers: TimeRequestReviewerRow[] | null | undefined): RequestStatus => {

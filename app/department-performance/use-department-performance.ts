@@ -19,6 +19,7 @@ import {
   normalizeKeyResultTypeValue,
   usesPercentSupportAllocation,
 } from "@/lib/constants/key-results";
+import { formatDateDdMmYyyy } from "@/lib/date-format";
 import { supabase } from "@/lib/supabase";
 
 type GoalRow = {
@@ -351,11 +352,6 @@ const healthRankMap: Record<DepartmentPerformanceHealth, number> = {
 
 const emptyAsyncResult = <TValue,>() => Promise.resolve({ data: [] as TValue[], error: null });
 
-const shortDateFormatter = new Intl.DateTimeFormat("vi-VN", {
-  day: "2-digit",
-  month: "2-digit",
-});
-
 const toNumeric = (value: number | string | null | undefined) => {
   if (value === null || value === undefined) {
     return null;
@@ -490,11 +486,11 @@ const formatTimelineLabel = (value: string | null) => {
   if (!value) {
     return "Hôm nay";
   }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
+  const formatted = formatDateDdMmYyyy(value, "Hôm nay", "Hôm nay");
+  if (formatted === "Hôm nay") {
     return "Hôm nay";
   }
-  return shortDateFormatter.format(date);
+  return formatted;
 };
 
 const extractProgressFromLogPayload = (value: Record<string, unknown> | null | undefined) => {

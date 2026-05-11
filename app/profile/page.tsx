@@ -5,6 +5,7 @@ import { ChangeEvent, useEffect, useState } from "react";
 import Cropper, { Area } from "react-easy-crop";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { formatDateDdMmYyyy, formatDateTimeDdMmYyyy } from "@/lib/date-format";
 import { supabase } from "@/lib/supabase";
 
 type UserRoleDepartmentRow = {
@@ -49,34 +50,11 @@ const toStringValue = (value: unknown) => {
 };
 
 const formatDateTime = (value: string | null) => {
-  if (!value) {
-    return "Chưa có";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Không hợp lệ";
-  }
-
-  return new Intl.DateTimeFormat("vi-VN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
+  return formatDateTimeDdMmYyyy(value, "Chưa có", "Không hợp lệ");
 };
 
 const formatDateOnly = (value: string | null) => {
-  if (!value) {
-    return "Chưa có";
-  }
-
-  const date = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(date.getTime())) {
-    return "Không hợp lệ";
-  }
-
-  return new Intl.DateTimeFormat("vi-VN", {
-    dateStyle: "medium",
-  }).format(date);
+  return formatDateDdMmYyyy(value, "Chưa có", "Không hợp lệ");
 };
 
 const toInitials = (value: string) => {

@@ -7,6 +7,7 @@ import { TaskExecutionSection } from "@/components/tasks/task-detail/task-execut
 import { TaskMetaSidebar } from "@/components/tasks/task-detail/task-meta-sidebar";
 import { TaskNotesCard } from "@/components/tasks/task-detail/task-notes-card";
 import { TaskOverviewCard } from "@/components/tasks/task-detail/task-overview-card";
+import { ActivityHistoryDialog } from "@/components/activity-history-dialog";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import type {
   GoalLiteRow,
@@ -649,8 +650,16 @@ export default function TaskDetailPage() {
           />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 pt-5 lg:px-7">
-            {(secondaryAction || primaryAction) ? (
+            {(task || secondaryAction || primaryAction) ? (
               <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+                {task ? (
+                  <ActivityHistoryDialog
+                    entityType="task"
+                    entityId={task.id}
+                    title="Lịch sử hoạt động của công việc"
+                    triggerClassName="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                ) : null}
                 {secondaryAction ? (
                   <button
                     type="button"

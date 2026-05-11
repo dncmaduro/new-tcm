@@ -43,23 +43,13 @@ import {
   normalizePerformanceReportItemRow,
   normalizePerformanceReportRow,
 } from "@/lib/performance-reports";
+import { formatDateTimeDdMmYyyy } from "@/lib/date-format";
 import { buildGoalProgressMap, buildKeyResultProgressMap, computeMetricProgress } from "@/lib/okr";
 import { useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
 
-const formatDateTime = (value: string | null) => {
-  if (!value) {
-    return "Chưa cập nhật";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Chưa cập nhật";
-  }
-  return new Intl.DateTimeFormat("vi-VN", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(date);
-};
+const formatDateTime = (value: string | null) =>
+  formatDateTimeDdMmYyyy(value, "Chưa cập nhật", "Chưa cập nhật");
 
 type TrackedGoalRow = {
   id: string;
