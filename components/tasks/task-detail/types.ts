@@ -58,6 +58,31 @@ export type ProfileLiteRow = {
   email: string | null;
 };
 
+export type TaskEvidenceType = "link" | "file" | "other";
+
+export type TaskEvidenceCreator = {
+  id: string;
+  name: string | null;
+  avatar: string | null;
+};
+
+export type TaskEvidence = {
+  id: string;
+  task_id: string;
+  evidence_type: TaskEvidenceType;
+  title: string;
+  description: string | null;
+  url: string | null;
+  file_path: string | null;
+  file_name: string | null;
+  mime_type: string | null;
+  file_size: number | null;
+  created_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  creator: TaskEvidenceCreator | null;
+};
+
 export type TaskFormState = {
   name: string;
   description: string;

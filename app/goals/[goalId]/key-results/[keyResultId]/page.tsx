@@ -899,12 +899,10 @@ export default function KeyResultDetailPage() {
                     </div>
 
                     <div className="mt-5">
-                      <div className="mb-2 flex items-center justify-between text-sm">
-                        <span className="font-semibold text-slate-700"></span>
-                        <span className="font-semibold text-slate-900">{keyResultProgress}%</span>
-                      </div>
                       <div className="mb-2 flex flex-wrap items-start justify-between gap-2 text-sm">
-                        <span className="font-semibold text-slate-700">Tiến độ KR</span>
+                        <span className="font-semibold text-slate-700">
+                          Tiến độ KR ({keyResultProgress}%)
+                        </span>
                         <div className="text-right font-semibold text-slate-900">
                           {isEditingCurrentMetric ? (
                             <div className="space-y-2">
@@ -1109,13 +1107,19 @@ export default function KeyResultDetailPage() {
                         {inboundSupportLinks.length > 0 ? (
                           <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
                             <div className="overflow-x-auto">
-                              <table className="w-full min-w-[980px] text-left">
+                              <table className="w-full min-w-[720px] table-fixed text-left">
+                                <colgroup>
+                                  <col />
+                                  <col className="w-24" />
+                                  <col className="w-[220px]" />
+                                  <col className="w-[190px]" />
+                                </colgroup>
                                 <thead>
                                   <tr className="border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-[0.08em] text-slate-400">
                                     <th className="px-4 py-3 font-semibold">Tên KR</th>
-                                    <th className="px-4 py-3 font-semibold">Type</th>
+                                    <th className="px-4 py-3 font-semibold">Loại</th>
                                     <th className="px-4 py-3 font-semibold">Tiến độ</th>
-                                    <th className="px-4 py-3 font-semibold">Action</th>
+                                    <th className="px-4 py-3 font-semibold">Thao tác</th>
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -1148,7 +1152,7 @@ export default function KeyResultDetailPage() {
                                           {formatKeyResultTypeLabel(link.supportKeyResult?.type)}
                                         </td>
                                         <td className="px-4 py-4">
-                                          <div className="w-[180px]">
+                                          <div className="w-full max-w-[180px]">
                                             <div className="flex items-center justify-between gap-2 text-xs font-semibold">
                                               <span className="text-slate-800">
                                                 {supportProgress}%
@@ -1168,7 +1172,7 @@ export default function KeyResultDetailPage() {
                                           </div>
                                         </td>
                                         <td className="px-4 py-4">
-                                          <div className="flex flex-wrap items-center gap-2">
+                                          <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
                                             {detailHref ? (
                                               <Link
                                                 href={detailHref}
@@ -1285,25 +1289,17 @@ export default function KeyResultDetailPage() {
 
                         <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
                           <div className="overflow-x-auto">
-                            <table className="w-full min-w-[1120px] text-left">
+                            <table className="w-full min-w-[920px] text-left">
                               <thead>
                                 <tr className="border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-[0.08em] text-slate-400">
                                   <th className="px-4 py-3 font-semibold">Công việc</th>
                                   <th className="px-4 py-3 font-semibold">Người phụ trách</th>
                                   <th className="px-4 py-3 font-semibold">Tiến độ thực thi</th>
-                                  <th className="px-4 py-3 font-semibold">Thời gian thực thi</th>
                                   <th className="px-4 py-3 font-semibold">Thao tác</th>
                                 </tr>
                               </thead>
                               <tbody>
                                 {tasks.map((task) => {
-                                  const timelineHint =
-                                    getTimelineMissingReason(
-                                      task.startDate,
-                                      task.endDate,
-                                      "Công việc chưa có mốc thời gian",
-                                      "Mốc thời gian công việc không hợp lệ",
-                                    ) ?? "Nằm trong khung thời gian của KR";
                                   const alignmentWarning = getTimelineOutsideParentWarning(
                                     task.startDate,
                                     task.endDate,
@@ -1330,6 +1326,16 @@ export default function KeyResultDetailPage() {
                                               {task.typeLabel}
                                             </span>
                                           </div>
+                                          <p className="mt-2 text-sm text-slate-600">
+                                            {formatTimelineRangeVi(task.startDate, task.endDate, {
+                                              fallback: "Công việc chưa có mốc thời gian",
+                                            })}
+                                          </p>
+                                          {alignmentWarning ? (
+                                            <p className="mt-1 text-xs text-amber-600">
+                                              {alignmentWarning}
+                                            </p>
+                                          ) : null}
                                         </td>
                                         <td className="px-4 py-4">
                                           <span
@@ -1340,11 +1346,8 @@ export default function KeyResultDetailPage() {
                                         </td>
                                         <td className="px-4 py-4">
                                           <div className="w-[140px]">
-                                            <div className="flex items-center justify-between gap-2 text-xs font-semibold">
-                                              <span className="text-slate-700">
-                                                {task.progress}%
-                                              </span>
-                                              <span className="text-slate-400">Công việc</span>
+                                            <div className="text-xs font-semibold text-slate-700">
+                                              {task.progress}%
                                             </div>
                                             <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
                                               <div
@@ -1353,21 +1356,6 @@ export default function KeyResultDetailPage() {
                                               />
                                             </div>
                                           </div>
-                                        </td>
-                                        <td className="px-4 py-4 text-sm text-slate-600">
-                                          <p className="font-medium text-slate-700">
-                                            {formatTimelineRangeVi(task.startDate, task.endDate, {
-                                              fallback: "Công việc chưa có mốc thời gian",
-                                            })}
-                                          </p>
-                                          <p className="mt-1 text-xs text-slate-400">
-                                            {timelineHint}
-                                          </p>
-                                          {alignmentWarning ? (
-                                            <p className="mt-1 text-xs text-amber-600">
-                                              {alignmentWarning}
-                                            </p>
-                                          ) : null}
                                         </td>
                                         <td className="px-4 py-4">
                                           <Link

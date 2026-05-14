@@ -94,7 +94,7 @@ export function TaskExecutionSection({
             </div>
           </div>
 
-          <ProgressSummary progress={form.progress} label="Execution progress" className="mt-4" />
+          <ProgressSummary progress={form.progress} label="Tiến độ thực thi" className="mt-4" />
 
           <div className="mt-4 grid gap-4">
             <label className="space-y-1.5">

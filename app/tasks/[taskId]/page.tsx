@@ -1,13 +1,11 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { LinkedKRCard } from "@/components/tasks/task-detail/linked-kr-card";
-import { TaskExecutionSection } from "@/components/tasks/task-detail/task-execution-section";
 import { TaskMetaSidebar } from "@/components/tasks/task-detail/task-meta-sidebar";
-import { TaskNotesCard } from "@/components/tasks/task-detail/task-notes-card";
+import { TaskEvidenceSection } from "@/components/tasks/task-detail/task-evidence-section";
 import { TaskOverviewCard } from "@/components/tasks/task-detail/task-overview-card";
-import { ActivityHistoryDialog } from "@/components/activity-history-dialog";
+import { CommentSection } from "@/components/comments/comment-section";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import type {
   GoalLiteRow,
@@ -15,12 +13,10 @@ import type {
   ProfileLiteRow,
   TaskFormState,
   TaskRow,
-  TaskTimelineFormState,
   TaskDetailBreadcrumb,
 } from "@/components/tasks/task-detail/types";
 import {
   buildTaskFormState,
-  buildTaskTimelineForm,
   clampProgress,
   formatDateTime,
 } from "@/components/tasks/task-detail/utils";
@@ -30,14 +26,9 @@ import {
   getTaskStatusByProgress,
 } from "@/lib/constants/tasks";
 import { normalizeKeyResultUnitForType } from "@/lib/constants/key-results";
-import { buildKeyResultProgressMap } from "@/lib/okr";
 import { useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
-import {
-  formatTimelineRangeVi,
-  getTimelineOutsideParentWarning,
-  isDateRangeOrdered,
-} from "@/lib/timeline";
+import { formatTimelineRangeVi } from "@/lib/timeline";
 
 const DEFAULT_FORM: TaskFormState = {
   name: "",
@@ -53,11 +44,6 @@ const DEFAULT_FORM: TaskFormState = {
   target: "",
   progress: 0,
   weight: 1,
-};
-
-const DEFAULT_TIMELINE_FORM: TaskTimelineFormState = {
-  startDate: "",
-  endDate: "",
 };
 
 const toNumber = (value: unknown, fallback: number) => {
@@ -167,17 +153,17 @@ const normalizeTaskRecord = (
 
 export default function TaskDetailPage() {
   const params = useParams<{ taskId: string }>();
+  const router = useRouter();
   const workspaceAccess = useWorkspaceAccess();
   const taskId = typeof params.taskId === "string" ? params.taskId : "";
   const canViewTaskPoints = workspaceAccess.canViewTaskPoints;
+  const canManageTask = workspaceAccess.canManage && !workspaceAccess.error;
 
   const [task, setTask] = useState<TaskRow | null>(null);
   const [keyResult, setKeyResult] = useState<KeyResultLiteRow | null>(null);
   const [creatorName, setCreatorName] = useState("Chưa rõ");
   const [assigneeName, setAssigneeName] = useState("Chưa gán");
   const [form, setForm] = useState<TaskFormState>(DEFAULT_FORM);
-  const [taskTimelineForm, setTaskTimelineForm] =
-    useState<TaskTimelineFormState>(DEFAULT_TIMELINE_FORM);
   const [progressInput, setProgressInput] = useState("0");
 
   const [isLoading, setIsLoading] = useState(true);
@@ -186,16 +172,16 @@ export default function TaskDetailPage() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const [isEditingTaskInfo, setIsEditingTaskInfo] = useState(false);
-  const [isEditingTaskTimeline, setIsEditingTaskTimeline] = useState(false);
+  const [isEditingTaskProgress, setIsEditingTaskProgress] = useState(false);
   const [isSavingTaskInfo, setIsSavingTaskInfo] = useState(false);
-  const [isSavingTaskTimeline, setIsSavingTaskTimeline] = useState(false);
+  const [isSavingTaskProgress, setIsSavingTaskProgress] = useState(false);
+  const [isDeletingTask, setIsDeletingTask] = useState(false);
 
   useEffect(() => {
     if (!taskId) {
       setTask(null);
       setKeyResult(null);
       setForm(DEFAULT_FORM);
-      setTaskTimelineForm(DEFAULT_TIMELINE_FORM);
       setProgressInput("0");
       setCreatorName("Chưa rõ");
       setAssigneeName("Chưa gán");
@@ -212,7 +198,8 @@ export default function TaskDetailPage() {
       setActionError(null);
       setNotice(null);
       setIsEditingTaskInfo(false);
-      setIsEditingTaskTimeline(false);
+      setIsEditingTaskProgress(false);
+      setIsDeletingTask(false);
 
       try {
         const { data: taskData, error: taskError } = await supabase
@@ -290,7 +277,6 @@ export default function TaskDetailPage() {
         setKeyResult(nextKeyResult);
         setForm(nextForm);
         setProgressInput(String(nextForm.progress));
-        setTaskTimelineForm(buildTaskTimelineForm(normalizedTask, nextKeyResult));
 
         const creatorProfileId = normalizedTask.creator_profile_id ?? null;
         const effectiveAssigneeId = normalizedTask.assignee_id ?? normalizedTask.profile_id;
@@ -329,7 +315,6 @@ export default function TaskDetailPage() {
         setTask(null);
         setKeyResult(null);
         setForm(DEFAULT_FORM);
-        setTaskTimelineForm(DEFAULT_TIMELINE_FORM);
         setProgressInput("0");
         setCreatorName("Chưa rõ");
         setAssigneeName("Chưa gán");
@@ -355,24 +340,6 @@ export default function TaskDetailPage() {
       ? `/goals/${keyResult.goal_id}/key-results/${keyResult.id}`
       : null;
 
-  const keyResultProgress = useMemo(() => {
-    if (!keyResult) {
-      return 0;
-    }
-
-    return (
-      buildKeyResultProgressMap([
-        {
-          id: keyResult.id,
-          goal_id: keyResult.goal_id,
-          start_value: keyResult.start_value,
-          current: keyResult.current,
-          target: keyResult.target,
-        },
-      ])[keyResult.id] ?? 0
-    );
-  }, [keyResult]);
-
   const hasTaskInfoChanges = useMemo(() => {
     if (!task) {
       return false;
@@ -394,52 +361,26 @@ export default function TaskDetailPage() {
           : Number.isFinite(task.target)
             ? String(Number(task.target))
             : "") as string)
-    );
+      );
   }, [form, task]);
 
-  const taskTimelineInputError = useMemo(() => {
-    if (
-      (taskTimelineForm.startDate && !taskTimelineForm.endDate) ||
-      (!taskTimelineForm.startDate && taskTimelineForm.endDate)
-    ) {
-      return "Vui lòng nhập đủ ngày bắt đầu và ngày kết thúc hoặc để trống cả hai.";
+  const hasTaskProgressChanges = useMemo(() => {
+    if (!task) {
+      return false;
     }
 
-    if (!isDateRangeOrdered(taskTimelineForm.startDate || null, taskTimelineForm.endDate || null)) {
-      return "Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.";
-    }
-
-    return null;
-  }, [taskTimelineForm.endDate, taskTimelineForm.startDate]);
-
-  const taskTimelineAlignmentWarning = useMemo(
-    () =>
-      getTimelineOutsideParentWarning(
-        isEditingTaskTimeline ? taskTimelineForm.startDate || null : (task?.start_date ?? null),
-        isEditingTaskTimeline ? taskTimelineForm.endDate || null : (task?.end_date ?? null),
-        keyResult?.start_date ?? null,
-        keyResult?.end_date ?? null,
-        {
-          subjectLabel: "Thời gian công việc",
-          parentLabel: "KR",
-        },
-      ),
-    [
-      isEditingTaskTimeline,
-      keyResult?.end_date,
-      keyResult?.start_date,
-      task?.end_date,
-      task?.start_date,
-      taskTimelineForm.endDate,
-      taskTimelineForm.startDate,
-    ],
-  );
+    return form.progress !== buildTaskFormState(task).progress;
+  }, [form.progress, task]);
 
   const taskTimelineLabel = task
     ? formatTimelineRangeVi(task.start_date, task.end_date, {
         fallback: "Chưa đặt thời gian thực thi",
       })
     : "Chưa đặt thời gian thực thi";
+  const effectiveAssigneeId = task?.assignee_id ?? task?.profile_id ?? null;
+  const canCreateTaskEvidence =
+    Boolean(workspaceAccess.profileId) &&
+    (workspaceAccess.profileId === effectiveAssigneeId || workspaceAccess.hasRootLeaderAccess);
 
   const breadcrumbs: TaskDetailBreadcrumb[] = [
     { label: "Công việc", href: "/tasks" },
@@ -458,16 +399,13 @@ export default function TaskDetailPage() {
     setProgressInput(String(nextForm.progress));
   };
 
-  const resetTimelineDraft = () => {
-    setTaskTimelineForm(buildTaskTimelineForm(task, keyResult));
-  };
-
   const startTaskInfoEdit = () => {
     if (!task) {
       return;
     }
 
     resetTaskInfoDraft();
+    setIsEditingTaskProgress(false);
     setIsEditingTaskInfo(true);
     setActionError(null);
     setNotice(null);
@@ -480,16 +418,21 @@ export default function TaskDetailPage() {
     setNotice(null);
   };
 
-  const startTimelineEdit = () => {
-    resetTimelineDraft();
-    setIsEditingTaskTimeline(true);
+  const startTaskProgressEdit = () => {
+    if (!task) {
+      return;
+    }
+
+    resetTaskInfoDraft();
+    setIsEditingTaskInfo(false);
+    setIsEditingTaskProgress(true);
     setActionError(null);
     setNotice(null);
   };
 
-  const cancelTimelineEdit = () => {
-    resetTimelineDraft();
-    setIsEditingTaskTimeline(false);
+  const cancelTaskProgressEdit = () => {
+    resetTaskInfoDraft();
+    setIsEditingTaskProgress(false);
     setActionError(null);
     setNotice(null);
   };
@@ -562,27 +505,24 @@ export default function TaskDetailPage() {
     }
   };
 
-  const handleSaveTaskTimeline = async () => {
-    if (!task) {
+  const handleSaveTaskProgress = async () => {
+    if (!task || !hasTaskProgressChanges) {
       return;
     }
 
-    if (taskTimelineInputError) {
-      setActionError(taskTimelineInputError);
-      setNotice(null);
-      return;
-    }
-
-    setIsSavingTaskTimeline(true);
+    setIsSavingTaskProgress(true);
     setActionError(null);
     setNotice(null);
 
     try {
+      const persistedForm = buildTaskFormState(task);
+      const nextTarget = Number(persistedForm.target);
+      const nextCurrent = getTaskCurrentFromProgress(form.progress, nextTarget);
+
       const { data: updatedTask, error } = await supabase
         .from("tasks")
         .update({
-          start_date: taskTimelineForm.startDate.trim() || null,
-          end_date: taskTimelineForm.endDate.trim() || null,
+          current: nextCurrent,
         })
         .eq("id", task.id)
         .select("*")
@@ -590,53 +530,61 @@ export default function TaskDetailPage() {
 
       if (error || !updatedTask) {
         if (error?.code === "42501") {
-          throw new Error("Bạn không có quyền cập nhật thời gian thực thi công việc.");
+          throw new Error("Bạn không có quyền cập nhật tiến độ công việc.");
         }
 
-        throw new Error(error?.message || "Không thể cập nhật thời gian thực thi công việc.");
+        throw new Error(error?.message || "Không thể cập nhật tiến độ công việc.");
       }
 
       const nextTask = normalizeTaskRecord(updatedTask as TaskRow, {
         creatorProfileId: task.creator_profile_id ?? null,
         keyResult,
       });
+      const nextForm = buildTaskFormState(nextTask);
 
       setTask(nextTask);
-      setTaskTimelineForm(buildTaskTimelineForm(nextTask, keyResult));
-      setIsEditingTaskTimeline(false);
-      setNotice("Đã cập nhật thời gian thực thi công việc.");
+      setForm(nextForm);
+      setProgressInput(String(nextForm.progress));
+      setIsEditingTaskProgress(false);
+      setNotice("Đã cập nhật tiến độ công việc.");
     } catch (error) {
-      setActionError(
-        error instanceof Error ? error.message : "Không thể cập nhật thời gian thực thi công việc.",
-      );
+      setActionError(error instanceof Error ? error.message : "Không thể cập nhật tiến độ công việc.");
     } finally {
-      setIsSavingTaskTimeline(false);
+      setIsSavingTaskProgress(false);
     }
   };
 
-  const primaryAction = task
-    ? isEditingTaskInfo
-      ? {
-          label: isSavingTaskInfo ? "Đang lưu..." : "Lưu thay đổi",
-          onClick: () => void handleSaveTaskInfo(),
-          disabled: !hasTaskInfoChanges || isSavingTaskInfo,
-        }
-      : {
-          label: "Chỉnh sửa",
-          onClick: startTaskInfoEdit,
-        }
-    : undefined;
+  const handleDeleteTask = async () => {
+    if (!task || isDeletingTask) {
+      return;
+    }
 
-  const secondaryAction = task
-    ? isEditingTaskInfo
-      ? {
-          label: "Hủy",
-          onClick: cancelTaskInfoEdit,
-          disabled: isSavingTaskInfo,
-          variant: "outline" as const,
+    const confirmed = window.confirm(`Xóa công việc "${task.name}"?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setIsDeletingTask(true);
+    setActionError(null);
+    setNotice(null);
+
+    try {
+      const { error } = await supabase.from("tasks").delete().eq("id", task.id);
+
+      if (error) {
+        if (error.code === "42501") {
+          throw new Error("Bạn không có quyền xóa công việc này.");
         }
-      : undefined
-    : undefined;
+
+        throw new Error(error.message || "Không thể xóa công việc.");
+      }
+
+      router.push("/tasks");
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Không thể xóa công việc.");
+      setIsDeletingTask(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
@@ -650,39 +598,6 @@ export default function TaskDetailPage() {
           />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 pt-5 lg:px-7">
-            {(task || secondaryAction || primaryAction) ? (
-              <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
-                {task ? (
-                  <ActivityHistoryDialog
-                    entityType="task"
-                    entityId={task.id}
-                    title="Lịch sử hoạt động của công việc"
-                    triggerClassName="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  />
-                ) : null}
-                {secondaryAction ? (
-                  <button
-                    type="button"
-                    onClick={secondaryAction.onClick}
-                    disabled={secondaryAction.disabled}
-                    className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {secondaryAction.label}
-                  </button>
-                ) : null}
-                {primaryAction ? (
-                  <button
-                    type="button"
-                    onClick={primaryAction.onClick}
-                    disabled={primaryAction.disabled}
-                    className="inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                  >
-                    {primaryAction.label}
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-
             {isLoading ? (
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm text-slate-600">
                 Đang tải chi tiết công việc...
@@ -711,70 +626,27 @@ export default function TaskDetailPage() {
               <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
                 <div className="space-y-6">
                   <TaskOverviewCard
+                    taskId={task.id}
+                    progress={form.progress}
+                    keyResultName={keyResult?.name ?? null}
+                    keyResultHref={keyResultHref}
                     form={form}
-                    assigneeName={assigneeName}
-                    creatorName={creatorName}
-                    timelineLabel={taskTimelineLabel}
                     isEditing={isEditingTaskInfo}
-                    showTaskPoints={canViewTaskPoints}
-                    onNameChange={(value) => setForm((current) => ({ ...current, name: value }))}
-                    onTypeChange={(value) => {
-                      const nextProgress = getTaskProgressByType(value, form.status, form.progress);
-                      setForm((current) => ({
-                        ...current,
-                        type: value,
-                        unit: normalizeKeyResultUnitForType(value, current.unit),
-                        target: value === "okr" ? "100" : current.target,
-                        status: getTaskStatusByProgress(nextProgress),
-                        progress: nextProgress,
-                      }));
-                      setProgressInput(String(nextProgress));
-                    }}
-                    onPriorityChange={(value) =>
-                      setForm((current) => ({
-                        ...current,
-                        priority: value,
-                      }))
-                    }
-                    onUnitChange={(value) =>
-                      setForm((current) => ({
-                        ...current,
-                        unit: value,
-                      }))
-                    }
-                    onTargetChange={(value) =>
-                      setForm((current) => ({
-                        ...current,
-                        target: value,
-                      }))
-                    }
-                    onRecurringChange={(value) =>
-                      setForm((current) => ({ ...current, isRecurring: value }))
-                    }
-                  />
-
-                  <TaskExecutionSection
-                    task={task}
-                    keyResult={keyResult}
-                    form={form}
+                    isEditingProgress={isEditingTaskProgress}
+                    canManage={canManageTask}
+                    isSavingTaskInfo={isSavingTaskInfo}
+                    isSavingTaskProgress={isSavingTaskProgress}
+                    isDeletingTask={isDeletingTask}
+                    canSaveEdit={hasTaskInfoChanges}
+                    canSaveProgress={hasTaskProgressChanges}
                     progressInput={progressInput}
-                    showTaskPoints={canViewTaskPoints}
-                    taskTimelineForm={taskTimelineForm}
-                    isEditingTaskInfo={isEditingTaskInfo}
-                    isEditingExecution={false}
-                    isEditingTaskTimeline={isEditingTaskTimeline}
-                    isSavingTaskTimeline={isSavingTaskTimeline}
-                    taskTimelineInputError={taskTimelineInputError}
-                    taskTimelineAlignmentWarning={taskTimelineAlignmentWarning}
-                    onDescriptionChange={(value) =>
-                      setForm((current) => ({ ...current, description: value }))
-                    }
-                    onHypothesisChange={(value) =>
-                      setForm((current) => ({ ...current, hypothesis: value }))
-                    }
-                    onResultChange={(value) =>
-                      setForm((current) => ({ ...current, result: value }))
-                    }
+                    onStartEdit={startTaskInfoEdit}
+                    onCancelEdit={cancelTaskInfoEdit}
+                    onSaveEdit={() => void handleSaveTaskInfo()}
+                    onStartProgressEdit={startTaskProgressEdit}
+                    onCancelProgressEdit={cancelTaskProgressEdit}
+                    onSaveProgress={() => void handleSaveTaskProgress()}
+                    onDelete={() => void handleDeleteTask()}
                     onProgressInputChange={(value) => {
                       setProgressInput(value);
 
@@ -811,37 +683,71 @@ export default function TaskDetailPage() {
                       }));
                       setProgressInput(String(normalized));
                     }}
-                    onStartTimelineEdit={startTimelineEdit}
-                    onCancelTimelineEdit={cancelTimelineEdit}
-                    onSaveTimeline={() => void handleSaveTaskTimeline()}
-                    onTimelineStartChange={(value) =>
-                      setTaskTimelineForm((current) => ({
+                    onNameChange={(value) => setForm((current) => ({ ...current, name: value }))}
+                    onTypeChange={(value) => {
+                      const nextProgress = getTaskProgressByType(value, form.status, form.progress);
+                      setForm((current) => ({
                         ...current,
-                        startDate: value,
+                        type: value,
+                        unit: normalizeKeyResultUnitForType(value, current.unit),
+                        target: value === "okr" ? "100" : current.target,
+                        status: getTaskStatusByProgress(nextProgress),
+                        progress: nextProgress,
+                      }));
+                      setProgressInput(String(nextProgress));
+                    }}
+                    onPriorityChange={(value) =>
+                      setForm((current) => ({
+                        ...current,
+                        priority: value,
                       }))
                     }
-                    onTimelineEndChange={(value) =>
-                      setTaskTimelineForm((current) => ({
+                    onUnitChange={(value) =>
+                      setForm((current) => ({
                         ...current,
-                        endDate: value,
+                        unit: value,
                       }))
+                    }
+                    onTargetChange={(value) =>
+                      setForm((current) => ({
+                        ...current,
+                        target: value,
+                      }))
+                    }
+                    onRecurringChange={(value) =>
+                      setForm((current) => ({ ...current, isRecurring: value }))
                     }
                   />
 
-                  {!form.description.trim() ? (
-                    <TaskNotesCard
-                      note={form.note}
-                      isEditing={isEditingTaskInfo}
-                      onChange={(value) => setForm((current) => ({ ...current, note: value }))}
-                    />
-                  ) : null}
+                  <article className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_12px_30px_-24px_rgba(15,23,42,0.35)]">
+                    <h2 className="text-base font-semibold text-slate-900">Mô tả</h2>
+                    {isEditingTaskInfo ? (
+                      <textarea
+                        rows={5}
+                        value={form.description}
+                        onChange={(event) =>
+                          setForm((current) => ({ ...current, description: event.target.value }))
+                        }
+                        className="mt-4 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        placeholder="Mô tả ngắn những gì cần làm"
+                      />
+                    ) : (
+                      <p className="mt-3 text-sm leading-relaxed text-slate-700">
+                        {form.description.trim() || "Chưa có mô tả."}
+                      </p>
+                    )}
+                  </article>
 
-                  <LinkedKRCard
-                    keyResult={keyResult}
-                    keyResultHref={keyResultHref}
-                    goalHref={goalHref}
-                    goalName={goalName}
-                    keyResultProgress={keyResultProgress}
+                  <TaskEvidenceSection
+                    taskId={task.id}
+                    currentProfileId={workspaceAccess.profileId}
+                    canCreateEvidence={canCreateTaskEvidence}
+                  />
+
+                  <CommentSection
+                    entityType="task"
+                    entityId={task.id}
+                    currentProfileId={workspaceAccess.profileId}
                   />
                 </div>
 

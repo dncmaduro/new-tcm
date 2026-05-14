@@ -7,28 +7,23 @@ const toneClassMap: Record<
   {
     badgeClassName: string;
     barClassName: string;
-    numberClassName: string;
   }
 > = {
   slate: {
     badgeClassName: "bg-slate-100 text-slate-700",
     barClassName: "bg-slate-500",
-    numberClassName: "text-slate-950",
   },
   blue: {
     badgeClassName: "bg-blue-50 text-blue-700",
     barClassName: "bg-blue-600",
-    numberClassName: "text-slate-950",
   },
   emerald: {
     badgeClassName: "bg-emerald-50 text-emerald-700",
     barClassName: "bg-emerald-600",
-    numberClassName: "text-slate-950",
   },
   rose: {
     badgeClassName: "bg-rose-50 text-rose-700",
     barClassName: "bg-rose-600",
-    numberClassName: "text-slate-950",
   },
 };
 
@@ -67,7 +62,12 @@ export function ProgressSummary({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+            {label}{" "}
+            <span className="font-semibold normal-case tracking-normal text-slate-900">
+              ({normalizedProgress}%)
+            </span>
+          </p>
           {statusLabel ? (
             <span
               className={cn(
@@ -79,15 +79,6 @@ export function ProgressSummary({
             </span>
           ) : null}
         </div>
-        <span
-          className={cn(
-            "font-semibold tracking-[-0.03em]",
-            toneClassName.numberClassName,
-            isCompact ? "text-xl" : isHero ? "text-4xl" : "text-3xl",
-          )}
-        >
-          {normalizedProgress}%
-        </span>
       </div>
 
       <div className={cn("mt-4 h-2.5 overflow-hidden rounded-full bg-slate-200", isCompact && "mt-3")}>

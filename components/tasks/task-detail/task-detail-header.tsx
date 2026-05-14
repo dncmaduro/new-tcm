@@ -69,7 +69,7 @@ export function TaskDetailHeader({
             </div>
 
             <div className="space-y-3">
-              <ProgressSummary progress={progress} label="Tiến độ task" variant="hero" />
+              <ProgressSummary progress={progress} label="Tiến độ công việc" variant="hero" />
 
               {(secondaryAction || primaryAction) ? (
                 <div className="flex flex-wrap gap-2 xl:justify-end">

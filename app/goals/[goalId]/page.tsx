@@ -28,7 +28,7 @@ import {
   type KeyResultContributionTypeValue,
   type KeyResultTypeValue,
 } from "@/lib/constants/key-results";
-import { formatDateDdMmYyyy, formatDateTimeDdMmYyyy } from "@/lib/date-format";
+import { formatDateTimeDdMmYyyy } from "@/lib/date-format";
 import {
   buildGoalProgressMap,
   buildGoalDepartmentPerformanceMap,
@@ -37,7 +37,6 @@ import {
 } from "@/lib/okr";
 import {
   formatGoalOwnerName,
-  formatGoalOwnersSummary,
   type GoalOwnerProfile,
   type GoalOwnerProfileRow,
 } from "@/lib/goal-owners";
@@ -223,7 +222,7 @@ function GoalDetailPageContent() {
   const hasValidGoalId = Boolean(goalId);
 
   const [goal, setGoal] = useState<GoalDetailRow | null>(null);
-  const [departmentName, setDepartmentName] = useState<string | null>(null);
+  const [, setDepartmentName] = useState<string | null>(null);
   const [goalOwners, setGoalOwners] = useState<GoalOwnerProfile[]>([]);
   const [goalDepartments, setGoalDepartments] = useState<GoalDepartmentItem[]>([]);
   const [keyResults, setKeyResults] = useState<KeyResultRow[]>([]);
@@ -487,12 +486,10 @@ function GoalDetailPageContent() {
   }, [goal, keyResultProgressMap, keyResults]);
   const goalType = goal ? normalizeGoalTypeValue(goal.type) : "kpi";
   const goalTypeLabel = goal ? formatGoalTypeLabel(goal.type) : "Chưa đặt";
-  const goalStatusLabel = goal?.status ? (statusLabelMap[goal.status] ?? goal.status) : "Chưa đặt";
   const quarterLabel = goal?.quarter ? `Q${goal.quarter}` : "Chưa đặt";
   const yearLabel = goal?.year ? String(goal.year) : "Chưa đặt";
   const goalMetricTarget = goal?.target ?? null;
   const goalMetricUnit = goal?.unit ?? null;
-  const hasGoalMetric = goalMetricTarget !== null || Boolean(goalMetricUnit);
   const directKeyResults = useMemo(
     () =>
       keyResults.filter(
@@ -538,10 +535,14 @@ function GoalDetailPageContent() {
       mismatchedUnitCount,
     };
   }, [directKeyResults, goalMetricTarget, goalMetricUnit]);
-  const goalOwnersSummary = useMemo(
-    () => formatGoalOwnersSummary(goalOwners, { limit: 3 }),
-    [goalOwners],
-  );
+  const goalProgressMetricLabel =
+    goalType === "kpi"
+      ? `${formatKeyResultMetric(kpiDirectSummary.totalCurrent, goalMetricUnit)} / ${
+          kpiDirectSummary.safeGoalTarget !== null
+            ? formatKeyResultMetric(kpiDirectSummary.safeGoalTarget, goalMetricUnit)
+            : "Chưa đặt"
+        }`
+      : `${formatKeyResultMetric(goalProgress, "percent")} / 100%`;
   const goalDepartmentsById = useMemo(
     () =>
       goalDepartments.reduce<Record<string, GoalDepartmentItem>>((acc, item) => {
@@ -551,16 +552,6 @@ function GoalDetailPageContent() {
     [goalDepartments],
   );
 
-  const averageKeyResultProgress = useMemo(() => {
-    if (!keyResults.length) {
-      return 0;
-    }
-    const total = keyResults.reduce(
-      (acc, keyResult) => acc + (keyResultProgressMap[keyResult.id] ?? 0),
-      0,
-    );
-    return Math.round(total / keyResults.length);
-  }, [keyResultProgressMap, keyResults]);
   const goalProgressHelp = getGoalProgressHelp(goalType);
   const departmentPerformanceMap = useMemo(() => {
     if (!goal?.id || goalDepartments.length === 0) {
@@ -920,9 +911,6 @@ function GoalDetailPageContent() {
                           <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-700">
                             {formatQuarterYear(goal.quarter, goal.year)}
                           </span>
-                          <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700">
-                            Người phụ trách · {goalOwnersSummary}
-                          </span>
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -955,16 +943,11 @@ function GoalDetailPageContent() {
                     <div className="mt-5">
                       {keyResults.length > 0 ? (
                         <>
-                          <div className="mb-2 flex items-center justify-between text-sm">
-                            <span
-                              className="font-semibold text-slate-700"
-                              title={goalProgressHelp}
-                            ></span>
-                            <span className="font-semibold text-slate-900">{goalProgress}%</span>
-                          </div>
-                          {goalType === "kpi" ? (
-                            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
-                              <span className="font-medium text-slate-600">Tiến độ mục tiêu</span>
+                          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+                            <span className="font-medium text-slate-600" title={goalProgressHelp}>
+                              Tiến độ mục tiêu ({goalProgress}%)
+                            </span>
+                            {goalType === "kpi" ? (
                               <span className="font-semibold text-slate-900">
                                 {formatKeyResultMetric(
                                   kpiDirectSummary.totalCurrent,
@@ -977,8 +960,8 @@ function GoalDetailPageContent() {
                                     )}`
                                   : ""}
                               </span>
-                            </div>
-                          ) : null}
+                            ) : null}
+                          </div>
                           <ProgressBar value={goalProgress} />
                           {goalType === "kpi" ? (
                             <div className="mt-4">
@@ -1096,11 +1079,6 @@ function GoalDetailPageContent() {
                           </button>
                         </div>
                       </div>
-                    </div>
-
-                    <div className="mt-4 border-b border-slate-100 pb-3 text-sm text-slate-600">
-                      Tiến độ mục tiêu hiện tại:{" "}
-                      <span className="font-semibold text-slate-900">{goalProgress}%</span>
                     </div>
 
                     {relatedDepartmentLoadError ? (
@@ -1417,13 +1395,10 @@ function GoalDetailPageContent() {
                                           {formatKeyResultMetric(keyResult.target, keyResult.unit)}
                                         </p>
                                         <div className="mt-3 w-40 space-y-2">
+                                          <p className="text-xs font-semibold text-slate-600">
+                                            Tiến độ ({keyResultProgress}%)
+                                          </p>
                                           <ProgressBar value={keyResultProgress} />
-                                          <div className="flex items-center justify-between text-xs">
-                                            <span className="text-slate-500"></span>
-                                            <span className="font-semibold text-slate-900">
-                                              {keyResultProgress}%
-                                            </span>
-                                          </div>
                                         </div>
                                         {/* <p className="mt-1 text-xs text-slate-500">
                                           Hiện tại / KPI · {formatKeyResultUnit(keyResult.unit)}
@@ -1495,12 +1470,6 @@ function GoalDetailPageContent() {
                     <h2 className="text-base font-semibold text-slate-900">Thông tin chi tiết</h2>
                     <div className="mt-4 space-y-3 text-sm">
                       <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Phòng ban chính</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {departmentName ?? "Chưa có phòng ban"}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
                         <span className="text-slate-500">Phòng ban tham gia</span>
                         <span className="text-right font-medium text-slate-800">
                           {goalDepartments.length > 0 ? goalDepartments.length : 1}
@@ -1513,66 +1482,21 @@ function GoalDetailPageContent() {
                         </span>
                       </div>
                       <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Người phụ trách</span>
-                        <div className="max-w-[220px] text-right">
-                          {goalOwners.length > 0 ? (
-                            <div className="flex flex-wrap justify-end gap-2">
-                              {goalOwners.map((owner) => (
-                                <span
-                                  key={owner.id}
-                                  className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700"
-                                >
-                                  {owner.name}
-                                </span>
-                              ))}
-                            </div>
-                          ) : (
-                            <span className="font-medium text-slate-800">
-                              Chưa có người phụ trách
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Trạng thái</span>
+                        <span className="text-slate-500">Quý/Năm</span>
                         <span className="text-right font-medium text-slate-800">
-                          {goalStatusLabel}
+                          {quarterLabel} / {yearLabel}
                         </span>
                       </div>
                       <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Quý</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {quarterLabel}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Năm</span>
-                        <span className="text-right font-medium text-slate-800">{yearLabel}</span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Bắt đầu</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {formatDateDdMmYyyy(goal.start_date, "Chưa đặt", "Không hợp lệ")}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Kết thúc</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {formatDateDdMmYyyy(goal.end_date, "Chưa đặt", "Không hợp lệ")}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Tiến độ</span>
+                        <span className="text-slate-500">Tiến độ (%)</span>
                         <span className="text-right font-medium text-slate-800">
                           {goalProgress}%
                         </span>
                       </div>
                       <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Chỉ tiêu mục tiêu</span>
+                        <span className="text-slate-500">Tiến độ current/target</span>
                         <span className="text-right font-medium text-slate-800">
-                          {hasGoalMetric
-                            ? `${formatKeyResultMetric(goalMetricTarget, goalMetricUnit)}`
-                            : "Chưa đặt"}
+                          {goalProgressMetricLabel}
                         </span>
                       </div>
                       <div className="flex items-start justify-between gap-3 border-t border-slate-100 pt-3">
@@ -1590,112 +1514,6 @@ function GoalDetailPageContent() {
                     </div>
                   </article>
 
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <div className="mb-4 flex items-center justify-between">
-                      <h2 className="text-base font-semibold text-slate-900">Tổng quan tiến độ</h2>
-                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                        {keyResults.length} KR
-                      </span>
-                    </div>
-
-                    <div className="space-y-3">
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                        <p
-                          className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase"
-                          title={goalProgressHelp}
-                        >
-                          Tiến độ mục tiêu
-                        </p>
-                        <p className="mt-2 text-2xl font-semibold text-slate-900">
-                          {goalProgress}%
-                        </p>
-                      </div>
-
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                        <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                          Trung bình tiến độ KR
-                        </p>
-                        <p className="mt-2 text-2xl font-semibold text-slate-900">
-                          {averageKeyResultProgress}%
-                        </p>
-                      </div>
-
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                        <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                          Số KR
-                        </p>
-                        <p className="mt-2 text-2xl font-semibold text-slate-900">
-                          {keyResults.length}
-                        </p>
-                      </div>
-
-                      {goalType === "kpi" ? (
-                        <>
-                          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                            <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                              Tiến độ hiện tại
-                            </p>
-                            <p className="mt-2 text-2xl font-semibold text-slate-900">
-                              {formatKeyResultMetric(kpiDirectSummary.totalCurrent, goalMetricUnit)}
-                              {kpiDirectSummary.safeGoalTarget !== null
-                                ? ` / ${formatKeyResultMetric(
-                                    kpiDirectSummary.safeGoalTarget,
-                                    goalMetricUnit,
-                                  )}`
-                                : ""}
-                            </p>
-                          </div>
-                        </>
-                      ) : null}
-
-                      {/* <div className="rounded-xl border border-slate-100 bg-blue-50/60 px-4 py-3 text-sm text-blue-800">
-                        <p className="font-semibold">Cách tính tiến độ</p>
-                        <p className="mt-1">{goalProgressHelp}</p>
-                      </div> */}
-                    </div>
-                  </article>
-
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <h2 className="text-base font-semibold text-slate-900">Phòng ban tham gia</h2>
-                    {relatedDepartmentLoadError ? (
-                      <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                        {relatedDepartmentLoadError}
-                      </p>
-                    ) : null}
-                    <div className="mt-3 space-y-3">
-                      {goalDepartments.length > 0 ? (
-                        goalDepartments.map((department) => (
-                          <div
-                            key={department.departmentId}
-                            className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3"
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <p className="text-sm font-semibold text-slate-900">
-                                {department.name}
-                              </p>
-                              <span
-                                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                                  department.departmentId === goal.department_id
-                                    ? "bg-blue-50 text-blue-700"
-                                    : "bg-white text-slate-600"
-                                }`}
-                              >
-                                {formatGoalParticipationRoleLabel(department.role)}
-                              </span>
-                            </div>
-                            {/* <p className="mt-2 text-xs text-slate-500">
-                              Tỷ trọng mục tiêu {department.goalWeight.toFixed(2)} · Tỷ trọng KR{" "}
-                              {department.krWeight.toFixed(2)}
-                            </p> */}
-                          </div>
-                        ))
-                      ) : (
-                        <p className="text-sm text-slate-500">
-                          Chưa có dữ liệu phòng ban tham gia.
-                        </p>
-                      )}
-                    </div>
-                  </article>
                 </aside>
               </div>
             ) : null}
@@ -1958,7 +1776,7 @@ function GoalDetailPageContent() {
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <p className="text-sm font-semibold text-slate-900">
-                            Xem trước tiến độ KR
+                            Xem trước tiến độ KR ({modalProgressPreview}%)
                           </p>
                           <p className="mt-1 text-xs text-slate-500">
                             {formatKeyResultMetric(modalCurrentValue, keyResultScaleForm.unit)}
@@ -1966,9 +1784,6 @@ function GoalDetailPageContent() {
                             {formatKeyResultMetric(modalTargetValue, keyResultScaleForm.unit)}
                           </p>
                         </div>
-                        <span className="text-lg font-semibold text-slate-900">
-                          {modalProgressPreview}%
-                        </span>
                       </div>
                       <div className="mt-3">
                         <ProgressBar value={modalProgressPreview} />

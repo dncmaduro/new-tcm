@@ -89,3 +89,121 @@ button:disabled {
     transform: translateX(-55%);
   }
 }
+
+.comment-rich-text {
+  color: #334155;
+  line-height: 1.7;
+  word-break: break-word;
+}
+
+.comment-rich-text p {
+  margin: 0;
+}
+
+.comment-rich-text p + p,
+.comment-rich-text ul + p,
+.comment-rich-text ol + p,
+.comment-rich-text p + ul,
+.comment-rich-text p + ol,
+.comment-rich-text ul + ul,
+.comment-rich-text ol + ol,
+.comment-rich-text ul + ol,
+.comment-rich-text ol + ul {
+  margin-top: 0.75rem;
+}
+
+.comment-rich-text ul,
+.comment-rich-text ol {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.comment-rich-text ul {
+  list-style-type: disc;
+}
+
+.comment-rich-text ol {
+  list-style-type: decimal;
+}
+
+.comment-rich-text li + li {
+  margin-top: 0.25rem;
+}
+
+.comment-rich-text a {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
+.comment-rich-text-editor {
+  min-height: 120px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.comment-rich-text-editor .tiptap {
+  min-height: 120px;
+}
+
+.comment-rich-text-editor .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: #94a3b8;
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.comment-mention {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 0.5rem;
+  background: #eff6ff;
+  padding: 0 0.35rem;
+  color: #1d4ed8;
+  font-weight: 500;
+}
+
+.comment-rich-image,
+.comment-rich-video,
+.comment-rich-video-embed iframe {
+  display: block;
+  max-width: 100%;
+  border-radius: 0.9rem;
+}
+
+.comment-upload-placeholder {
+  margin-top: 0.75rem;
+  border-radius: 0.9rem;
+  background: #f8fafc;
+  padding: 0.75rem 0.9rem;
+  color: #64748b;
+  font-size: 0.875rem;
+  font-style: italic;
+}
+
+.comment-rich-image,
+.comment-rich-video,
+.comment-rich-video-embed {
+  margin-top: 0.75rem;
+}
+
+.comment-rich-video {
+  width: 100%;
+}
+
+.comment-rich-video-embed {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 0.9rem;
+  background: #0f172a;
+  padding-top: 56.25%;
+}
+
+.comment-rich-video-embed iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}

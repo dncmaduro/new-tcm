@@ -965,6 +965,18 @@ function GoalsPageContent() {
           return detail;
         })()
       : null;
+  const selectedKeyResultCreateTaskHref = useMemo(() => {
+    if (!selectedGoal || !selectedKeyResult) {
+      return "/tasks/new";
+    }
+
+    const query = new URLSearchParams({
+      goalId: selectedGoal.id,
+      keyResultId: selectedKeyResult.id,
+    });
+
+    return `/tasks/new?${query.toString()}`;
+  }, [selectedGoal, selectedKeyResult]);
 
   useEffect(() => {
     canvasScaleRef.current = canvasScale;
@@ -3131,7 +3143,8 @@ function GoalsPageContent() {
                   <button
                     type="button"
                     onClick={() => updateUrlState({ nextDetailOpen: false })}
-                    className="text-xl text-slate-400 hover:text-slate-600"
+                    aria-label="Đóng sidebar chi tiết"
+                    className="flex h-11 w-11 items-center justify-center rounded-xl text-3xl leading-none text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
                   >
                     ×
                   </button>
@@ -3316,10 +3329,10 @@ function GoalsPageContent() {
                           Mở KR
                         </Link>
                         <Link
-                          href={`/goals/${selectedGoal.id}`}
+                          href={selectedKeyResultCreateTaskHref}
                           className="flex h-11 w-full items-center justify-center rounded-xl bg-blue-600 text-base font-semibold text-white"
                         >
-                          Mở mục tiêu
+                          Thêm công việc
                         </Link>
                       </>
                     ) : (
