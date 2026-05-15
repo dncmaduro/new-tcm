@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist_Mono, Quicksand } from "next/font/google";
 import "@mantine/core/styles.css";
 import { Providers } from "@/components/providers";
+import { getSiteMetadata } from "@/lib/seo";
 import "./globals.css";
 
 const appSans = Quicksand({
@@ -16,10 +17,7 @@ const appMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: "TCM",
-  description: "TCM - Cổng xác thực bảo mật sử dụng Supabase Auth",
-};
+export const metadata: Metadata = getSiteMetadata();
 
 export default function RootLayout({
   children,
