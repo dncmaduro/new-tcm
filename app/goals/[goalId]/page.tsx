@@ -1650,7 +1650,7 @@ function GoalDetailPageContent() {
                         <span className="text-sm font-medium text-slate-700">Đơn vị</span>
                         <select
                           value={keyResultScaleForm.unit}
-                          disabled={keyResultScaleForm.type === "okr"}
+                          disabled
                           onChange={(event) =>
                             setKeyResultScaleForm((prev) =>
                               prev
@@ -1716,7 +1716,7 @@ function GoalDetailPageContent() {
                         <span className="text-sm font-medium text-slate-700">Chỉ tiêu</span>
                         <FormattedNumberInput
                           value={keyResultScaleForm.target}
-                          disabled={keyResultScaleForm.type === "okr"}
+                          disabled
                           onValueChange={(value) =>
                             setKeyResultScaleForm((prev) =>
                               prev

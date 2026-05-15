@@ -1384,7 +1384,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                       <label className="text-sm font-semibold text-slate-700">Đơn vị</label>
                       <Select
                         value={form.unit}
-                        disabled={isOkrType}
+                        disabled={isEditMode || isOkrType}
                         onValueChange={(value: KeyResultUnitValue) =>
                           setForm((prev) => ({
                             ...prev,
@@ -1413,7 +1413,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                       </label>
                       <FormattedNumberInput
                         value={targetInputValue}
-                        disabled={isOkrType}
+                        disabled={isEditMode || isOkrType}
                         onValueChange={(value) => {
                           setTargetInputValue(value);
                           setForm((prev) => ({
@@ -1422,7 +1422,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                           }));
                         }}
                         className={`h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
-                          isOkrType
+                          isEditMode || isOkrType
                             ? "cursor-not-allowed bg-slate-50 text-slate-400"
                             : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         }`}

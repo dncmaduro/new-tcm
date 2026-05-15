@@ -29,6 +29,8 @@ export function TaskEvidenceItem({
   onDelete,
   formatDateTime,
 }: TaskEvidenceItemProps) {
+  const linkUrl = evidence.evidence_type === "link" ? evidence.url : null;
+
   return (
     <tr className="border-b border-slate-100 align-top hover:bg-slate-50/70 last:border-b-0">
       <td className="px-4 py-3">
@@ -62,10 +64,10 @@ export function TaskEvidenceItem({
       </td>
       <td className="px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
-          {evidence.evidence_type === "link" && evidence.url ? (
+          {linkUrl ? (
             <button
               type="button"
-              onClick={() => onOpenLink(evidence.url)}
+              onClick={() => onOpenLink(linkUrl)}
               className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100"
             >
               Mở link

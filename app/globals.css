@@ -35,6 +35,19 @@ button {
   font-weight: 600;
 }
 
+input,
+textarea,
+select,
+option,
+[data-slot="select-trigger"] {
+  appearance: none;
+  font: inherit;
+  /* cursor: pointer; */
+  font-size: .875rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+}
+
 button:disabled {
   cursor: not-allowed;
 }
