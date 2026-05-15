@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { collectAttendanceIds, mergeAttendanceRowsByDate, type AttendanceTimeRow } from "@/lib/attendance";
+import {
+  buildTimesDeviceFilter,
+  collectAttendanceDeviceLinks,
+  collectAttendanceIds,
+  mergeAttendanceRowsByDate,
+  type AttendanceTimeRow,
+} from "@/lib/attendance";
 import { fetchHolidaysInRange } from "@/lib/holidays";
 import { getTimeRequestTypeLabel, type TimeRequestType } from "@/lib/constants/time-requests";
 import {
@@ -113,6 +119,7 @@ type TaskQueryRow = {
 
 type TimesProfileLinkRow = {
   attendance_id: number | null;
+  device_id: number | null;
 };
 
 type ActivityLogRow = {
@@ -678,7 +685,7 @@ export function useDashboardData() {
           profileListResult,
           ownerGoalResult,
         ] = await Promise.all([
-          supabase.from("times_profiles").select("attendance_id").eq("profile_id", profileId),
+          supabase.from("times_profiles").select("attendance_id,device_id").eq("profile_id", profileId),
           supabase.from("roles").select("id,name"),
           supabase.from("user_role_in_department").select("profile_id,department_id,role_id").eq("profile_id", profileId),
           supabase.from("departments").select("id,name,parent_department_id"),
@@ -751,6 +758,9 @@ export function useDashboardData() {
           profileData.attendance_id,
           ...((attendanceLinkResult.data ?? []) as TimesProfileLinkRow[]),
         ]);
+        const attendanceDeviceBindings = collectAttendanceDeviceLinks(
+          (attendanceLinkResult.data ?? []) as TimesProfileLinkRow[],
+        );
 
         const allProfileIds = profileRows.map((profile) => String(profile.id));
         const scopeProfileIds =
@@ -788,13 +798,21 @@ export function useDashboardData() {
         ] = await Promise.all([
           loadTasksByProfileIds([profileId]),
           roleScope === "member" ? Promise.resolve([] as TaskQueryRow[]) : loadTasksByProfileIds(scopeProfileIds),
-          attendanceIds.length > 0
-            ? supabase
-                .from("times")
-                .select("id,attendance_id,date,check_in,check_out,created_at,updated_at")
-                .in("attendance_id", attendanceIds)
-                .eq("date", todayIso)
-                .order("updated_at", { ascending: false })
+          attendanceDeviceBindings.length > 0 || attendanceIds.length > 0
+            ? (() => {
+                let query = supabase
+                  .from("times")
+                  .select("id,attendance_id,device_id,date,check_in,check_out,created_at,updated_at")
+                  .eq("date", todayIso);
+
+                if (attendanceDeviceBindings.length > 0) {
+                  query = query.or(buildTimesDeviceFilter(attendanceDeviceBindings));
+                } else if (profileData.attendance_id !== null) {
+                  query = query.eq("attendance_id", profileData.attendance_id);
+                }
+
+                return query.order("updated_at", { ascending: false });
+              })()
             : Promise.resolve({ data: [], error: null }),
           supabase
             .from("time_requests")
@@ -1112,6 +1130,7 @@ export function useDashboardData() {
         const activityRows = ((activityResult.data ?? []) as ActivityLogRow[]).map((row) => ({
           id: String(row.id),
           message: formatActivityMessage({
+            actorName: row.profile_id ? (profilesById[row.profile_id] ?? "Không rõ") : "Hệ thống",
             action: row.action,
             entityType: row.entity_type,
             oldValue: row.old_value ?? null,

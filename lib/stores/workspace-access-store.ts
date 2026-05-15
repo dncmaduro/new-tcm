@@ -32,11 +32,13 @@ export type ManagedDepartment = {
 type WorkspaceProfile = {
   id: string;
   name: string | null;
+  avatar: string | null;
 };
 
 type ProfileRow = {
   id: string;
   name: string | null;
+  avatar: string | null;
 };
 
 type RoleRow = {
@@ -94,6 +96,8 @@ const normalizeRoleName = (value: string | null | undefined) =>
     .replace(/[\u0300-\u036f]/g, "")
     .trim()
     .toLowerCase();
+
+const toStringValue = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 
 export const getLeaderRoleIds = (roles: WorkspaceRole[]) =>
   roles
@@ -211,7 +215,7 @@ export const useWorkspaceAccessStore = create<WorkspaceAccessStore>((set, get) =
         }
 
         const [profileResult, rolesResult] = await Promise.all([
-          supabase.from("profiles").select("id,name").eq("user_id", authData.user.id).maybeSingle(),
+          supabase.from("profiles").select("id,name,avatar").eq("user_id", authData.user.id).maybeSingle(),
           supabase.from("roles").select("id,name"),
         ]);
 
@@ -268,6 +272,11 @@ export const useWorkspaceAccessStore = create<WorkspaceAccessStore>((set, get) =
           profile: {
             id: String(profile.id),
             name: profile.name?.trim() || null,
+            avatar:
+              toStringValue(profile.avatar) ||
+              toStringValue(authData.user.user_metadata?.avatar_url) ||
+              toStringValue(authData.user.user_metadata?.picture) ||
+              null,
           },
           roles,
           memberships,
@@ -322,6 +331,7 @@ export function useWorkspaceAccess() {
       ...state,
       profileId: state.profile?.id ?? null,
       profileName: state.profile?.name ?? null,
+      profileAvatar: state.profile?.avatar ?? null,
       leaderRoleIds,
       directorRoleIds,
       hasLeaderRole,
@@ -339,6 +349,7 @@ export function buildWorkspaceAccessDebug(params: {
   authUserId: string | null;
   profileId: string | null;
   profileName: string | null;
+  profileAvatar?: string | null;
   leaderRoleIds: string[];
   roles: WorkspaceRole[];
   memberships: WorkspaceMembership[];
@@ -354,6 +365,7 @@ export function buildWorkspaceAccessDebug(params: {
     authUserId: params.authUserId,
     profileId: params.profileId,
     profileName: params.profileName,
+    profileAvatar: params.profileAvatar ?? null,
     leaderRoleIds: params.leaderRoleIds,
     leaderRolesRaw: params.roles.map((role) => ({ id: role.id, name: role.name })),
     userRoleRows: params.memberships.map((membership) => ({

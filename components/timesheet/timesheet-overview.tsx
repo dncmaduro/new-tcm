@@ -10,9 +10,12 @@ import {
   type TimeRequestType,
 } from "@/lib/constants/time-requests";
 import {
+  buildTimesDeviceFilter,
+  collectAttendanceDeviceLinks,
   collectAttendanceIds,
   mergeAttendanceRowsByDate,
   normalizeAttendanceId,
+  type AttendanceDeviceLink,
   type AttendanceTimeRow,
 } from "@/lib/attendance";
 import { calculateAttendanceMetrics, type AttendanceStatus } from "@/lib/attendance-metrics";
@@ -77,6 +80,7 @@ type ProfileAttendanceRow = {
 
 type TimesProfileLinkRow = {
   attendance_id: number | null;
+  device_id: number | null;
   created_at?: string | null;
 };
 
@@ -92,6 +96,7 @@ type AttendanceBinding = {
   directAttendanceId: number | null;
   attendanceIds: number[];
   linkedAttendanceIds: number[];
+  linkedDeviceBindings: AttendanceDeviceLink[];
 };
 
 type TimesheetOverviewProps = {
@@ -390,7 +395,7 @@ export function TimesheetOverview({
           supabase.from("profiles").select("id,attendance_id").eq("id", profileId).maybeSingle(),
           supabase
             .from("times_profiles")
-            .select("attendance_id,created_at")
+            .select("attendance_id,device_id,created_at")
             .eq("profile_id", profileId),
         ]);
 
@@ -404,6 +409,9 @@ export function TimesheetOverview({
 
         const directAttendanceId = normalizeAttendanceId(
           (profileAttendanceData as ProfileAttendanceRow | null)?.attendance_id,
+        );
+        const linkedDeviceBindings = collectAttendanceDeviceLinks(
+          (attendanceLinkRows ?? []) as TimesProfileLinkRow[],
         );
         const linkedAttendanceIds = collectAttendanceIds(
           (attendanceLinkRows ?? []) as TimesProfileLinkRow[],
@@ -421,20 +429,28 @@ export function TimesheetOverview({
           directAttendanceId,
           attendanceIds,
           linkedAttendanceIds,
+          linkedDeviceBindings,
         });
 
-        if (attendanceIds.length === 0) {
+        if (linkedDeviceBindings.length === 0 && directAttendanceId === null) {
           setAttendanceError("");
           setCalendarDays([]);
           return;
         }
 
-        const { data, error } = await supabase
+        let timeQuery = supabase
           .from("times")
-          .select("id,attendance_id,date,check_in,check_out,created_at,updated_at")
-          .in("attendance_id", attendanceIds)
+          .select("id,attendance_id,device_id,date,check_in,check_out,created_at,updated_at")
           .gte("date", startIso)
-          .lt("date", endIso)
+          .lt("date", endIso);
+
+        if (linkedDeviceBindings.length > 0) {
+          timeQuery = timeQuery.or(buildTimesDeviceFilter(linkedDeviceBindings));
+        } else if (directAttendanceId !== null) {
+          timeQuery = timeQuery.eq("attendance_id", directAttendanceId);
+        }
+
+        const { data, error } = await timeQuery
           .order("date", { ascending: true })
           .order("updated_at", { ascending: false })
           .order("created_at", { ascending: false });

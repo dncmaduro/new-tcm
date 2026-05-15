@@ -1,4 +1,5 @@
 import { formatGoalTypeLabel } from "@/lib/constants/goals";
+import { getActivityTitle } from "@/lib/activity-log";
 import {
   getTaskPriorityBadgeClassName,
   getTaskPriorityLabel,
@@ -321,95 +322,40 @@ export const formatRelativeTimeVi = (value: string | null, now = new Date()) => 
   return formatDateShortVi(value);
 };
 
-const toEntityLabel = (entityType: string | null) => {
-  if (entityType === "goal") {
-    return "mục tiêu";
-  }
-  if (entityType === "key_result") {
-    return "KR";
-  }
-  if (entityType === "task") {
-    return "công việc";
-  }
-  if (entityType === "time_request") {
-    return "yêu cầu thời gian";
-  }
-  return "bản ghi";
-};
-
-const toRawStatusLabel = (status: string | null) => {
-  const raw = (status ?? "").trim().toLowerCase();
-  if (!raw) {
-    return "Không rõ";
-  }
-  if (raw === "draft") {
-    return "Nháp";
-  }
-  if (raw === "active") {
-    return "Đang hoạt động";
-  }
-  if (raw === "completed" || raw === "done") {
-    return "Hoàn thành";
-  }
-  if (raw === "cancelled" || raw === "canceled") {
-    return "Đã hủy";
-  }
-  if (raw === "todo") {
-    return "Chưa bắt đầu";
-  }
-  if (raw === "doing" || raw === "in_progress" || raw === "review") {
-    return "Đang làm";
-  }
-  if (raw === "paused" || raw === "blocked" || raw === "on_hold") {
-    return "Tạm dừng";
-  }
-  return status ?? "Không rõ";
-};
-
 const getEntityName = (oldValue: Record<string, unknown> | null, newValue: Record<string, unknown> | null) => {
   const candidate = newValue?.name ?? oldValue?.name ?? null;
   return candidate ? String(candidate) : null;
 };
 
 export const formatActivityMessage = ({
+  actorName,
   action,
   entityType,
   oldValue,
   newValue,
 }: {
+  actorName: string | null;
   action: string | null;
   entityType: string | null;
   oldValue: Record<string, unknown> | null;
   newValue: Record<string, unknown> | null;
 }) => {
-  const entityLabel = toEntityLabel(entityType);
-  const entityName = getEntityName(oldValue, newValue);
-  const oldProgress =
-    typeof oldValue?.progress === "number" ? Math.round(oldValue.progress) : null;
-  const newProgress =
-    typeof newValue?.progress === "number" ? Math.round(newValue.progress) : null;
-  const oldStatus = oldValue?.status ? String(oldValue.status) : null;
-  const newStatus = newValue?.status ? String(newValue.status) : null;
-
   if (action?.includes("approved")) {
+    const entityName = getEntityName(oldValue, newValue);
     return `${entityName ?? "Yêu cầu"} đã được duyệt`;
   }
   if (action?.includes("rejected")) {
+    const entityName = getEntityName(oldValue, newValue);
     return `${entityName ?? "Yêu cầu"} đã bị từ chối`;
   }
-  if (action?.includes("created")) {
-    return `Đã tạo ${entityLabel}${entityName ? ` ${entityName}` : ""}`;
-  }
-  if (action?.includes("deleted")) {
-    return `Đã xóa ${entityLabel}${entityName ? ` ${entityName}` : ""}`;
-  }
-  if (oldProgress !== null && newProgress !== null && oldProgress !== newProgress) {
-    return `Đã cập nhật tiến độ ${entityLabel}${entityName ? ` ${entityName}` : ""} từ ${oldProgress}% lên ${newProgress}%`;
-  }
-  if (oldStatus && newStatus && oldStatus !== newStatus) {
-    return `Đã đổi trạng thái ${entityLabel}${entityName ? ` ${entityName}` : ""} từ ${toRawStatusLabel(oldStatus)} sang ${toRawStatusLabel(newStatus)}`;
-  }
-  return `Đã cập nhật ${entityLabel}${entityName ? ` ${entityName}` : ""}`;
+
+  return getActivityTitle({
+    actorName,
+    action,
+    entityType,
+    oldValue,
+    newValue,
+  });
 };
 
 export const getDashboardTaskProgress = (task: {

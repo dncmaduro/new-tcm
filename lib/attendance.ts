@@ -2,9 +2,15 @@ export type AttendanceLinkValue = {
   attendance_id: unknown;
 } | null | undefined;
 
+export type AttendanceDeviceLinkValue = {
+  attendance_id: unknown;
+  device_id?: unknown;
+} | null | undefined;
+
 export type AttendanceTimeRow = {
   id: string;
   attendance_id: number | null;
+  device_id?: number | null;
   date: string;
   check_in: string | null;
   check_out: string | null;
@@ -16,7 +22,31 @@ export type MergedAttendanceTimeRow = AttendanceTimeRow & {
   attendance_ids: number[];
 };
 
+export type AttendanceDeviceLink = {
+  attendanceId: number;
+  deviceId: number | null;
+};
+
 export function normalizeAttendanceId(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const normalized =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number.parseInt(value, 10)
+        : Number.NaN;
+
+  if (!Number.isFinite(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
+
+export function normalizeDeviceId(value: unknown) {
   if (value === null || value === undefined || value === "") {
     return null;
   }
@@ -45,6 +75,67 @@ export function collectAttendanceIds(values: Array<unknown | AttendanceLinkValue
     .filter((item): item is number => item !== null);
 
   return Array.from(new Set(normalizedValues)).sort((a, b) => a - b);
+}
+
+export function collectAttendanceDeviceLinks(values: AttendanceDeviceLinkValue[]) {
+  const links = values.reduce<AttendanceDeviceLink[]>((acc, item) => {
+    if (!item || typeof item !== "object" || !("attendance_id" in item)) {
+      return acc;
+    }
+
+    const attendanceId = normalizeAttendanceId(item.attendance_id);
+    if (attendanceId === null) {
+      return acc;
+    }
+
+    const deviceId = "device_id" in item ? normalizeDeviceId(item.device_id) : null;
+    acc.push({ attendanceId, deviceId });
+    return acc;
+  }, []);
+
+  return Array.from(
+    new Map(
+      links.map((link) => [`${link.attendanceId}:${link.deviceId ?? "null"}`, link] as const),
+    ).values(),
+  ).sort((a, b) => {
+    if (a.attendanceId !== b.attendanceId) {
+      return a.attendanceId - b.attendanceId;
+    }
+
+    if (a.deviceId === b.deviceId) {
+      return 0;
+    }
+
+    if (a.deviceId === null) {
+      return -1;
+    }
+
+    if (b.deviceId === null) {
+      return 1;
+    }
+
+    return a.deviceId - b.deviceId;
+  });
+}
+
+export function buildTimesDeviceFilter(links: AttendanceDeviceLink[]) {
+  const deviceIdsByAttendanceId = links.reduce<Map<number, Set<number | null>>>((acc, link) => {
+    const existing = acc.get(link.attendanceId) ?? new Set<number | null>();
+    existing.add(link.deviceId);
+    acc.set(link.attendanceId, existing);
+    return acc;
+  }, new Map());
+
+  return Array.from(deviceIdsByAttendanceId.entries())
+    .map(([attendanceId, deviceIds]) => {
+      if (deviceIds.size !== 1 || deviceIds.has(null)) {
+        return `attendance_id.eq.${attendanceId}`;
+      }
+
+      const [deviceId] = Array.from(deviceIds);
+      return `and(attendance_id.eq.${attendanceId},device_id.eq.${deviceId})`;
+    })
+    .join(",");
 }
 
 function toTimestamp(value: string | null | undefined) {

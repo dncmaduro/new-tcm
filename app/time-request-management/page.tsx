@@ -4,6 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  TIME_REQUEST_TYPES,
   getTimeRequestReason,
   getTimeRequestTypeDescription,
   getTimeRequestTypeLabel,
@@ -201,6 +209,8 @@ export default function TimeRequestManagementPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [processingRequestId, setProcessingRequestId] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | RequestStatus>("all");
+  const [profileFilter, setProfileFilter] = useState<string>("all");
+  const [requestTypeFilter, setRequestTypeFilter] = useState<"all" | TimeRequestType>("all");
   const [reloadSeed, setReloadSeed] = useState<number>(0);
 
   useEffect(() => {
@@ -536,12 +546,44 @@ export default function TimeRequestManagementPage() {
     return { total, pending, approved, rejected };
   }, [requests]);
 
+  const requesterOptions = useMemo(
+    () =>
+      Object.entries(profileNameById)
+        .map(([id, name]) => ({
+          id,
+          name: name?.trim() || id,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name, "vi")),
+    [profileNameById],
+  );
+
+  const requestTypeOptions = useMemo(() => {
+    const availableTypes = new Set(
+      requests
+        .map((item) => item.type)
+        .filter((item): item is TimeRequestType => Boolean(item)),
+    );
+
+    return TIME_REQUEST_TYPES.filter((item) => availableTypes.has(item.value));
+  }, [requests]);
+
   const filteredRequests = useMemo(() => {
-    if (filter === "all") {
-      return requests;
-    }
-    return requests.filter((item) => toRequestStatus(item.time_request_reviewers) === filter);
-  }, [filter, requests]);
+    return requests.filter((item) => {
+      if (filter !== "all" && toRequestStatus(item.time_request_reviewers) !== filter) {
+        return false;
+      }
+
+      if (profileFilter !== "all" && item.profile_id !== profileFilter) {
+        return false;
+      }
+
+      if (requestTypeFilter !== "all" && item.type !== requestTypeFilter) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [filter, profileFilter, requestTypeFilter, requests]);
 
   return (
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
@@ -575,45 +617,85 @@ export default function TimeRequestManagementPage() {
             </section>
 
             <section className="mt-5 rounded-2xl border border-slate-200 bg-white">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-4">
-                <h2 className="text-2xl font-semibold text-slate-900">Danh sách yêu cầu</h2>
-                <div className="inline-flex rounded-xl bg-slate-100 p-1">
-                  <button
-                    type="button"
-                    onClick={() => setFilter("all")}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                      filter === "all" ? "bg-white text-slate-700" : "text-slate-500"
-                    }`}
-                  >
-                    Tất cả
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFilter("pending")}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                      filter === "pending" ? "bg-white text-slate-700" : "text-slate-500"
-                    }`}
-                  >
-                    Chờ duyệt
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFilter("approved")}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                      filter === "approved" ? "bg-white text-slate-700" : "text-slate-500"
-                    }`}
-                  >
-                    Đã duyệt
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFilter("rejected")}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                      filter === "rejected" ? "bg-white text-slate-700" : "text-slate-500"
-                    }`}
-                  >
-                    Từ chối
-                  </button>
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+                <div>
+                  <h2 className="text-2xl font-semibold text-slate-900">Danh sách yêu cầu</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Hiển thị {filteredRequests.length} / {requests.length} yêu cầu trong phạm vi hiện tại.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <div className="w-[220px] min-w-[220px]">
+                    <Select value={profileFilter} onValueChange={setProfileFilter}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Lọc theo nhân sự" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Tất cả nhân sự</SelectItem>
+                        {requesterOptions.map((item) => (
+                          <SelectItem key={item.id} value={item.id}>
+                            {item.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="w-[240px] min-w-[240px]">
+                    <Select
+                      value={requestTypeFilter}
+                      onValueChange={(value) => setRequestTypeFilter(value as "all" | TimeRequestType)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Lọc theo loại request" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Tất cả loại request</SelectItem>
+                        {requestTypeOptions.map((item) => (
+                          <SelectItem key={item.value} value={item.value}>
+                            {item.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="inline-flex rounded-xl bg-slate-100 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setFilter("all")}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+                        filter === "all" ? "bg-white text-slate-700" : "text-slate-500"
+                      }`}
+                    >
+                      Tất cả
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFilter("pending")}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+                        filter === "pending" ? "bg-white text-slate-700" : "text-slate-500"
+                      }`}
+                    >
+                      Chờ duyệt
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFilter("approved")}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+                        filter === "approved" ? "bg-white text-slate-700" : "text-slate-500"
+                      }`}
+                    >
+                      Đã duyệt
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFilter("rejected")}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+                        filter === "rejected" ? "bg-white text-slate-700" : "text-slate-500"
+                      }`}
+                    >
+                      Từ chối
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -659,7 +741,7 @@ export default function TimeRequestManagementPage() {
                     ) : filteredRequests.length === 0 ? (
                       <tr className="border-t border-slate-100">
                         <td colSpan={10} className="px-5 py-8 text-center text-sm text-slate-500">
-                          Chưa có yêu cầu thời gian trong phạm vi hiện tại.
+                          Không có yêu cầu nào khớp với bộ lọc hiện tại.
                         </td>
                       </tr>
                     ) : (

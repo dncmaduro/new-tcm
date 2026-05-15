@@ -4,11 +4,17 @@ import { useEffect, useState } from "react";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  getActivityActionKind,
+  getActivityActionLabel,
+  getActivityVisibleChanges,
+  type ActivityActionKind,
+  type ActivityEntityType,
+} from "@/lib/activity-log";
 import { formatDateTimeDdMmYyyy } from "@/lib/date-format";
 import { supabase } from "@/lib/supabase";
 
@@ -25,12 +31,15 @@ type ActivityLogItem = {
   id: string;
   actorName: string;
   actionLabel: string;
+  actionKind: ActivityActionKind;
   createdAt: string | null;
-  oldValue: unknown;
-  newValue: unknown;
+  changes: Array<{
+    field: string;
+    label: string;
+    oldText: string;
+    newText: string;
+  }>;
 };
-
-type ActivityEntityType = "goal" | "key_result" | "task";
 
 type ActivityHistoryDialogProps = {
   entityType: ActivityEntityType;
@@ -38,56 +47,6 @@ type ActivityHistoryDialogProps = {
   title: string;
   triggerLabel?: string;
   triggerClassName?: string;
-};
-
-const actionLabelMap: Record<string, string> = {
-  goal_created: "Tạo mục tiêu",
-  goal_updated: "Cập nhật mục tiêu",
-  goal_status_changed: "Đổi trạng thái mục tiêu",
-  goal_progress_updated: "Cập nhật tiến độ mục tiêu",
-  goal_deleted: "Xóa mục tiêu",
-  key_result_created: "Tạo KR",
-  key_result_updated: "Cập nhật KR",
-  key_result_status_changed: "Đổi trạng thái KR",
-  key_result_progress_updated: "Cập nhật tiến độ KR",
-  key_result_deleted: "Xóa KR",
-  task_created: "Tạo công việc",
-  task_updated: "Cập nhật công việc",
-  task_status_changed: "Đổi trạng thái công việc",
-  task_progress_updated: "Cập nhật tiến độ công việc",
-  task_deleted: "Xóa công việc",
-};
-
-const formatActionLabel = (action: string | null) => {
-  if (!action) {
-    return "Cập nhật";
-  }
-
-  if (actionLabelMap[action]) {
-    return actionLabelMap[action];
-  }
-
-  return action;
-};
-
-const formatValue = (value: unknown) => {
-  if (value === null || value === undefined) {
-    return "Không có";
-  }
-
-  if (typeof value === "string") {
-    return value || "Không có";
-  }
-
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return "Không đọc được dữ liệu";
-  }
 };
 
 const formatDateTime = (value: string | null) => {
@@ -164,16 +123,29 @@ export function ActivityHistoryDialog({
         }, {});
       }
 
-      const mappedLogs: ActivityLogItem[] = typedLogs.map((item) => ({
-        id: String(item.id),
-        actorName: item.profile_id
-          ? (profileNameById[String(item.profile_id)] ?? "Không rõ")
-          : "Hệ thống",
-        actionLabel: formatActionLabel(item.action),
-        createdAt: item.created_at,
-        oldValue: item.old_value,
-        newValue: item.new_value,
-      }));
+      const mappedLogs: ActivityLogItem[] = typedLogs.map((item) => {
+        const changes = getActivityVisibleChanges({
+          action: item.action,
+          entityType,
+          oldValue: item.old_value && typeof item.old_value === "object" && !Array.isArray(item.old_value)
+            ? (item.old_value as Record<string, unknown>)
+            : null,
+          newValue: item.new_value && typeof item.new_value === "object" && !Array.isArray(item.new_value)
+            ? (item.new_value as Record<string, unknown>)
+            : null,
+        });
+        const actorName =
+          item.profile_id ? (profileNameById[String(item.profile_id)] ?? "Không rõ") : "Hệ thống";
+
+        return {
+          id: String(item.id),
+          actorName,
+          actionKind: getActivityActionKind(item.action),
+          actionLabel: getActivityActionLabel(item.action, entityType),
+          createdAt: item.created_at,
+          changes,
+        };
+      });
 
       setLogs(mappedLogs);
       setIsLoading(false);
@@ -238,16 +210,48 @@ export function ActivityHistoryDialog({
                     <td className="px-4 py-3 text-sm font-medium text-slate-800">
                       {log.actorName}
                     </td>
-                    <td className="px-4 py-3 text-sm text-slate-700">{log.actionLabel}</td>
-                    <td className="px-4 py-3 text-xs text-slate-600">
-                      <pre className="max-w-[260px] overflow-x-auto whitespace-pre-wrap break-words font-mono">
-                        {formatValue(log.oldValue)}
-                      </pre>
+                    <td className="px-4 py-3 text-sm text-slate-700">
+                      {log.actionLabel}
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-600">
-                      <pre className="max-w-[260px] overflow-x-auto whitespace-pre-wrap break-words font-mono">
-                        {formatValue(log.newValue)}
-                      </pre>
+                      {log.actionKind === "created" ? (
+                        <p className="text-slate-400">Không có dữ liệu trước đó.</p>
+                      ) : log.changes.length === 0 ? (
+                        <p className="text-slate-400">Không có thay đổi chi tiết.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {log.changes.map((change) => (
+                            <div key={`${log.id}-${change.field}-old`}>
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-slate-500">
+                                {change.label}
+                              </p>
+                              <p className="mt-1 whitespace-pre-wrap break-words text-slate-700">
+                                {change.oldText}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-slate-600">
+                      {log.actionKind === "deleted" ? (
+                        <p className="text-slate-400">Không còn dữ liệu sau khi xóa.</p>
+                      ) : log.changes.length === 0 ? (
+                        <p className="text-slate-400">Không có thay đổi chi tiết.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {log.changes.map((change) => (
+                            <div key={`${log.id}-${change.field}-new`}>
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-slate-500">
+                                {change.label}
+                              </p>
+                              <p className="mt-1 whitespace-pre-wrap break-words text-slate-700">
+                                {change.newText}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}

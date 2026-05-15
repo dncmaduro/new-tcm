@@ -29,6 +29,13 @@ import {
   formatGoalTypeLabel,
   normalizeGoalTypeValue,
 } from "@/lib/constants/goals";
+import {
+  getActivityChangeSummary,
+  getChangedFields,
+  getActivityEntityLabel,
+  getActivityTitle,
+  getActivityVisibleChanges,
+} from "@/lib/activity-log";
 import { buildGoalProgressMap, buildKeyResultProgressMap } from "@/lib/okr";
 import { formatKeyResultMetric, formatKeyResultUnit } from "@/lib/constants/key-results";
 import {
@@ -190,13 +197,6 @@ type GoalDepartmentParticipationRow = {
   department_id: string | null;
 };
 
-type ActivityLogAction =
-  | "goal_created"
-  | "goal_updated"
-  | "goal_status_changed"
-  | "goal_progress_updated"
-  | "goal_deleted";
-
 type ActivityLogRow = {
   id: string;
   entity_id: string | null;
@@ -205,13 +205,13 @@ type ActivityLogRow = {
   old_value: Record<string, unknown> | null;
   new_value: Record<string, unknown> | null;
   created_at: string | null;
-  action: ActivityLogAction | string | null;
+  action: string | null;
 };
 
 type ActivityLogItem = {
   id: string;
   profileName: string;
-  action: ActivityLogAction | string | null;
+  action: string | null;
   entityType: string | null;
   createdAt: string | null;
   oldValue: Record<string, unknown> | null;
@@ -251,28 +251,6 @@ const statusLabelMap = GOAL_STATUSES.reduce<Record<string, string>>((acc, item) 
   acc[item.value] = item.label;
   return acc;
 }, {});
-
-const goalLogActionLabelMap: Record<ActivityLogAction, string> = {
-  goal_created: "Tạo mục tiêu",
-  goal_updated: "Cập nhật mục tiêu",
-  goal_status_changed: "Thay đổi trạng thái",
-  goal_progress_updated: "Cập nhật tiến độ",
-  goal_deleted: "Xóa mục tiêu",
-};
-
-const goalLogFieldLabelMap: Record<string, string> = {
-  name: "Tên mục tiêu",
-  description: "Mô tả",
-  type: "Loại mục tiêu",
-  department_id: "Phòng ban",
-  status: "Trạng thái",
-  progress: "Tiến độ",
-  quarter: "Quý",
-  year: "Năm",
-  note: "Ghi chú",
-  start_date: "Ngày bắt đầu",
-  end_date: "Ngày kết thúc",
-};
 
 const goalHealthLabelMap: Record<GoalNode["healthStatus"], string> = {
   on_track: "Đúng tiến độ",
@@ -341,85 +319,6 @@ const getGoalHealthStatus = ({
 
 const formatDateTimeVi = (value: string | null) => {
   return formatDateTimeDdMmYyyy(value, "Chưa có", "Không hợp lệ");
-};
-
-const toGoalLogActionLabel = (action: ActivityLogAction | string | null) => {
-  if (!action) {
-    return "Cập nhật";
-  }
-  if (action in goalLogActionLabelMap) {
-    return goalLogActionLabelMap[action as ActivityLogAction];
-  }
-  return action;
-};
-
-const toGoalLogValueText = (value: unknown) => {
-  if (value === null || value === undefined) {
-    return "Không có";
-  }
-  if (typeof value === "number") {
-    if (Number.isFinite(value)) {
-      return String(value);
-    }
-    return "Không hợp lệ";
-  }
-  if (typeof value === "boolean") {
-    return value ? "Có" : "Không";
-  }
-  if (typeof value === "string") {
-    return value || "Không có";
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return "Không đọc được";
-  }
-};
-
-const toGoalLogSummary = (
-  action: ActivityLogAction | string | null,
-  oldValue: Record<string, unknown> | null,
-  newValue: Record<string, unknown> | null,
-) => {
-  if (action === "goal_status_changed") {
-    const oldStatusRaw = typeof oldValue?.status === "string" ? oldValue.status : null;
-    const newStatusRaw = typeof newValue?.status === "string" ? newValue.status : null;
-    const oldStatus = oldStatusRaw ? (statusLabelMap[oldStatusRaw] ?? oldStatusRaw) : "Không có";
-    const newStatus = newStatusRaw ? (statusLabelMap[newStatusRaw] ?? newStatusRaw) : "Không có";
-    return `Trạng thái: ${oldStatus} → ${newStatus}`;
-  }
-
-  if (action === "goal_progress_updated") {
-    const oldProgress =
-      typeof oldValue?.progress === "number" ? Math.round(oldValue.progress) : null;
-    const newProgress =
-      typeof newValue?.progress === "number" ? Math.round(newValue.progress) : null;
-    return `Tiến độ: ${oldProgress ?? 0}% → ${newProgress ?? 0}%`;
-  }
-
-  if (action === "goal_created") {
-    return "Mục tiêu được khởi tạo.";
-  }
-
-  if (action === "goal_deleted") {
-    return "Mục tiêu đã bị xóa.";
-  }
-
-  const oldObj = oldValue ?? {};
-  const newObj = newValue ?? {};
-  const keys = [...new Set([...Object.keys(oldObj), ...Object.keys(newObj)])];
-  const changedKeys = keys.filter((key) => {
-    const oldJson = JSON.stringify(oldObj[key]);
-    const newJson = JSON.stringify(newObj[key]);
-    return oldJson !== newJson;
-  });
-
-  if (changedKeys.length === 0) {
-    return "Cập nhật thông tin mục tiêu.";
-  }
-
-  const labels = changedKeys.map((key) => goalLogFieldLabelMap[key] ?? key);
-  return `Thay đổi: ${labels.join(", ")}.`;
 };
 
 const buildGoalGraph = (
@@ -3393,12 +3292,34 @@ function GoalsPageContent() {
                     </p>
                   ) : (
                     goalLogs.map((log) => {
-                      const oldObj = log.oldValue ?? {};
-                      const newObj = log.newValue ?? {};
-                      const changedKeys = [
-                        ...new Set([...Object.keys(oldObj), ...Object.keys(newObj)]),
-                      ].filter(
-                        (key) => JSON.stringify(oldObj[key]) !== JSON.stringify(newObj[key]),
+                      const visibleChanges = getActivityVisibleChanges({
+                        action: log.action,
+                        entityType: log.entityType,
+                        oldValue: log.oldValue,
+                        newValue: log.newValue,
+                      });
+                      const title = getActivityTitle({
+                        actorName: log.profileName,
+                        action: log.action,
+                        entityType: log.entityType,
+                        oldValue: log.oldValue,
+                        newValue: log.newValue,
+                      });
+                      const summary = getActivityChangeSummary({
+                        action: log.action,
+                        entityType: log.entityType,
+                        oldValue: log.oldValue,
+                        newValue: log.newValue,
+                      });
+                      const totalChangedFields = getChangedFields(
+                        log.oldValue,
+                        log.newValue,
+                        log.entityType,
+                        log.action,
+                      );
+                      const hiddenChangeCount = Math.max(
+                        0,
+                        totalChangedFields.length - visibleChanges.length,
                       );
 
                       return (
@@ -3409,23 +3330,22 @@ function GoalsPageContent() {
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div>
                               <p className="text-sm font-semibold text-slate-800">
-                                {toGoalLogActionLabel(log.action)}
+                                {title}
                               </p>
                               <p className="mt-1 text-xs text-slate-500">
-                                {formatDateTimeVi(log.createdAt)} · {log.profileName}
+                                {formatDateTimeVi(log.createdAt)}
                               </p>
                             </div>
                             <span className="rounded-full bg-white px-2 py-1 text-[11px] font-semibold text-slate-500">
-                              {(log.entityType ?? "goal").toUpperCase()} ·{" "}
-                              {log.action ?? "goal_updated"}
+                              {getActivityEntityLabel(log.entityType)}
                             </span>
                           </div>
 
-                          <p className="mt-3 text-sm text-slate-700">
-                            {toGoalLogSummary(log.action, log.oldValue, log.newValue)}
-                          </p>
+                          {summary ? (
+                            <p className="mt-3 text-sm text-slate-700">{summary}</p>
+                          ) : null}
 
-                          {changedKeys.length > 0 ? (
+                          {visibleChanges.length > 0 ? (
                             <div className="mt-3  rounded-lg border border-slate-200 bg-white">
                               <div className="grid grid-cols-[1.2fr_1fr_1fr] gap-0 border-b border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold tracking-[0.05em] text-slate-500 uppercase">
                                 <p>Trường</p>
@@ -3433,22 +3353,27 @@ function GoalsPageContent() {
                                 <p>Sau</p>
                               </div>
                               <div className="divide-y divide-slate-100">
-                                {changedKeys.map((key) => (
+                                {visibleChanges.map((change) => (
                                   <div
-                                    key={`${log.id}-${key}`}
+                                    key={`${log.id}-${change.field}`}
                                     className="grid grid-cols-[1.2fr_1fr_1fr] gap-2 px-3 py-2 text-xs"
                                   >
                                     <p className="font-medium text-slate-700">
-                                      {goalLogFieldLabelMap[key] ?? key}
+                                      {change.label}
                                     </p>
                                     <p className="line-clamp-2 text-slate-500">
-                                      {toGoalLogValueText(oldObj[key])}
+                                      {change.oldText}
                                     </p>
                                     <p className="line-clamp-2 text-slate-700">
-                                      {toGoalLogValueText(newObj[key])}
+                                      {change.newText}
                                     </p>
                                   </div>
                                 ))}
+                                {hiddenChangeCount > 0 ? (
+                                  <div className="px-3 py-2 text-xs font-medium text-slate-500">
+                                    +{hiddenChangeCount} thay đổi khác
+                                  </div>
+                                ) : null}
                               </div>
                             </div>
                           ) : null}

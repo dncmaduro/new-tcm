@@ -407,6 +407,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
 
   const sidebarRole = primaryAssignment?.roleName ?? "Chưa có vai trò";
   const sidebarDepartment = primaryAssignment?.departmentName ?? "Chưa có phòng ban";
+  const sidebarAvatar = workspaceAccess.profileAvatar?.trim() || null;
   const sidebarInitial = useMemo(() => {
     const trimmed = sidebarName.trim();
     if (!trimmed) {
@@ -422,6 +423,19 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
         .join("") || trimmed.slice(0, 1).toUpperCase()
     );
   }, [sidebarName]);
+
+  const avatarNode = sidebarAvatar ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={sidebarAvatar}
+      alt={sidebarName}
+      className="h-10 w-10 rounded-xl border border-slate-700 object-cover"
+    />
+  ) : (
+    <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[#12306b] text-sm font-semibold text-white">
+      {sidebarInitial}
+    </span>
+  );
 
   useEffect(() => {
     setIsWorkMenuOpen(workGroupActive);
@@ -583,11 +597,10 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
                 }`}
               >
                 {isCollapsed ? (
-                  <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[#12306b] text-sm font-semibold text-white">
-                    {sidebarInitial}
-                  </span>
+                  avatarNode
                 ) : (
                   <>
+                    {avatarNode}
                     <div>
                       <p className="text-base font-semibold">{sidebarName}</p>
                       <p className="text-sm text-slate-400">
