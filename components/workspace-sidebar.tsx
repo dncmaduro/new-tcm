@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import {
   CheckboxIcon,
   DashboardIcon,
-  RocketIcon,
   ClockIcon,
   GearIcon,
   ChevronDownIcon,
@@ -28,6 +27,7 @@ import {
 import { type ReactNode, type RefObject, ComponentType, useEffect, useMemo, useRef, useState } from "react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { AppBrandMark } from "@/components/app-brand-mark";
 import { supabase } from "@/lib/supabase";
 import { useWorkspaceSidebarStore } from "@/lib/stores/workspace-sidebar-store";
 import { useWorkspaceAccess, useWorkspaceAccessStore } from "@/lib/stores/workspace-access-store";
@@ -102,8 +102,8 @@ const getSidebarItemIcon = (key: SidebarKey): ComponentType<{ className?: string
 
 function SidebarBadge() {
   return (
-    <div className="grid h-8 w-8 place-items-center rounded-xl bg-blue-500">
-      <RocketIcon className="h-4 w-4 text-white" />
+    <div className="grid h-8 w-8 place-items-center overflow-hidden rounded-xl bg-white ring-1 ring-white/10">
+      <AppBrandMark size={32} alt="TCM" className="h-8 w-8" />
     </div>
   );
 }

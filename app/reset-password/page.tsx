@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { AppBrandMark } from "@/components/app-brand-mark";
 
 type UpdatePasswordResponse = {
   error?: string;
@@ -11,16 +12,6 @@ type RecoveryTokens = {
   accessToken: string;
   refreshToken: string;
 };
-
-function BrandMark() {
-  return (
-    <div className="flex items-center gap-1.5" aria-hidden="true">
-      <span className="h-8 w-3 rounded-full bg-blue-600" />
-      <span className="h-8 w-3 rounded-full bg-blue-600" />
-      <span className="h-8 w-3 rounded-full bg-blue-600" />
-    </div>
-  );
-}
 
 function AlertIcon() {
   return (
@@ -120,8 +111,8 @@ export default function ResetPasswordPage() {
 
       <main className="relative w-full max-w-[460px] animate-[panel-in_450ms_ease-out] text-center">
         <div className="mb-7 flex flex-col items-center">
-          <div className="mb-5">
-            <BrandMark />
+          <div className="mb-5 overflow-hidden rounded-2xl bg-white shadow-[0_10px_22px_-12px_rgba(37,99,235,0.28)] ring-1 ring-slate-200">
+            <AppBrandMark size={64} alt="TCM" className="h-16 w-16" priority />
           </div>
           <h1 className="text-[44px] leading-none font-semibold tracking-[-0.03em] text-slate-950 sm:text-[52px]">
             Đặt lại mật khẩu

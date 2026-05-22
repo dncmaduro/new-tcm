@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 
 const SITE_NAME = "TCM";
-const SITE_DESCRIPTION =
-  "TCM là hệ thống quản lý thực thi nội bộ giúp theo dõi mục tiêu, công việc, chấm công, báo cáo và hiệu suất phòng ban.";
 const LOGIN_DESCRIPTION =
   "Đăng nhập vào TCM để theo dõi mục tiêu, công việc, chấm công, báo cáo và hiệu suất nội bộ.";
 const DEFAULT_KEYWORDS = [
@@ -50,6 +48,14 @@ export function getSiteMetadata(): Metadata {
     creator: SITE_NAME,
     publisher: SITE_NAME,
     category: "business",
+    icons: {
+      icon: [
+        { url: "/favicon.ico", sizes: "any" },
+        { url: "/icon.png", type: "image/png", sizes: "512x512" },
+      ],
+      shortcut: ["/favicon.ico"],
+      apple: [{ url: "/apple-icon.png", type: "image/png", sizes: "180x180" }],
+    },
     alternates: {
       canonical: "/",
     },

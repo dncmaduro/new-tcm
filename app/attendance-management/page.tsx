@@ -480,7 +480,7 @@ export default function AttendanceManagementPage() {
                         className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       />
                     </div>
-                    <div className="max-h-[calc(100vh-280px)] space-y-3 overflow-y-auto px-4 py-4 xl:max-h-none xl:min-h-0 xl:flex-1">
+                    <div className="max-h-[calc(100vh-280px)] space-y-3 overflow-y-auto overscroll-y-contain px-4 py-4 xl:max-h-none xl:min-h-0 xl:flex-1">
                       {filteredProfiles.length > 0 ? (
                         filteredProfiles.map((profile) => {
                           const isActive = profile.id === selectedProfileId;

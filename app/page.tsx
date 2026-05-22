@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
+import { AppBrandMark } from "@/components/app-brand-mark";
 import { supabase } from "@/lib/supabase";
 
 type LoginResponse = {
@@ -16,19 +17,6 @@ type LoginResponse = {
     refresh_token?: string;
   };
 };
-
-function ShieldIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-6 w-6 text-white" aria-hidden="true">
-      <path
-        d="M12 2.5L5 5.5v5.7c0 4.3 2.7 8.2 7 9.8 4.3-1.6 7-5.5 7-9.8V5.5l-7-3z"
-        fill="currentColor"
-        fillOpacity="0.95"
-      />
-      <circle cx="12" cy="11" r="2.1" fill="#2563eb" />
-    </svg>
-  );
-}
 
 function AlertIcon() {
   return (
@@ -104,8 +92,8 @@ export default function Home() {
 
       <main className="relative w-full max-w-[420px] animate-[panel-in_450ms_ease-out]">
         <div className="mb-7 flex flex-col items-center text-center">
-          <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 shadow-[0_10px_22px_-12px_rgba(37,99,235,0.9)]">
-            <ShieldIcon />
+          <div className="mb-5 overflow-hidden rounded-2xl bg-white shadow-[0_10px_22px_-12px_rgba(37,99,235,0.28)] ring-1 ring-slate-200">
+            <AppBrandMark size={56} alt="TCM" className="h-14 w-14" priority />
           </div>
           <h1 className="text-4xl leading-none font-semibold tracking-[-0.03em] text-slate-950 sm:text-[46px]">
             Chào mừng trở lại
