@@ -32,6 +32,7 @@ import { formatTimelineRangeVi } from "@/lib/timeline";
 
 const DEFAULT_FORM: TaskFormState = {
   name: "",
+  assigneeId: "",
   description: "",
   note: "",
   isRecurring: false,
@@ -163,6 +164,7 @@ export default function TaskDetailPage() {
   const [keyResult, setKeyResult] = useState<KeyResultLiteRow | null>(null);
   const [creatorName, setCreatorName] = useState("Chưa rõ");
   const [assigneeName, setAssigneeName] = useState("Chưa gán");
+  const [assigneeOptions, setAssigneeOptions] = useState<ProfileLiteRow[]>([]);
   const [form, setForm] = useState<TaskFormState>(DEFAULT_FORM);
   const [progressInput, setProgressInput] = useState("0");
 
@@ -185,6 +187,7 @@ export default function TaskDetailPage() {
       setProgressInput("0");
       setCreatorName("Chưa rõ");
       setAssigneeName("Chưa gán");
+      setAssigneeOptions([]);
       setLoadError("Liên kết công việc không hợp lệ.");
       setIsLoading(false);
       return;
@@ -273,10 +276,26 @@ export default function TaskDetailPage() {
         const nextKeyResult = normalizedTask.key_result ?? null;
         const nextForm = buildTaskFormState(normalizedTask);
 
+        const assigneeOptionsResult = await supabase
+          .from("profiles")
+          .select("id,name,email")
+          .order("name", { ascending: true });
+
+        if (!isActive) {
+          return;
+        }
+
+        if (assigneeOptionsResult.error) {
+          throw new Error(
+            assigneeOptionsResult.error.message || "Không tải được danh sách nhân sự phụ trách.",
+          );
+        }
+
         setTask(normalizedTask);
         setKeyResult(nextKeyResult);
         setForm(nextForm);
         setProgressInput(String(nextForm.progress));
+        setAssigneeOptions((assigneeOptionsResult.data ?? []) as ProfileLiteRow[]);
 
         const creatorProfileId = normalizedTask.creator_profile_id ?? null;
         const effectiveAssigneeId = normalizedTask.assignee_id ?? normalizedTask.profile_id;
@@ -318,6 +337,7 @@ export default function TaskDetailPage() {
         setProgressInput("0");
         setCreatorName("Chưa rõ");
         setAssigneeName("Chưa gán");
+        setAssigneeOptions([]);
         setLoadError(error instanceof Error ? error.message : "Không tải được chi tiết công việc.");
       } finally {
         if (isActive) {
@@ -347,6 +367,7 @@ export default function TaskDetailPage() {
 
     return (
       form.name.trim() !== task.name ||
+      form.assigneeId !== (task.assignee_id ?? task.profile_id ?? "") ||
       form.description.trim() !== (task.description ?? "") ||
       form.note.trim() !== (task.note ?? "") ||
       form.isRecurring !== Boolean(task.is_recurring) ||
@@ -458,11 +479,18 @@ export default function TaskDetailPage() {
     setNotice(null);
 
     try {
+      const nextAssigneeId = form.assigneeId.trim();
+      if (!nextAssigneeId) {
+        throw new Error("Vui lòng chọn người phụ trách.");
+      }
+
       const nextTarget = Number(form.target);
       const nextCurrent = getTaskCurrentFromProgress(form.progress, nextTarget);
       const { data: updatedTask, error } = await supabase
         .from("tasks")
         .update({
+          assignee_id: nextAssigneeId,
+          profile_id: nextAssigneeId,
           name: form.name.trim(),
           description: form.description.trim() || null,
           note: form.note.trim() || null,
@@ -496,6 +524,11 @@ export default function TaskDetailPage() {
       setTask(nextTask);
       setForm(nextForm);
       setProgressInput(String(nextForm.progress));
+      setAssigneeName(
+        assigneeOptions.find((profile) => profile.id === nextAssigneeId)?.name?.trim() ||
+          assigneeOptions.find((profile) => profile.id === nextAssigneeId)?.email?.trim() ||
+          "Chưa gán",
+      );
       setIsEditingTaskInfo(false);
       setNotice("Đã lưu thông tin công việc.");
     } catch (error) {
@@ -631,6 +664,7 @@ export default function TaskDetailPage() {
                     keyResultName={keyResult?.name ?? null}
                     keyResultHref={keyResultHref}
                     form={form}
+                    assigneeOptions={assigneeOptions}
                     isEditing={isEditingTaskInfo}
                     isEditingProgress={isEditingTaskProgress}
                     canManage={canManageTask}
@@ -684,6 +718,12 @@ export default function TaskDetailPage() {
                       setProgressInput(String(normalized));
                     }}
                     onNameChange={(value) => setForm((current) => ({ ...current, name: value }))}
+                    onAssigneeChange={(value) =>
+                      setForm((current) => ({
+                        ...current,
+                        assigneeId: value,
+                      }))
+                    }
                     onTypeChange={(value) => {
                       const nextProgress = getTaskProgressByType(value, form.status, form.progress);
                       setForm((current) => ({

@@ -20,10 +20,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  LEAVE_REQUEST_SUBTYPES,
+  getLeaveRequestDurationMinutes,
+  getLeaveRequestHours,
   TIME_REQUEST_TYPES,
   getTimeRequestTypeDescription,
+  isMissingTimeRequestType,
+  type LeaveRequestSession,
+  type LeaveRequestSubtype,
   type TimeRequestType,
-  roundLeaveMinutesUp,
 } from "@/lib/constants/time-requests";
 import { fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
@@ -94,7 +99,7 @@ const fromIsoDateParam = (value: string | null) => {
   return parsed;
 };
 
-const parseMinutesInput = (value: string) => {
+const parseIntegerInput = (value: string) => {
   const normalizedValue = value.trim();
   if (normalizedValue === "") {
     return null;
@@ -132,21 +137,6 @@ const combineDateAndTimeToIso = (date: Date, timeValue: string) => {
   }
 
   return combined.toISOString();
-};
-
-const formatDurationShort = (minutes: number) => {
-  const safeMinutes = Math.max(0, Math.round(minutes));
-  const hours = Math.floor(safeMinutes / 60);
-  const restMinutes = safeMinutes % 60;
-
-  if (hours === 0) {
-    return `${restMinutes} phút`;
-  }
-  if (restMinutes === 0) {
-    return `${hours} giờ`;
-  }
-
-  return `${hours} giờ ${restMinutes} phút`;
 };
 
 const fetchCurrentProfileId = async () => {
@@ -234,6 +224,8 @@ function CreateTimeRequestPageContent() {
   const queryCorrectionDate = searchParams.get("date");
   const [currentProfileId, setCurrentProfileId] = useState<string | null>(null);
   const [requestType, setRequestType] = useState<TimeRequestType | "">("");
+  const [leaveSubtype, setLeaveSubtype] = useState<LeaveRequestSubtype | "">("");
+  const [requestedHoursInput, setRequestedHoursInput] = useState<string>("");
   const [correctionDate, setCorrectionDate] = useState<Date | undefined>(
     () => fromIsoDateParam(queryCorrectionDate) ?? new Date(),
   );
@@ -253,20 +245,20 @@ function CreateTimeRequestPageContent() {
   });
   const currentMonthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
   const isApprovedLeaveRequest = requestType === "approved_leave";
-  const isUnauthorizedLeaveRequest = requestType === "unauthorized_leave";
+  const isMissingLeaveRequest = isMissingTimeRequestType(requestType || null);
   const isRemoteRequest = requestType === "remote";
   const isPastMonthSelection = correctionDate ? isDateInPastMonth(correctionDate) : false;
-  const requiresMinutesInput = isApprovedLeaveRequest;
-  const parsedMinutesPreview = parseMinutesInput(minutesInput);
-  const roundedLeaveMinutesPreview =
-    isApprovedLeaveRequest &&
-    parsedMinutesPreview !== null &&
-    Number.isFinite(parsedMinutesPreview) &&
-    parsedMinutesPreview > 0
-      ? roundLeaveMinutesUp(parsedMinutesPreview)
-      : 0;
-  const requestedLeaveHoursPreview =
-    roundedLeaveMinutesPreview > 0 ? roundedLeaveMinutesPreview / 60 : 0;
+  const requiresMinutesInput = !isMissingLeaveRequest && !isRemoteRequest;
+  const parsedMinutesPreview = parseIntegerInput(minutesInput);
+  const requestedHoursPreview = parseIntegerInput(requestedHoursInput);
+  const normalizedLeaveSubtype = isMissingLeaveRequest ? leaveSubtype || null : null;
+  const normalizedLeaveSession =
+    isMissingLeaveRequest && leaveSubtype === "half_day" ? ("morning" as LeaveRequestSession) : null;
+  const normalizedRequestedHours =
+    isMissingLeaveRequest && leaveSubtype === "early_leave" ? requestedHoursPreview : null;
+  const requestedLeaveHoursPreview = isMissingLeaveRequest
+    ? getLeaveRequestHours(normalizedLeaveSubtype, normalizedRequestedHours)
+    : 0;
   const totalLeaveHours =
     typeof leaveBalance?.total_hours === "number" ? Math.max(0, leaveBalance.total_hours) : 0;
   const usedLeaveHours =
@@ -344,6 +336,21 @@ function CreateTimeRequestPageContent() {
   }, [computedRemoteMinutes, isRemoteRequest, minutesInput]);
 
   useEffect(() => {
+    if (isMissingLeaveRequest) {
+      return;
+    }
+
+    setLeaveSubtype("");
+    setRequestedHoursInput("");
+  }, [isMissingLeaveRequest]);
+
+  useEffect(() => {
+    if (leaveSubtype !== "early_leave" && requestedHoursInput) {
+      setRequestedHoursInput("");
+    }
+  }, [leaveSubtype, requestedHoursInput]);
+
+  useEffect(() => {
     if (!correctionDate) {
       setSelectedHoliday(null);
       return;
@@ -408,18 +415,18 @@ function CreateTimeRequestPageContent() {
   }, [correctionDate, currentProfileId, isApprovedLeaveRequest]);
 
   const handleMinutesBlur = () => {
-    if (!isApprovedLeaveRequest) {
+    if (!requiresMinutesInput) {
       return;
     }
 
-    const parsedValue = parseMinutesInput(minutesInput);
-    if (parsedValue === null || !Number.isFinite(parsedValue) || parsedValue <= 0) {
+    const parsedValue = parseIntegerInput(minutesInput);
+    if (parsedValue === null || !Number.isFinite(parsedValue) || parsedValue < 0) {
       return;
     }
 
-    const roundedMinutes = roundLeaveMinutesUp(parsedValue);
-    if (roundedMinutes !== parsedValue) {
-      setMinutesInput(String(roundedMinutes));
+    const normalizedValue = Math.trunc(parsedValue);
+    if (normalizedValue !== parsedValue) {
+      setMinutesInput(String(normalizedValue));
     }
   };
 
@@ -431,11 +438,13 @@ function CreateTimeRequestPageContent() {
     const reviewerDebug = {
       submittedAt: new Date().toISOString(),
       requestType,
+      leaveSubtype,
+      requestedHoursInput,
       correctionDate: correctionDate ? toIsoDate(correctionDate) : null,
       inputMinutes: minutesInput,
       remoteCheckIn: remoteCheckInIso,
       remoteCheckOut: remoteCheckOutIso,
-      roundedLeaveMinutes: null as number | null,
+      leaveMinutes: null as number | null,
       requestedLeaveHours: null as number | null,
       reason: reasonInput,
       requesterProfileId: null as string | null,
@@ -483,7 +492,26 @@ function CreateTimeRequestPageContent() {
       }
     }
 
-    const parsedMinutes = parseMinutesInput(minutesInput);
+    if (isMissingLeaveRequest && !leaveSubtype) {
+      setFormError("Vui lòng chọn hình thức nghỉ.");
+      return;
+    }
+
+    const parsedRequestedHours = parseIntegerInput(requestedHoursInput);
+    if (
+      isMissingLeaveRequest &&
+      leaveSubtype === "early_leave" &&
+      (parsedRequestedHours === null ||
+        !Number.isFinite(parsedRequestedHours) ||
+        !Number.isInteger(parsedRequestedHours) ||
+        parsedRequestedHours < 1 ||
+        parsedRequestedHours > 4)
+    ) {
+      setFormError("Xin về sớm phải chọn số giờ từ 1 đến 4.");
+      return;
+    }
+
+    const parsedMinutes = parseIntegerInput(minutesInput);
     if (
       parsedMinutes !== null &&
       (!Number.isFinite(parsedMinutes) || parsedMinutes < 0 || !Number.isInteger(parsedMinutes))
@@ -491,19 +519,25 @@ function CreateTimeRequestPageContent() {
       setFormError("Số phút phải là số nguyên từ 0 trở lên, hoặc để trống.");
       return;
     }
+
     const normalizedMinutes = isRemoteRequest
       ? computedRemoteMinutes
-      : isApprovedLeaveRequest
-        ? roundLeaveMinutesUp(parsedMinutes)
+      : isMissingLeaveRequest
+        ? getLeaveRequestDurationMinutes(leaveSubtype || null, parsedRequestedHours)
         : parsedMinutes;
-    reviewerDebug.roundedLeaveMinutes = normalizedMinutes;
+    reviewerDebug.leaveMinutes = normalizedMinutes;
     reviewerDebug.requestedLeaveHours =
-      isApprovedLeaveRequest && typeof normalizedMinutes === "number"
+      isMissingLeaveRequest && typeof normalizedMinutes === "number"
         ? normalizedMinutes / 60
         : null;
 
+    if (isMissingLeaveRequest && (!normalizedMinutes || normalizedMinutes <= 0)) {
+      setFormError("Không xác định được thời lượng nghỉ hợp lệ.");
+      return;
+    }
+
     if (requiresMinutesInput && (parsedMinutes === null || normalizedMinutes === 0)) {
-      setFormError("Thiếu thời gian có phép phải nhập số phút thiếu lớn hơn 0.");
+      setFormError("Vui lòng nhập số phút điều chỉnh lớn hơn 0.");
       return;
     }
     const normalizedReason = reasonInput.trim();
@@ -778,6 +812,11 @@ function CreateTimeRequestPageContent() {
           type: requestType,
           minutes: normalizedMinutes,
           reason: normalizedReason,
+          request_schema_version: 2,
+          leave_subtype: isMissingLeaveRequest ? leaveSubtype || null : null,
+          leave_session: normalizedLeaveSession,
+          requested_hours:
+            isMissingLeaveRequest && leaveSubtype === "early_leave" ? parsedRequestedHours : null,
           remote_check_in: isRemoteRequest ? remoteCheckInIso : null,
           remote_check_out: isRemoteRequest ? remoteCheckOutIso : null,
         })
@@ -872,7 +911,7 @@ function CreateTimeRequestPageContent() {
                   <p className="text-xs text-slate-500">
                     {requestType
                       ? getTimeRequestTypeDescription(requestType)
-                      : "Thiếu thời gian có phép/không phép dùng chung cho nghỉ, về sớm và đi muộn."}
+                      : "Nghỉ có phép/không phép hỗ trợ nghỉ buổi sáng, nghỉ cả ngày và xin về sớm."}
                   </p>
                 </div>
 
@@ -912,64 +951,23 @@ function CreateTimeRequestPageContent() {
                     <p className="font-semibold">Ngày nghỉ</p>
                     <p className="mt-1">
                       {selectedHoliday.name}
-                      {isApprovedLeaveRequest || isUnauthorizedLeaveRequest
-                        ? " · Yêu cầu thiếu giờ trên ngày này vẫn có thể tạo nhưng sẽ không bị tính vào thiếu giờ hoặc nghỉ không phép."
+                      {isMissingLeaveRequest
+                        ? " · Yêu cầu nghỉ trên ngày này vẫn có thể tạo nhưng sẽ không bị tính vào thiếu giờ hoặc nghỉ không phép."
                         : " · Ngày này không phát sinh requiredWorkingMinutes."}
                     </p>
                   </div>
                 ) : null}
 
                 {isApprovedLeaveRequest ? (
-                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <p className="text-sm font-semibold text-amber-900">
-                          Quỹ phép tháng đang chọn
-                        </p>
-                        <p className="text-xs text-amber-700">
-                          Quỹ phép được cộng dồn nhưng tổng mỗi tháng không vượt quá 16 giờ.
-                        </p>
-                      </div>
-                      {correctionDate ? (
-                        <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-amber-700">
-                          {format(correctionDate, "MM/yyyy", { locale: vi })}
-                        </span>
-                      ) : null}
-                    </div>
-
-                    {isLoadingLeaveBalance ? (
-                      <p className="mt-3 text-sm text-amber-700">Đang tải quỹ phép...</p>
-                    ) : leaveBalanceError ? (
-                      <p className="mt-3 text-sm text-rose-700">{leaveBalanceError}</p>
-                    ) : leaveBalance ? (
-                      <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                        <div className="rounded-xl border border-amber-200 bg-white px-4 py-3">
-                          <p className="text-xs font-semibold tracking-[0.08em] text-amber-500 uppercase">
-                            Tổng giờ phép trong tháng
-                          </p>
-                          <p className="mt-2 text-2xl font-semibold text-amber-950">
-                            {formatHoursLabel(totalLeaveHours)}
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-amber-200 bg-white px-4 py-3">
-                          <p className="text-xs font-semibold tracking-[0.08em] text-amber-500 uppercase">
-                            Đã dùng
-                          </p>
-                          <p className="mt-2 text-2xl font-semibold text-amber-950">
-                            {formatHoursLabel(usedLeaveHours)}
-                          </p>
-                        </div>
-                        <div className="rounded-xl border border-amber-200 bg-white px-4 py-3">
-                          <p className="text-xs font-semibold tracking-[0.08em] text-amber-500 uppercase">
-                            Còn lại
-                          </p>
-                          <p className="mt-2 text-2xl font-semibold text-amber-950">
-                            {formatHoursLabel(remainingLeaveHours)}
-                          </p>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
+                  isLoadingLeaveBalance ? (
+                    <p className="text-sm font-medium text-amber-700">Đang tải quỹ phép...</p>
+                  ) : leaveBalanceError ? (
+                    <p className="text-sm font-medium text-rose-700">{leaveBalanceError}</p>
+                  ) : leaveBalance ? (
+                    <p className="text-sm font-medium text-amber-700">
+                      Quỹ phép tháng hiện tại còn lại: {formatHoursLabel(remainingLeaveHours)}.
+                    </p>
+                  ) : null
                 ) : null}
 
                 {isRemoteRequest ? (
@@ -1001,6 +999,64 @@ function CreateTimeRequestPageContent() {
                       </div>
                     </div>
                   </div>
+                ) : isMissingLeaveRequest ? (
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-semibold text-slate-800">
+                        Hình thức nghỉ *
+                      </label>
+                      <Select
+                        value={leaveSubtype || undefined}
+                        onValueChange={(value) => setLeaveSubtype(value as LeaveRequestSubtype)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Chọn hình thức nghỉ" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {LEAVE_REQUEST_SUBTYPES.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-slate-500">
+                        {leaveSubtype
+                          ? (LEAVE_REQUEST_SUBTYPES.find((item) => item.value === leaveSubtype)
+                              ?.description ?? "")
+                          : "Chọn nghỉ buổi sáng, nghỉ cả ngày hoặc xin về sớm."}
+                      </p>
+                    </div>
+
+                    {leaveSubtype === "early_leave" ? (
+                      <div className="space-y-2">
+                        <label className="text-sm font-semibold text-slate-800">
+                          Số giờ xin về sớm *
+                        </label>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={1}
+                          max={4}
+                          step={1}
+                          value={requestedHoursInput}
+                          onChange={(event) => setRequestedHoursInput(event.target.value)}
+                          placeholder="Nhập số giờ, ví dụ: 2"
+                          className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        />
+                        <p className="text-xs text-slate-500">
+                          Nhập số giờ xin về sớm. Hệ thống hiện chỉ chấp nhận nghỉ tối đa 4 giờ
+                          {isApprovedLeaveRequest &&
+                          leaveBalance &&
+                          !isLoadingLeaveBalance &&
+                          !leaveBalanceError &&
+                          requestedLeaveHoursPreview > 0
+                            ? `, sau khi gửi sẽ còn ${Math.max(0, remainingLeaveHours - requestedLeaveHoursPreview)} giờ phép.`
+                            : "."}
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
                 ) : (
                   <div className="space-y-2">
                     <label className="text-sm font-semibold text-slate-800">
@@ -1016,18 +1072,16 @@ function CreateTimeRequestPageContent() {
                       onBlur={handleMinutesBlur}
                       placeholder={
                         requiresMinutesInput
-                          ? "Nhập tổng số phút thiếu"
+                          ? "Ví dụ: 120"
                           : "Ví dụ: 30 (để trống nếu không áp dụng)"
                       }
                       className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                     />
-                    {isApprovedLeaveRequest ? (
-                      <p className="text-xs font-medium text-amber-700">
-                        {parsedMinutesPreview !== null &&
-                        Number.isFinite(parsedMinutesPreview) &&
-                        parsedMinutesPreview > 0
-                          ? `Hệ thống sẽ quy đổi ${parsedMinutesPreview} phút thành ${roundedLeaveMinutesPreview} phút (${requestedLeaveHoursPreview} giờ) theo bội số 60 phút gần nhất.${leaveBalance && !isLoadingLeaveBalance && !leaveBalanceError ? ` Sau khi gửi sẽ còn ${Math.max(0, remainingLeaveHours - requestedLeaveHoursPreview)} giờ phép.` : ""}`
-                          : "Thời gian thiếu có phép sẽ được quy đổi lên theo bội số 60 phút gần nhất."}
+                    {parsedMinutesPreview !== null &&
+                    Number.isFinite(parsedMinutesPreview) &&
+                    parsedMinutesPreview > 0 ? (
+                      <p className="text-xs font-medium text-slate-500">
+                        Hệ thống sẽ ghi nhận {parsedMinutesPreview} phút điều chỉnh.
                       </p>
                     ) : null}
                   </div>
@@ -1039,7 +1093,7 @@ function CreateTimeRequestPageContent() {
                     rows={4}
                     value={reasonInput}
                     onChange={(event) => setReasonInput(event.target.value)}
-                    placeholder="Nhập lý do điều chỉnh..."
+                    placeholder="Nhập lý do..."
                     className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   />
                 </div>

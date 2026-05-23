@@ -3,10 +3,6 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  CheckboxIcon,
-  DashboardIcon,
-  ClockIcon,
-  GearIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   ChevronLeftIcon,
@@ -14,15 +10,20 @@ import {
 } from "@radix-ui/react-icons";
 import {
   Activity,
+  Bell,
+  BriefcaseBusiness,
   CalendarDays,
   ClipboardList,
   FileText,
   Gauge,
+  LayoutDashboard,
   ListTodo,
+  Settings2,
   ShieldCheck,
   Target,
   Timer,
   UserCircle2,
+  Clock3,
 } from "lucide-react";
 import { type ReactNode, type RefObject, ComponentType, useEffect, useMemo, useRef, useState } from "react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -34,6 +35,7 @@ import { useWorkspaceAccess, useWorkspaceAccessStore } from "@/lib/stores/worksp
 
 type SidebarKey =
   | "dashboard"
+  | "notifications"
   | "goals"
   | "tasks"
   | "realtimeReports"
@@ -58,7 +60,14 @@ const dashboardItem: { key: SidebarKey; label: string; href: string; icon: Sideb
   key: "dashboard",
   label: "Bảng điều khiển",
   href: "/dashboard",
-  icon: DashboardIcon,
+  icon: LayoutDashboard,
+};
+
+const notificationsItem: { key: SidebarKey; label: string; href: string; icon: SidebarIcon } = {
+  key: "notifications",
+  label: "Thông báo",
+  href: "/notifications",
+  icon: Bell,
 };
 
 const workSidebarItems: SidebarItem[] = [
@@ -84,9 +93,12 @@ const managementSidebarItems: SidebarItem[] = [
 
 const SIDEBAR_EXPANDED_WIDTH = 280;
 const SIDEBAR_COLLAPSED_WIDTH = 88;
+const PRIMARY_ITEM_ICON_CLASS = "h-[18px] w-[18px] shrink-0";
+const PRIMARY_ITEM_TEXT_CLASS = "text-[17px] font-semibold tracking-[-0.01em]";
 
 const getSidebarItemIcon = (key: SidebarKey): ComponentType<{ className?: string }> => {
   if (key === "goals") return Target;
+  if (key === "notifications") return Bell;
   if (key === "tasks") return ListTodo;
   if (key === "reports") return FileText;
   if (key === "timesheet") return CalendarDays;
@@ -94,10 +106,10 @@ const getSidebarItemIcon = (key: SidebarKey): ComponentType<{ className?: string
   if (key === "realtimeReports") return Activity;
   if (key === "attendanceManagement") return ShieldCheck;
   if (key === "timeRequestManagement") return Timer;
-  if (key === "departments") return GearIcon;
+  if (key === "departments") return Settings2;
   if (key === "departmentPerformance") return Gauge;
   if (key === "profile") return UserCircle2;
-  return DashboardIcon;
+  return LayoutDashboard;
 };
 
 function SidebarBadge() {
@@ -184,7 +196,7 @@ function SidebarGroup({
                 : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
             } ${isOpen ? "ring-1 ring-blue-400/30" : ""}`}
           >
-            <GroupIcon className="h-[18px] w-[18px] shrink-0" />
+            <GroupIcon className={PRIMARY_ITEM_ICON_CLASS} />
           </button>
         </SidebarTooltip>
 
@@ -229,14 +241,14 @@ function SidebarGroup({
         <CollapsibleTrigger
           title={label}
           onClick={onParentClick}
-          className={`flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-lg font-medium tracking-[-0.01em] transition ${
+          className={`flex w-full items-center justify-between rounded-xl px-4 py-3 text-left transition ${
             isGroupActive
               ? "bg-[#0b1e43] text-white"
               : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
           }`}
         >
-          <span className="flex items-center gap-3">
-            <GroupIcon className="h-[18px] w-[18px] shrink-0" />
+          <span className={`flex items-center gap-3 ${PRIMARY_ITEM_TEXT_CLASS}`}>
+            <GroupIcon className={PRIMARY_ITEM_ICON_CLASS} />
             {label}
           </span>
           {isOpen ? (
@@ -518,22 +530,24 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
                 <Link
                   href={dashboardItem.href}
                   title={dashboardItem.label}
-                  className={`flex w-full items-center rounded-xl text-left font-medium tracking-[-0.01em] transition ${
-                    isCollapsed ? "justify-center px-0 py-3" : "gap-3 px-4 py-3 text-lg"
+                  className={`flex w-full items-center rounded-xl text-left transition ${
+                    isCollapsed
+                      ? "justify-center px-0 py-3"
+                      : `gap-3 px-4 py-3 ${PRIMARY_ITEM_TEXT_CLASS}`
                   } ${
                     dashboardItem.key === active
                       ? "bg-[#1e62d8] text-white"
                       : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
                   }`}
                 >
-                  <DashboardIcon className="h-[18px] w-[18px] shrink-0" />
+                  <LayoutDashboard className={PRIMARY_ITEM_ICON_CLASS} />
                   {!isCollapsed ? dashboardItem.label : null}
                 </Link>
               </SidebarTooltip>
 
               <SidebarGroup
                 label="Công việc"
-                icon={CheckboxIcon}
+                icon={BriefcaseBusiness}
                 items={workSidebarItems}
                 active={active}
                 isOpen={isCollapsed ? openCollapsedGroup === "work" : isWorkMenuOpen}
@@ -549,7 +563,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
 
               <SidebarGroup
                 label="Thời gian"
-                icon={ClockIcon}
+                icon={Clock3}
                 items={timeSidebarItems}
                 active={active}
                 isOpen={isCollapsed ? openCollapsedGroup === "time" : isTimeMenuOpen}
@@ -566,7 +580,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
               {visibleManagementItems.length > 0 ? (
                 <SidebarGroup
                   label="Quản lý"
-                  icon={GearIcon}
+                  icon={Settings2}
                   items={visibleManagementItems}
                   active={active}
                   isOpen={isCollapsed ? openCollapsedGroup === "management" : isManagementMenuOpen}
@@ -584,6 +598,25 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
           </div>
 
           <div className="mt-4 space-y-4 overflow-visible">
+            <SidebarTooltip label={notificationsItem.label} enabled={isCollapsed}>
+              <Link
+                href={notificationsItem.href}
+                title={notificationsItem.label}
+                className={`flex w-full items-center rounded-xl text-left transition ${
+                  isCollapsed
+                    ? "justify-center px-0 py-3"
+                    : `gap-3 px-4 py-3 ${PRIMARY_ITEM_TEXT_CLASS}`
+                } ${
+                  notificationsItem.key === active
+                    ? "bg-[#1e62d8] text-white"
+                    : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
+                }`}
+              >
+                <Bell className={PRIMARY_ITEM_ICON_CLASS} />
+                {!isCollapsed ? notificationsItem.label : null}
+              </Link>
+            </SidebarTooltip>
+
             <div ref={userMenuRef} className="relative overflow-visible">
               <button
                 type="button"

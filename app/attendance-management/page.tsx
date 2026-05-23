@@ -431,14 +431,14 @@ export default function AttendanceManagementPage() {
   );
 
   return (
-    <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
-      <div className="flex min-h-screen w-full">
+    <div className="h-screen overflow-hidden bg-[#f3f5fa] text-slate-900">
+      <div className="flex h-full w-full">
         <WorkspaceSidebar active="attendanceManagement" />
 
-        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
+        <div className="flex h-full min-h-0 w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <WorkspacePageHeader title="Quản lý chấm công" items={[{ label: "Quản lý chấm công" }]} />
 
-          <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-7 xl:overflow-hidden">
+          <main className="min-h-0 flex-1 overflow-hidden px-4 py-5 lg:px-7">
             {workspaceAccess.isLoading || isLoadingProfiles ? (
               <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-500">
                 Đang tải phạm vi quản lý chấm công...
@@ -461,9 +461,9 @@ export default function AttendanceManagementPage() {
             !isLoadingProfiles &&
             canViewAttendanceManagement &&
             !loadError ? (
-              <div className="grid gap-5 xl:h-full xl:min-h-0 xl:grid-cols-[320px_minmax(0,1fr)]">
-                <aside className="space-y-4 xl:min-h-0">
-                  <section className="rounded-2xl border border-slate-200 bg-white xl:flex xl:h-full xl:min-h-0 xl:flex-col">
+              <div className="grid h-full min-h-0 gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
+                <aside className="min-h-0 space-y-4">
+                  <section className="flex h-full min-h-0 flex-col rounded-2xl border border-slate-200 bg-white">
                     <div className="border-b border-slate-100 px-5 py-4">
                       <h2 className="text-xl font-semibold text-slate-900">
                         Nhân sự trong phạm vi
@@ -480,7 +480,7 @@ export default function AttendanceManagementPage() {
                         className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       />
                     </div>
-                    <div className="max-h-[calc(100vh-280px)] space-y-3 overflow-y-auto overscroll-y-contain px-4 py-4 xl:max-h-none xl:min-h-0 xl:flex-1">
+                    <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-y-contain px-4 py-4">
                       {filteredProfiles.length > 0 ? (
                         filteredProfiles.map((profile) => {
                           const isActive = profile.id === selectedProfileId;
@@ -496,12 +496,9 @@ export default function AttendanceManagementPage() {
                               }`}
                             >
                               <div className="flex items-start justify-between gap-3">
-                                <div>
+                              <div>
                                   <p className="text-sm font-semibold text-slate-900">
                                     {profile.name}
-                                  </p>
-                                  <p className="mt-1 text-xs text-slate-500">
-                                    {profile.email ?? "Không có email"}
                                   </p>
                                 </div>
                                 <span
@@ -537,7 +534,7 @@ export default function AttendanceManagementPage() {
                   </section>
                 </aside>
 
-                <section className="min-w-0 xl:min-h-0 xl:overflow-y-auto xl:pr-1">
+                <section className="min-w-0 min-h-0 overflow-y-auto xl:pr-1">
                   {selectedProfile ? (
                     <>
                       <article className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
@@ -547,9 +544,6 @@ export default function AttendanceManagementPage() {
                             <h2 className="mt-1 text-2xl font-semibold tracking-[-0.02em] text-slate-900">
                               {selectedProfile.name}
                             </h2>
-                            <p className="mt-1 text-sm text-slate-500">
-                              {selectedProfile.email ?? "Không có email"}
-                            </p>
                           </div>
                           <div className="flex flex-wrap items-center gap-2 text-xs">
                             <span className="rounded-full bg-blue-50 px-3 py-1 font-semibold text-blue-700">

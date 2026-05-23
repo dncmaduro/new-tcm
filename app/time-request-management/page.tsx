@@ -1,6 +1,9 @@
 "use client";
 
+import { Eye } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { TimeRequestDetailDialog } from "@/components/timesheet/time-request-detail-dialog";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import {
@@ -12,34 +15,27 @@ import {
 } from "@/components/ui/select";
 import {
   TIME_REQUEST_TYPES,
+  getLeaveRequestSubtypeLabel,
+  getTimeRequestDisplayLabel,
   getTimeRequestReason,
-  getTimeRequestTypeDescription,
-  getTimeRequestTypeLabel,
+  getTimeRequestReviewStatus,
   isMissingTimeRequestType,
+  type LeaveRequestSession,
+  type LeaveRequestSubtype,
+  type TimeRequestReviewStatus,
   type TimeRequestType,
 } from "@/lib/constants/time-requests";
 import { formatDateDdMmYyyy, formatDateTimeDdMmYyyy } from "@/lib/date-format";
 import { buildHolidayMap, fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
+import {
+  buildTimeRequestSharePath,
+  canManageTimeRequestProfile,
+  resolveCurrentViewerProfileId,
+  resolveTimeRequestManagementScope,
+  type TimeRequestRoleScope,
+} from "@/lib/time-request-access";
 import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
-
-type RoleScope = "director" | "leader" | "member";
-
-type RoleRow = {
-  id: string;
-  name: string | null;
-};
-
-type UserRoleRow = {
-  profile_id: string | null;
-  department_id: string | null;
-  role_id: string | null;
-};
-
-type DepartmentRow = {
-  id: string;
-  parent_department_id: string | null;
-};
 
 type ProfileRow = {
   id: string;
@@ -47,7 +43,7 @@ type ProfileRow = {
   email?: string | null;
 };
 
-type RequestStatus = "pending" | "approved" | "rejected";
+type RequestStatus = TimeRequestReviewStatus;
 
 type TimeRequestReviewerRow = {
   id: string;
@@ -63,6 +59,9 @@ type TimeRequestRow = {
   profile_id: string | null;
   date: string | null;
   type: TimeRequestType | null;
+  leave_subtype: LeaveRequestSubtype | null;
+  leave_session: LeaveRequestSession | null;
+  requested_hours: number | null;
   minutes: number | null;
   reason: string | null;
   remote_check_in: string | null;
@@ -71,13 +70,6 @@ type TimeRequestRow = {
   updated_at: string | null;
   time_request_reviewers?: TimeRequestReviewerRow[] | null;
 };
-
-const normalizeText = (value: string | null | undefined) =>
-  (value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase();
 
 const formatDateVi = (value: string | null) => {
   return formatDateDdMmYyyy(value, "--", "--");
@@ -106,18 +98,22 @@ const formatDateTime = (value: string | null) => {
   return formatDateTimeDdMmYyyy(value, "--", "--");
 };
 
-const toRequestStatus = (reviewers: TimeRequestReviewerRow[] | null | undefined): RequestStatus => {
-  if (!reviewers || reviewers.length === 0) {
-    return "pending";
+const formatDurationLabel = (totalMinutes: number | null) => {
+  if (typeof totalMinutes !== "number" || !Number.isFinite(totalMinutes) || totalMinutes <= 0) {
+    return "--";
   }
-  if (reviewers.some((item) => item.is_approved === false)) {
-    return "rejected";
+
+  const safe = Math.max(0, Math.round(totalMinutes));
+  const hours = Math.floor(safe / 60);
+  const minutes = safe % 60;
+  if (minutes === 0) {
+    return `${hours}h`;
   }
-  if (reviewers.every((item) => item.is_approved === true)) {
-    return "approved";
-  }
-  return "pending";
+  return `${hours}h${String(minutes).padStart(2, "0")}`;
 };
+
+const toRequestStatus = (reviewers: TimeRequestReviewerRow[] | null | undefined): RequestStatus =>
+  getTimeRequestReviewStatus(reviewers);
 
 const formatMinutesLabel = (type: TimeRequestType | null, minutes: number | null) => {
   if (typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0) {
@@ -145,10 +141,33 @@ const formatMinutesLabel = (type: TimeRequestType | null, minutes: number | null
   return "--";
 };
 
+const formatLeaveDetailLabel = (
+  subtype: LeaveRequestSubtype | null,
+  session: LeaveRequestSession | null,
+  requestedHours: number | null,
+) => {
+  if (!subtype) {
+    return null;
+  }
+
+  const subtypeLabel = getLeaveRequestSubtypeLabel(subtype, session);
+  if (
+    subtype === "early_leave" &&
+    typeof requestedHours === "number" &&
+    Number.isFinite(requestedHours) &&
+    requestedHours > 0
+  ) {
+    return `${subtypeLabel} ${requestedHours} giờ`;
+  }
+
+  return subtypeLabel;
+};
+
 const resolveRequestMinutes = (request: TimeRequestRow) => {
   if (request.type === "remote") {
     return (
-      calculateWorkedMinutesBetweenTimestamps(request.remote_check_in, request.remote_check_out) ?? 0
+      calculateWorkedMinutesBetweenTimestamps(request.remote_check_in, request.remote_check_out) ??
+      0
     );
   }
 
@@ -199,19 +218,37 @@ function StatusBadge({ status }: { status: RequestStatus }) {
 }
 
 export default function TimeRequestManagementPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [currentProfileId, setCurrentProfileId] = useState<string | null>(null);
-  const [roleScope, setRoleScope] = useState<RoleScope>("member");
+  const [roleScope, setRoleScope] = useState<TimeRequestRoleScope>("member");
+  const [managedProfileIds, setManagedProfileIds] = useState<string[] | null>([]);
   const [requests, setRequests] = useState<TimeRequestRow[]>([]);
   const [holidaysByDate, setHolidaysByDate] = useState<Map<string, Holiday>>(new Map());
   const [profileNameById, setProfileNameById] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [openRequestError, setOpenRequestError] = useState<string | null>(null);
   const [processingRequestId, setProcessingRequestId] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | RequestStatus>("all");
   const [profileFilter, setProfileFilter] = useState<string>("all");
   const [requestTypeFilter, setRequestTypeFilter] = useState<"all" | TimeRequestType>("all");
   const [reloadSeed, setReloadSeed] = useState<number>(0);
+  const openedRequestId = searchParams.get("request")?.trim() || null;
+
+  const updateRequestQuery = (requestId: string | null) => {
+    const nextParams = new URLSearchParams(searchParams.toString());
+    if (requestId) {
+      nextParams.set("request", requestId);
+    } else {
+      nextParams.delete("request");
+    }
+
+    const nextQuery = nextParams.toString();
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+  };
 
   useEffect(() => {
     let isActive = true;
@@ -222,175 +259,36 @@ export default function TimeRequestManagementPage() {
       setActionError(null);
 
       try {
-        const { data: authData, error: authError } = await supabase.auth.getUser();
-        if (authError || !authData.user) {
-          throw new Error("Không xác thực được người dùng.");
-        }
-
-        const { data: profileData, error: profileError } = await supabase
-          .from("profiles")
-          .select("id")
-          .eq("user_id", authData.user.id)
-          .maybeSingle();
-
-        if (profileError || !profileData?.id) {
-          throw new Error(profileError?.message ?? "Không tìm thấy hồ sơ người dùng.");
-        }
-
-        const viewerProfileId = String(profileData.id);
+        const viewerProfileId = await resolveCurrentViewerProfileId();
 
         if (!isActive) {
           return;
         }
         setCurrentProfileId(viewerProfileId);
-
-        const { data: rolesData, error: rolesError } = await supabase.from("roles").select("id,name");
-        if (rolesError) {
-          throw new Error(rolesError.message || "Không tải được danh sách vai trò.");
-        }
-
-        const typedRoles = (rolesData ?? []) as RoleRow[];
-        const directorRoleIds = typedRoles
-          .filter((role) => {
-            const roleName = normalizeText(role.name);
-            return roleName === "giam doc" || roleName.includes("giam doc") || roleName === "director";
-          })
-          .map((role) => String(role.id));
-        const leaderRoleIds = typedRoles
-          .filter((role) => {
-            const roleName = normalizeText(role.name);
-            return roleName === "leader" || roleName.includes("leader") || roleName.includes("truong nhom");
-          })
-          .map((role) => String(role.id));
-        const memberRoleIds = typedRoles
-          .filter((role) => {
-            const roleName = normalizeText(role.name);
-            return roleName === "member" || roleName.includes("member") || roleName.includes("thanh vien");
-          })
-          .map((role) => String(role.id));
-
-        const { data: currentUserRolesData, error: currentUserRolesError } = await supabase
-          .from("user_role_in_department")
-          .select("profile_id,department_id,role_id")
-          .eq("profile_id", viewerProfileId);
-
-        if (currentUserRolesError) {
-          throw new Error(currentUserRolesError.message || "Không tải được vai trò hiện tại.");
-        }
-
-        const currentUserRoles = (currentUserRolesData ?? []) as UserRoleRow[];
-        const hasDirectorRole = currentUserRoles.some(
-          (row) => row.role_id && directorRoleIds.includes(String(row.role_id)),
-        );
-        const hasLeaderRole = currentUserRoles.some(
-          (row) => row.role_id && leaderRoleIds.includes(String(row.role_id)),
-        );
-
-        let scopedRole: RoleScope = "member";
-        if (hasDirectorRole) {
-          scopedRole = "director";
-        } else if (hasLeaderRole) {
-          scopedRole = "leader";
-        }
+        const managementScope = await resolveTimeRequestManagementScope(viewerProfileId);
 
         if (!isActive) {
           return;
         }
-        setRoleScope(scopedRole);
-
-        let subordinateProfileIds: string[] | null = null;
-        if (scopedRole === "member") {
-          subordinateProfileIds = [];
-        } else if (scopedRole === "leader") {
-          const ownLeaderDepartmentIds = [
-            ...new Set(
-              currentUserRoles
-                .filter((row) => row.department_id && row.role_id && leaderRoleIds.includes(String(row.role_id)))
-                .map((row) => String(row.department_id)),
-            ),
-          ];
-
-          if (ownLeaderDepartmentIds.length === 0) {
-            subordinateProfileIds = [];
-          } else {
-            const { data: allDepartmentsData, error: allDepartmentsError } = await supabase
-              .from("departments")
-              .select("id,parent_department_id");
-
-            if (allDepartmentsError) {
-              throw new Error(allDepartmentsError.message || "Không tải được cây phòng ban.");
-            }
-
-            const typedDepartments = (allDepartmentsData ?? []) as DepartmentRow[];
-            const childrenByParent = typedDepartments.reduce<Record<string, string[]>>((acc, department) => {
-              const parentId = department.parent_department_id ? String(department.parent_department_id) : null;
-              if (!parentId) {
-                return acc;
-              }
-              if (!acc[parentId]) {
-                acc[parentId] = [];
-              }
-              acc[parentId].push(String(department.id));
-              return acc;
-            }, {});
-
-            const scopedDepartmentIds = new Set<string>(ownLeaderDepartmentIds);
-            const queue = [...ownLeaderDepartmentIds];
-            while (queue.length > 0) {
-              const departmentId = queue.shift() as string;
-              const children = childrenByParent[departmentId] ?? [];
-              children.forEach((childId) => {
-                if (scopedDepartmentIds.has(childId)) {
-                  return;
-                }
-                scopedDepartmentIds.add(childId);
-                queue.push(childId);
-              });
-            }
-
-            const effectiveRoleIds = [...new Set([...leaderRoleIds, ...memberRoleIds])];
-            if (effectiveRoleIds.length === 0) {
-              subordinateProfileIds = [];
-            } else {
-              const { data: scopedUserRolesData, error: scopedUserRolesError } = await supabase
-                .from("user_role_in_department")
-                .select("profile_id,department_id,role_id")
-                .in("department_id", Array.from(scopedDepartmentIds))
-                .in("role_id", effectiveRoleIds);
-
-              if (scopedUserRolesError) {
-                throw new Error(scopedUserRolesError.message || "Không tải được danh sách cấp dưới.");
-              }
-
-              subordinateProfileIds = [
-                ...new Set(
-                  ((scopedUserRolesData ?? []) as UserRoleRow[])
-                    .map((row) => row.profile_id)
-                    .filter(Boolean)
-                    .map((item) => String(item))
-                    .filter((item) => item !== viewerProfileId),
-                ),
-              ];
-            }
-          }
-        }
+        setRoleScope(managementScope.roleScope);
+        setManagedProfileIds(managementScope.managedProfileIds);
 
         const requestsQuery = supabase
           .from("time_requests")
           .select(
-            "id,profile_id,date,type,minutes,reason,remote_check_in,remote_check_out,created_at,updated_at,time_request_reviewers(id,profile_id,is_approved,comment,reviewed_at,created_at)",
+            "id,profile_id,date,type,leave_subtype,leave_session,requested_hours,minutes,reason,remote_check_in,remote_check_out,created_at,updated_at,time_request_reviewers(id,profile_id,is_approved,comment,reviewed_at,created_at)",
           )
           .order("created_at", { ascending: false });
 
         let requestRows: TimeRequestRow[] = [];
-        if (scopedRole === "director") {
+        if (managementScope.roleScope === "director") {
           const { data, error } = await requestsQuery.neq("profile_id", viewerProfileId);
           if (error) {
             throw new Error(error.message || "Không tải được yêu cầu thời gian.");
           }
           requestRows = (data ?? []) as TimeRequestRow[];
         } else {
-          const targetProfileIds = subordinateProfileIds ?? [];
+          const targetProfileIds = managementScope.managedProfileIds ?? [];
           if (targetProfileIds.length === 0) {
             requestRows = [];
           } else {
@@ -433,7 +331,12 @@ export default function TimeRequestManagementPage() {
         );
 
         const requesterProfileIds = [
-          ...new Set(requestRows.map((row) => row.profile_id).filter(Boolean).map((item) => String(item))),
+          ...new Set(
+            requestRows
+              .map((row) => row.profile_id)
+              .filter(Boolean)
+              .map((item) => String(item)),
+          ),
         ];
 
         if (requesterProfileIds.length === 0) {
@@ -454,16 +357,28 @@ export default function TimeRequestManagementPage() {
           return;
         }
 
-        const nameMap = ((profilesData ?? []) as ProfileRow[]).reduce<Record<string, string>>((acc, profile) => {
-          acc[String(profile.id)] = profile.name ? String(profile.name) : profile.email ? String(profile.email) : "Không rõ";
-          return acc;
-        }, {});
+        const nameMap = ((profilesData ?? []) as ProfileRow[]).reduce<Record<string, string>>(
+          (acc, profile) => {
+            acc[String(profile.id)] = profile.name
+              ? String(profile.name)
+              : profile.email
+                ? String(profile.email)
+                : "Không rõ";
+            return acc;
+          },
+          {},
+        );
         setProfileNameById(nameMap);
       } catch (error) {
         if (!isActive) {
           return;
         }
-        setLoadError(error instanceof Error ? error.message : "Không tải được dữ liệu duyệt yêu cầu.");
+        setLoadError(
+          error instanceof Error ? error.message : "Không tải được dữ liệu duyệt yêu cầu.",
+        );
+        setCurrentProfileId(null);
+        setRoleScope("member");
+        setManagedProfileIds([]);
         setRequests([]);
         setHolidaysByDate(new Map());
         setProfileNameById({});
@@ -480,6 +395,75 @@ export default function TimeRequestManagementPage() {
       isActive = false;
     };
   }, [reloadSeed]);
+
+  useEffect(() => {
+    if (!openedRequestId) {
+      setOpenRequestError(null);
+      return;
+    }
+
+    if (isLoading || loadError || !currentProfileId) {
+      return;
+    }
+
+    if (requests.some((item) => item.id === openedRequestId)) {
+      setOpenRequestError(null);
+      return;
+    }
+
+    let isActive = true;
+
+    const validateOpenedRequest = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("time_requests")
+          .select("id,profile_id")
+          .eq("id", openedRequestId)
+          .maybeSingle();
+
+        if (error || !data?.id) {
+          throw new Error(error?.message ?? "Không tìm thấy yêu cầu thời gian.");
+        }
+
+        const isAllowed = canManageTimeRequestProfile(currentProfileId, data.profile_id, {
+          roleScope,
+          managedProfileIds,
+        });
+
+        if (!isAllowed) {
+          throw new Error("Yêu cầu này không nằm trong phạm vi duyệt của bạn.");
+        }
+
+        if (!isActive) {
+          return;
+        }
+
+        setOpenRequestError("Yêu cầu hợp lệ nhưng chưa hiển thị trong danh sách hiện tại.");
+      } catch (error) {
+        if (!isActive) {
+          return;
+        }
+
+        setOpenRequestError(
+          error instanceof Error ? error.message : "Không thể mở yêu cầu thời gian.",
+        );
+      }
+    };
+
+    void validateOpenedRequest();
+
+    return () => {
+      isActive = false;
+    };
+  }, [
+    currentProfileId,
+    isLoading,
+    loadError,
+    managedProfileIds,
+    openedRequestId,
+    requests,
+    roleScope,
+  ]);
 
   const handleReviewRequest = async (requestId: string, isApproved: boolean) => {
     if (!currentProfileId) {
@@ -538,11 +522,65 @@ export default function TimeRequestManagementPage() {
     }
   };
 
+  const handleUndoReview = async (requestId: string) => {
+    if (!currentProfileId) {
+      return;
+    }
+
+    setProcessingRequestId(requestId);
+    setActionError(null);
+
+    try {
+      const { data: existingRows, error: existingError } = await supabase
+        .from("time_request_reviewers")
+        .select("id")
+        .eq("time_request_id", requestId)
+        .eq("profile_id", currentProfileId)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (existingError) {
+        throw new Error(existingError.message || "Không thể kiểm tra lịch sử duyệt.");
+      }
+
+      const existingId = existingRows?.[0]?.id ? String(existingRows[0].id) : null;
+      if (!existingId) {
+        throw new Error("Không tìm thấy quyết định duyệt để hoàn tác.");
+      }
+
+      const { error: updateError } = await supabase
+        .from("time_request_reviewers")
+        .update({
+          is_approved: null,
+          reviewed_at: null,
+        })
+        .eq("id", existingId);
+
+      if (updateError) {
+        throw new Error(updateError.message || "Không thể hoàn tác quyết định duyệt.");
+      }
+
+      setReloadSeed((prev) => prev + 1);
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "Không thể hoàn tác quyết định duyệt.",
+      );
+    } finally {
+      setProcessingRequestId(null);
+    }
+  };
+
   const requestSummary = useMemo(() => {
     const total = requests.length;
-    const pending = requests.filter((item) => toRequestStatus(item.time_request_reviewers) === "pending").length;
-    const approved = requests.filter((item) => toRequestStatus(item.time_request_reviewers) === "approved").length;
-    const rejected = requests.filter((item) => toRequestStatus(item.time_request_reviewers) === "rejected").length;
+    const pending = requests.filter(
+      (item) => toRequestStatus(item.time_request_reviewers) === "pending",
+    ).length;
+    const approved = requests.filter(
+      (item) => toRequestStatus(item.time_request_reviewers) === "approved",
+    ).length;
+    const rejected = requests.filter(
+      (item) => toRequestStatus(item.time_request_reviewers) === "rejected",
+    ).length;
     return { total, pending, approved, rejected };
   }, [requests]);
 
@@ -559,9 +597,7 @@ export default function TimeRequestManagementPage() {
 
   const requestTypeOptions = useMemo(() => {
     const availableTypes = new Set(
-      requests
-        .map((item) => item.type)
-        .filter((item): item is TimeRequestType => Boolean(item)),
+      requests.map((item) => item.type).filter((item): item is TimeRequestType => Boolean(item)),
     );
 
     return TIME_REQUEST_TYPES.filter((item) => availableTypes.has(item.value));
@@ -585,6 +621,71 @@ export default function TimeRequestManagementPage() {
     });
   }, [filter, profileFilter, requestTypeFilter, requests]);
 
+  const openedRequest = useMemo(() => {
+    if (!openedRequestId) {
+      return null;
+    }
+
+    return requests.find((item) => item.id === openedRequestId) ?? null;
+  }, [openedRequestId, requests]);
+
+  const openedRequestDetail = useMemo(() => {
+    if (!openedRequest) {
+      return null;
+    }
+
+    const requestStatus = toRequestStatus(openedRequest.time_request_reviewers);
+    const holiday = openedRequest.date ? (holidaysByDate.get(openedRequest.date) ?? null) : null;
+
+    return {
+      id: openedRequest.id,
+      typeLabel: getTimeRequestDisplayLabel(openedRequest.type, {
+        leaveSubtype: openedRequest.leave_subtype,
+        leaveSession: openedRequest.leave_session,
+      }),
+      requestDateLabel: formatDateTime(openedRequest.created_at),
+      correctionDateLabel: formatDateVi(openedRequest.date),
+      statusLabel:
+        requestStatus === "approved"
+          ? "Đã duyệt"
+          : requestStatus === "rejected"
+            ? "Từ chối"
+            : "Chờ duyệt",
+      statusClassName:
+        requestStatus === "approved"
+          ? "bg-emerald-50 text-emerald-700"
+          : requestStatus === "rejected"
+            ? "bg-rose-50 text-rose-700"
+            : "bg-amber-50 text-amber-700",
+      durationLabel: formatDurationLabel(openedRequest.minutes),
+      reason: openedRequest.reason?.trim()
+        ? openedRequest.reason.trim()
+        : getTimeRequestReason(openedRequest.type, openedRequest.minutes, {
+            leaveSubtype: openedRequest.leave_subtype,
+            leaveSession: openedRequest.leave_session,
+            requestedHours: openedRequest.requested_hours,
+          }),
+      sharePath: buildTimeRequestSharePath(openedRequest.id),
+      requesterName: openedRequest.profile_id
+        ? (profileNameById[openedRequest.profile_id] ?? openedRequest.profile_id)
+        : "Không rõ",
+      leaveDetailLabel: formatLeaveDetailLabel(
+        openedRequest.leave_subtype,
+        openedRequest.leave_session,
+        openedRequest.requested_hours,
+      ),
+      remoteTimeLabel:
+        openedRequest.type === "remote"
+          ? `Khung giờ làm việc từ xa: ${formatTimeVi(openedRequest.remote_check_in)} - ${formatTimeVi(openedRequest.remote_check_out)}`
+          : null,
+      holidayLabel: holiday?.name?.trim()
+        ? `Ngày nghỉ: ${holiday.name.trim()}`
+        : holiday
+          ? "Ngày nghỉ"
+          : null,
+    };
+  }, [holidaysByDate, openedRequest, profileNameById]);
+
   return (
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
       <div className="flex min-h-screen w-full">
@@ -599,20 +700,36 @@ export default function TimeRequestManagementPage() {
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-7">
             <section className="grid gap-4 md:grid-cols-4">
               <article className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
-                <p className="text-xs font-bold tracking-[0.08em] text-slate-400 uppercase">Tổng yêu cầu</p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.02em] text-slate-900">{requestSummary.total}</p>
+                <p className="text-xs font-bold tracking-[0.08em] text-slate-400 uppercase">
+                  Tổng yêu cầu
+                </p>
+                <p className="mt-2 text-3xl font-semibold tracking-[-0.02em] text-slate-900">
+                  {requestSummary.total}
+                </p>
               </article>
               <article className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
-                <p className="text-xs font-bold tracking-[0.08em] text-slate-400 uppercase">Chờ duyệt</p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.02em] text-amber-600">{requestSummary.pending}</p>
+                <p className="text-xs font-bold tracking-[0.08em] text-slate-400 uppercase">
+                  Chờ duyệt
+                </p>
+                <p className="mt-2 text-3xl font-semibold tracking-[-0.02em] text-amber-600">
+                  {requestSummary.pending}
+                </p>
               </article>
               <article className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
-                <p className="text-xs font-bold tracking-[0.08em] text-slate-400 uppercase">Đã duyệt</p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.02em] text-emerald-600">{requestSummary.approved}</p>
+                <p className="text-xs font-bold tracking-[0.08em] text-slate-400 uppercase">
+                  Đã duyệt
+                </p>
+                <p className="mt-2 text-3xl font-semibold tracking-[-0.02em] text-emerald-600">
+                  {requestSummary.approved}
+                </p>
               </article>
               <article className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
-                <p className="text-xs font-bold tracking-[0.08em] text-slate-400 uppercase">Đã từ chối</p>
-                <p className="mt-2 text-3xl font-semibold tracking-[-0.02em] text-rose-600">{requestSummary.rejected}</p>
+                <p className="text-xs font-bold tracking-[0.08em] text-slate-400 uppercase">
+                  Đã từ chối
+                </p>
+                <p className="mt-2 text-3xl font-semibold tracking-[-0.02em] text-rose-600">
+                  {requestSummary.rejected}
+                </p>
               </article>
             </section>
 
@@ -621,7 +738,8 @@ export default function TimeRequestManagementPage() {
                 <div>
                   <h2 className="text-2xl font-semibold text-slate-900">Danh sách yêu cầu</h2>
                   <p className="mt-1 text-sm text-slate-500">
-                    Hiển thị {filteredRequests.length} / {requests.length} yêu cầu trong phạm vi hiện tại.
+                    Hiển thị {filteredRequests.length} / {requests.length} yêu cầu trong phạm vi
+                    hiện tại.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">
@@ -643,7 +761,9 @@ export default function TimeRequestManagementPage() {
                   <div className="w-[240px] min-w-[240px]">
                     <Select
                       value={requestTypeFilter}
-                      onValueChange={(value) => setRequestTypeFilter(value as "all" | TimeRequestType)}
+                      onValueChange={(value) =>
+                        setRequestTypeFilter(value as "all" | TimeRequestType)
+                      }
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Lọc theo loại request" />
@@ -699,8 +819,10 @@ export default function TimeRequestManagementPage() {
                 </div>
               </div>
 
-              {actionError ? (
-                <div className="border-b border-rose-100 bg-rose-50 px-5 py-3 text-sm text-rose-700">{actionError}</div>
+              {actionError || openRequestError ? (
+                <div className="border-b border-rose-100 bg-rose-50 px-5 py-3 text-sm text-rose-700">
+                  {actionError || openRequestError}
+                </div>
               ) : null}
 
               <div className="overflow-x-auto">
@@ -715,7 +837,6 @@ export default function TimeRequestManagementPage() {
                       <th className="px-5 py-3 font-semibold">Lý do</th>
                       <th className="px-5 py-3 font-semibold">Ngày gửi</th>
                       <th className="px-5 py-3 font-semibold">Trạng thái</th>
-                      <th className="px-5 py-3 font-semibold">Bạn đã duyệt</th>
                       <th className="px-5 py-3 font-semibold text-right">Thao tác</th>
                     </tr>
                   </thead>
@@ -748,17 +869,22 @@ export default function TimeRequestManagementPage() {
                       filteredRequests.map((item) => {
                         const reviewers = item.time_request_reviewers ?? [];
                         const myReview = currentProfileId
-                          ? reviewers.find((reviewer) => reviewer.profile_id === currentProfileId) ?? null
+                          ? (reviewers.find(
+                              (reviewer) => reviewer.profile_id === currentProfileId,
+                            ) ?? null)
                           : null;
                         const status = toRequestStatus(reviewers);
                         const isApproving = processingRequestId === item.id;
                         const canReview = status === "pending";
-                        const holiday = item.date ? holidaysByDate.get(item.date) ?? null : null;
+                        const canUndo = !canReview && Boolean(myReview);
+                        const holiday = item.date ? (holidaysByDate.get(item.date) ?? null) : null;
                         const isHolidayRequest = Boolean(holiday);
                         return (
                           <tr key={item.id} className="border-t border-slate-100">
                             <td className="px-5 py-4 text-sm text-slate-700">
-                              {item.profile_id ? profileNameById[item.profile_id] ?? item.profile_id : "--"}
+                              {item.profile_id
+                                ? (profileNameById[item.profile_id] ?? item.profile_id)
+                                : "--"}
                             </td>
                             <td className="px-5 py-4 text-sm text-slate-600">
                               <div className="space-y-1">
@@ -769,7 +895,9 @@ export default function TimeRequestManagementPage() {
                                       Ngày nghỉ
                                     </span>
                                     {holiday?.name?.trim() ? (
-                                      <p className="text-[11px] text-emerald-700">{holiday.name.trim()}</p>
+                                      <p className="text-[11px] text-emerald-700">
+                                        {holiday.name.trim()}
+                                      </p>
                                     ) : null}
                                   </>
                                 ) : null}
@@ -780,21 +908,39 @@ export default function TimeRequestManagementPage() {
                                 <span
                                   className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getTypeBadgeClassName(item.type)}`}
                                 >
-                                  {getTimeRequestTypeLabel(item.type)}
+                                  {getTimeRequestDisplayLabel(item.type, {
+                                    leaveSubtype: item.leave_subtype,
+                                    leaveSession: item.leave_session,
+                                  })}
                                 </span>
-                                <p className="text-xs text-slate-500">{getTimeRequestTypeDescription(item.type)}</p>
+                                {/* <p className="text-xs text-slate-500">{getTimeRequestTypeDescription(item.type)}</p> */}
+                                {/* {isMissingTimeRequestType(item.type) ? (
+                                  <p className="text-xs text-slate-500">
+                                    {formatLeaveDetailLabel(
+                                      item.leave_subtype,
+                                      item.leave_session,
+                                      item.requested_hours,
+                                    ) ?? "--"}
+                                  </p>
+                                ) : null} */}
                               </div>
                             </td>
                             <td className="px-5 py-4 text-sm text-slate-700">
                               {item.type === "remote" ? (
                                 <div className="space-y-1">
-                                  <p className="text-xs font-semibold text-slate-500">Giờ bắt đầu làm việc từ xa</p>
-                                  <p className="font-medium text-slate-800">
-                                    {formatTimeVi(item.remote_check_in)} · {formatDateViLong(item.remote_check_in)}
+                                  <p className="text-xs font-semibold text-slate-500">
+                                    Giờ bắt đầu làm việc từ xa
                                   </p>
-                                  <p className="pt-1 text-xs font-semibold text-slate-500">Giờ kết thúc làm việc từ xa</p>
                                   <p className="font-medium text-slate-800">
-                                    {formatTimeVi(item.remote_check_out)} · {formatDateViLong(item.remote_check_out)}
+                                    {formatTimeVi(item.remote_check_in)} ·{" "}
+                                    {formatDateViLong(item.remote_check_in)}
+                                  </p>
+                                  <p className="pt-1 text-xs font-semibold text-slate-500">
+                                    Giờ kết thúc làm việc từ xa
+                                  </p>
+                                  <p className="font-medium text-slate-800">
+                                    {formatTimeVi(item.remote_check_out)} ·{" "}
+                                    {formatDateViLong(item.remote_check_out)}
                                   </p>
                                 </div>
                               ) : (
@@ -803,72 +949,90 @@ export default function TimeRequestManagementPage() {
                             </td>
                             <td className="px-5 py-4 text-sm font-semibold text-slate-700">
                               {formatMinutesLabel(item.type, item.minutes)}
-                              {item.type === "unauthorized_leave" && typeof item.minutes !== "number" ? (
-                                <p className="mt-1 text-xs font-normal text-slate-500">Đơn không phép có thể không nhập phút.</p>
-                              ) : null}
                               {item.type === "remote" ? (
-                                <p className="mt-1 text-xs font-normal text-indigo-600">Làm việc từ xa</p>
+                                <p className="mt-1 text-xs font-normal text-indigo-600">
+                                  Làm việc từ xa
+                                </p>
                               ) : null}
                               {isHolidayRequest && isMissingTimeRequestType(item.type) ? (
                                 <p className="mt-1 text-xs font-normal text-emerald-700">
-                                  {holiday?.name?.trim() || "Ngày nghỉ"}: yêu cầu này không được tính vào thiếu giờ hoặc nghỉ không phép.
+                                  {holiday?.name?.trim() || "Ngày nghỉ"}: yêu cầu này không được
+                                  tính vào thiếu giờ hoặc nghỉ không phép.
                                 </p>
                               ) : null}
                             </td>
                             <td className="px-5 py-4 text-sm text-slate-600">
                               <p className="max-w-[280px] truncate">
-                                {item.reason?.trim() ? item.reason.trim() : getTimeRequestReason(item.type, item.minutes)}
+                                {item.reason?.trim()
+                                  ? item.reason.trim()
+                                  : getTimeRequestReason(item.type, item.minutes, {
+                                      leaveSubtype: item.leave_subtype,
+                                      leaveSession: item.leave_session,
+                                      requestedHours: item.requested_hours,
+                                    })}
                               </p>
                             </td>
-                            <td className="px-5 py-4 text-sm text-slate-600">{formatDateTime(item.created_at)}</td>
+                            <td className="px-5 py-4 text-sm text-slate-600">
+                              {formatDateTime(item.created_at)}
+                            </td>
                             <td className="px-5 py-4">
                               <StatusBadge status={status} />
                             </td>
-                            <td className="px-5 py-4 text-xs">
-                              {myReview ? (
-                                <span
-                                  className={`inline-flex items-center rounded-full px-2 py-1 font-semibold ${
-                                    myReview.is_approved === true
-                                      ? "bg-emerald-50 text-emerald-700"
-                                      : "bg-rose-50 text-rose-700"
-                                  }`}
-                                >
-                                  {myReview.is_approved === true ? "Đã duyệt" : "Đã từ chối"}
-                                </span>
-                              ) : (
-                                <span className="text-slate-400">Chưa duyệt</span>
-                              )}
-                            </td>
+
                             <td className="px-5 py-4">
-                              {canReview ? (
-                                <div className="space-y-2 text-right">
-                                  {isHolidayRequest && isMissingTimeRequestType(item.type) ? (
-                                    <p className="text-[11px] font-medium text-emerald-700">
-                                      Cảnh báo: đang duyệt request thiếu giờ trên ngày nghỉ.
-                                    </p>
-                                  ) : null}
-                                  <div className="flex items-center justify-end gap-2">
-                                    <button
-                                      type="button"
-                                      disabled={isApproving}
-                                      onClick={() => void handleReviewRequest(item.id, false)}
-                                      className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                      Từ chối
-                                    </button>
-                                    <button
-                                      type="button"
-                                      disabled={isApproving}
-                                      onClick={() => void handleReviewRequest(item.id, true)}
-                                      className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                      Duyệt
-                                    </button>
-                                  </div>
+                              <div className="items-center gap-2 justify-end text-right flex">
+                                <div className="flex items-center justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => updateRequestQuery(item.id)}
+                                    title="Xem chi tiết"
+                                    aria-label="Xem chi tiết"
+                                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                                  >
+                                    <Eye className="h-4 w-4" />
+                                  </button>
                                 </div>
-                              ) : (
-                                <span className="block text-right text-xs text-slate-400">Đã xử lý</span>
-                              )}
+                                {canReview ? (
+                                  <>
+                                    {isHolidayRequest && isMissingTimeRequestType(item.type) ? (
+                                      <p className="text-[11px] font-medium text-emerald-700">
+                                        Cảnh báo: đang duyệt request thiếu giờ trên ngày nghỉ.
+                                      </p>
+                                    ) : null}
+                                    <div className="flex items-center justify-end gap-2">
+                                      <button
+                                        type="button"
+                                        disabled={isApproving}
+                                        onClick={() => void handleReviewRequest(item.id, false)}
+                                        className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                      >
+                                        Từ chối
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={isApproving}
+                                        onClick={() => void handleReviewRequest(item.id, true)}
+                                        className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                      >
+                                        Duyệt
+                                      </button>
+                                    </div>
+                                  </>
+                                ) : canUndo ? (
+                                  <button
+                                    type="button"
+                                    disabled={isApproving}
+                                    onClick={() => void handleUndoReview(item.id)}
+                                    className="rounded-lg border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    Hoàn tác
+                                  </button>
+                                ) : (
+                                  <span className="block text-right text-xs text-slate-400">
+                                    Đã xử lý
+                                  </span>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -881,6 +1045,66 @@ export default function TimeRequestManagementPage() {
           </main>
         </div>
       </div>
+
+      <TimeRequestDetailDialog
+        open={Boolean(openedRequestDetail)}
+        onOpenChange={(open) => {
+          if (!open) {
+            updateRequestQuery(null);
+          }
+        }}
+        request={openedRequestDetail}
+        showShareSection={false}
+        footerActions={
+          openedRequest && openedRequestDetail ? (
+            <div className="space-y-3">
+              {toRequestStatus(openedRequest.time_request_reviewers) === "pending" ? (
+                <>
+                  {openedRequest.date &&
+                  holidaysByDate.get(openedRequest.date) &&
+                  isMissingTimeRequestType(openedRequest.type) ? (
+                    <p className="text-sm font-medium text-emerald-700">
+                      Cảnh báo: đang duyệt request thiếu giờ trên ngày nghỉ.
+                    </p>
+                  ) : null}
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      disabled={processingRequestId === openedRequest.id}
+                      onClick={() => void handleReviewRequest(openedRequest.id, false)}
+                      className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Từ chối
+                    </button>
+                    <button
+                      type="button"
+                      disabled={processingRequestId === openedRequest.id}
+                      onClick={() => void handleReviewRequest(openedRequest.id, true)}
+                      className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Duyệt
+                    </button>
+                  </div>
+                </>
+              ) : currentProfileId &&
+                (openedRequest.time_request_reviewers ?? []).some(
+                  (reviewer) => reviewer.profile_id === currentProfileId,
+                ) ? (
+                <div className="flex items-center justify-end">
+                  <button
+                    type="button"
+                    disabled={processingRequestId === openedRequest.id}
+                    onClick={() => void handleUndoReview(openedRequest.id)}
+                    className="rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Hoàn tác
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null
+        }
+      />
     </div>
   );
 }

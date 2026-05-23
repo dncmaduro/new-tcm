@@ -84,6 +84,7 @@ export const buildTaskFormState = (task: TaskRow): TaskFormState => {
 
   return {
     name: task.name,
+    assigneeId: task.assignee_id ?? task.profile_id ?? "",
     description: task.description ?? "",
     note: task.note ?? "",
     isRecurring: Boolean(task.is_recurring),

@@ -5,8 +5,13 @@ import { ActionIcon, Tooltip } from "@mantine/core";
 import { Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
+  getLeaveRequestSubtypeLabel,
+  getTimeRequestDisplayLabel,
   getTimeRequestReason,
-  getTimeRequestTypeLabel,
+  getTimeRequestReviewStatus,
+  type LeaveRequestSession,
+  type LeaveRequestSubtype,
+  type TimeRequestReviewStatus,
   type TimeRequestType,
 } from "@/lib/constants/time-requests";
 import {
@@ -18,7 +23,11 @@ import {
   type AttendanceDeviceLink,
   type AttendanceTimeRow,
 } from "@/lib/attendance";
-import { calculateAttendanceMetrics, type AttendanceStatus } from "@/lib/attendance-metrics";
+import {
+  calculateAttendanceMetrics,
+  calculateHalfDayAttendanceMetrics,
+  type AttendanceStatus,
+} from "@/lib/attendance-metrics";
 import { formatDateDdMmYyyy } from "@/lib/date-format";
 import { buildHolidayMap, fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
@@ -48,9 +57,12 @@ type CorrectionRequest = {
   correctionDateISO: string;
   type: string;
   typeValue: TimeRequestType | null;
+  leaveSubtype: LeaveRequestSubtype | null;
+  leaveSession: LeaveRequestSession | null;
+  requestedHours: number | null;
   minutes: number;
   reason: string;
-  status: "pending" | "approved" | "rejected";
+  status: TimeRequestReviewStatus;
   remoteCheckIn: string | null;
   remoteCheckOut: string | null;
 };
@@ -65,6 +77,9 @@ type TimeRequestRow = {
   id: string;
   date: string | null;
   type: TimeRequestType | null;
+  leave_subtype: LeaveRequestSubtype | null;
+  leave_session: LeaveRequestSession | null;
+  requested_hours: number | null;
   minutes: number | null;
   reason: string | null;
   created_at: string | null;
@@ -191,6 +206,66 @@ function resolveRequestMinutes(item: TimeRequestRow) {
     : 0;
 }
 
+function applyApprovedLeaveRequest(day: CalendarDay, request: CorrectionRequest) {
+  if (request.leaveSubtype === "full_day") {
+    return {
+      ...day,
+      status: "ontime" as AttendanceStatus,
+      requiredWorkingMinutes: 0,
+      lateMinutes: 0,
+      earlyLeaveMinutes: 0,
+      missingMinutes: 0,
+      sourceNote: "Có đơn nghỉ cả ngày được duyệt",
+    };
+  }
+
+  if (request.leaveSubtype === "half_day") {
+    const leaveSession = request.leaveSession ?? "morning";
+    const metrics = calculateHalfDayAttendanceMetrics(
+      leaveSession,
+      day.checkIn && day.checkIn !== "--:--" ? `${request.correctionDateISO}T${day.checkIn}:00` : null,
+      day.checkOut && day.checkOut !== "--:--" ? `${request.correctionDateISO}T${day.checkOut}:00` : null,
+    );
+
+    return {
+      ...day,
+      status: metrics.status,
+      requiredWorkingMinutes: metrics.requiredWorkingMinutes,
+      lateMinutes: metrics.lateMinutes,
+      earlyLeaveMinutes: metrics.earlyLeaveMinutes,
+      missingMinutes: metrics.missingMinutes,
+      overtimeMinutes: 0,
+      sourceNote: `Có đơn ${getLeaveRequestSubtypeLabel(
+        request.leaveSubtype,
+        leaveSession,
+      ).toLowerCase()} được duyệt`,
+    };
+  }
+
+  if (request.leaveSubtype === "early_leave") {
+    const currentEarlyLeaveMinutes =
+      typeof day.earlyLeaveMinutes === "number" && Number.isFinite(day.earlyLeaveMinutes)
+        ? Math.max(0, day.earlyLeaveMinutes)
+        : 0;
+    const currentLateMinutes =
+      typeof day.lateMinutes === "number" && Number.isFinite(day.lateMinutes)
+        ? Math.max(0, day.lateMinutes)
+        : 0;
+    const nextEarlyLeaveMinutes = Math.max(0, currentEarlyLeaveMinutes - request.minutes);
+    const nextMissingMinutes = currentLateMinutes + nextEarlyLeaveMinutes;
+
+    return {
+      ...day,
+      status: nextMissingMinutes === 0 ? ("ontime" as AttendanceStatus) : day.status,
+      earlyLeaveMinutes: nextEarlyLeaveMinutes,
+      missingMinutes: nextMissingMinutes,
+      sourceNote: "Có đơn xin về sớm được duyệt",
+    };
+  }
+
+  return day;
+}
+
 function escapeCsvValue(value: string | number | null | undefined) {
   const normalized = value == null ? "" : String(value);
   const escaped = normalized.replace(/"/g, '""');
@@ -216,16 +291,7 @@ function toDateOnlyIso(value: string | null | undefined) {
 function toRequestStatus(
   reviewers: TimeRequestReviewerRow[] | null | undefined,
 ): CorrectionRequest["status"] {
-  if (!reviewers || reviewers.length === 0) {
-    return "pending";
-  }
-  if (reviewers.some((item) => item.is_approved === false)) {
-    return "rejected";
-  }
-  if (reviewers.every((item) => item.is_approved === true)) {
-    return "approved";
-  }
-  return "pending";
+  return getTimeRequestReviewStatus(reviewers);
 }
 
 function RequestStatus({ status }: { status: CorrectionRequest["status"] }) {
@@ -318,7 +384,7 @@ export function TimesheetOverview({
         const { data, error } = await supabase
           .from("time_requests")
           .select(
-            "id,date,type,minutes,reason,remote_check_in,remote_check_out,created_at,time_request_reviewers(is_approved,reviewed_at,created_at)",
+            "id,date,type,leave_subtype,leave_session,requested_hours,minutes,reason,remote_check_in,remote_check_out,created_at,time_request_reviewers(is_approved,reviewed_at,created_at)",
           )
           .eq("profile_id", profileId)
           .gte("date", startIso)
@@ -340,12 +406,22 @@ export function TimesheetOverview({
             id: item.id,
             requestDateISO: toDateOnlyIso(item.created_at),
             correctionDateISO: toDateOnlyIso(item.date),
-            type: getTimeRequestTypeLabel(item.type),
+            type: getTimeRequestDisplayLabel(item.type, {
+              leaveSubtype: item.leave_subtype,
+              leaveSession: item.leave_session,
+            }),
             typeValue: item.type ?? null,
+            leaveSubtype: item.leave_subtype ?? null,
+            leaveSession: item.leave_session ?? null,
+            requestedHours: item.requested_hours ?? null,
             minutes: resolvedMinutes,
             reason: item.reason?.trim()
               ? item.reason.trim()
-              : getTimeRequestReason(item.type, resolvedMinutes),
+              : getTimeRequestReason(item.type, resolvedMinutes, {
+                  leaveSubtype: item.leave_subtype,
+                  leaveSession: item.leave_session,
+                  requestedHours: item.requested_hours,
+                }),
             status: toRequestStatus(item.time_request_reviewers),
             remoteCheckIn: item.remote_check_in ?? null,
             remoteCheckOut: item.remote_check_out ?? null,
@@ -617,8 +693,8 @@ export function TimesheetOverview({
   const cellCount = Math.ceil((firstWeekdayIndex + totalDays) / 7) * 7;
   const holidayByDate = useMemo(() => buildHolidayMap(holidays), [holidays]);
 
-  const approvedLeaveMinutesByDate = useMemo(() => {
-    return correctionRequests.reduce<Record<string, number>>((acc, item) => {
+  const approvedLeaveRequestsByDate = useMemo(() => {
+    return correctionRequests.reduce<Record<string, CorrectionRequest[]>>((acc, item) => {
       if (
         item.status !== "approved" ||
         item.typeValue !== "approved_leave" ||
@@ -627,7 +703,11 @@ export function TimesheetOverview({
         return acc;
       }
 
-      acc[item.correctionDateISO] = (acc[item.correctionDateISO] ?? 0) + item.minutes;
+      if (!acc[item.correctionDateISO]) {
+        acc[item.correctionDateISO] = [];
+      }
+
+      acc[item.correctionDateISO].push(item);
       return acc;
     }, {});
   }, [correctionRequests]);
@@ -723,28 +803,17 @@ export function TimesheetOverview({
 
     return Array.from(calendarByDay.values()).map((day) => {
       const dateIso = day.dateIso ?? toIsoDate(calendarYear, calendarMonth, day.day);
-      const approvedLeaveMinutes = approvedLeaveMinutesByDate[dateIso] ?? 0;
-      const originalMissingMinutes =
-        typeof day.missingMinutes === "number" && Number.isFinite(day.missingMinutes)
-          ? Math.max(0, day.missingMinutes)
-          : 0;
-
-      if (day.isHoliday || approvedLeaveMinutes <= 0 || originalMissingMinutes <= 0) {
+      const approvedLeaveRequests = approvedLeaveRequestsByDate[dateIso] ?? [];
+      if (day.isHoliday || approvedLeaveRequests.length === 0) {
         return day;
       }
 
-      const adjustedMissingMinutes = Math.max(0, originalMissingMinutes - approvedLeaveMinutes);
-      const adjustedStatus =
-        day.status && adjustedMissingMinutes === 0 ? ("ontime" as AttendanceStatus) : day.status;
-
-      return {
-        ...day,
-        status: adjustedStatus,
-        missingMinutes: adjustedMissingMinutes,
-      };
+      return approvedLeaveRequests.reduce((currentDay, request) => {
+        return applyApprovedLeaveRequest(currentDay, request);
+      }, day);
     });
   }, [
-    approvedLeaveMinutesByDate,
+    approvedLeaveRequestsByDate,
     approvedRemoteRequestByDate,
     calendarDays,
     calendarMonth,

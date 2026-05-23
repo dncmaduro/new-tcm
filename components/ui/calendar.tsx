@@ -12,16 +12,16 @@ export function Calendar({ className, classNames, showOutsideDays = true, ...pro
       showOutsideDays={showOutsideDays}
       className={cn("p-3", className)}
       classNames={{
-        root: "w-fit",
+        root: "w-fit overflow-hidden rounded-lg",
         months: "flex flex-col",
         month: "space-y-3",
-        month_caption: "relative flex h-8 items-center justify-center",
+        month_caption: "relative flex h-8 items-center justify-center px-8",
         caption_label: "text-sm font-semibold text-slate-800",
         nav: "flex items-center gap-1",
         button_previous:
-          "absolute left-1 inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
+          "absolute left-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
         button_next:
-          "absolute right-1 inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
+          "absolute right-0 inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
         chevron: "h-4 w-4",
         weekdays: "flex",
         weekday: "h-9 w-9 text-center text-xs font-semibold text-slate-500",

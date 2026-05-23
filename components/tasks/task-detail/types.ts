@@ -85,6 +85,7 @@ export type TaskEvidence = {
 
 export type TaskFormState = {
   name: string;
+  assigneeId: string;
   description: string;
   note: string;
   isRecurring: boolean;

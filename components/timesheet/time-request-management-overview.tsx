@@ -1,10 +1,23 @@
 "use client";
 
 import Link from "next/link";
+import { Eye, Link2 } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { getTimeRequestReason, getTimeRequestTypeLabel, type TimeRequestType } from "@/lib/constants/time-requests";
+import {
+  getLeaveRequestSubtypeLabel,
+  getTimeRequestDisplayLabel,
+  getTimeRequestReason,
+  getTimeRequestReviewStatus,
+  type LeaveRequestSession,
+  type LeaveRequestSubtype,
+  type TimeRequestReviewStatus,
+  type TimeRequestType,
+} from "@/lib/constants/time-requests";
+import { TimeRequestDetailDialog } from "@/components/timesheet/time-request-detail-dialog";
 import { formatDateDdMmYyyy } from "@/lib/date-format";
 import { supabase } from "@/lib/supabase";
+import { buildTimeRequestSharePath } from "@/lib/time-request-access";
 import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
 
 type TimeRequestReviewerRow = {
@@ -17,6 +30,9 @@ type TimeRequestRow = {
   id: string;
   date: string | null;
   type: TimeRequestType | null;
+  leave_subtype: LeaveRequestSubtype | null;
+  leave_session: LeaveRequestSession | null;
+  requested_hours: number | null;
   minutes: number | null;
   reason: string | null;
   created_at: string | null;
@@ -30,9 +46,15 @@ type CorrectionRequest = {
   requestDateISO: string;
   correctionDateISO: string;
   type: string;
+  typeValue: TimeRequestType | null;
+  leaveSubtype: LeaveRequestSubtype | null;
+  leaveSession: LeaveRequestSession | null;
+  requestedHours: number | null;
   minutes: number;
   reason: string;
-  status: "pending" | "approved" | "rejected";
+  status: TimeRequestReviewStatus;
+  remoteCheckIn: string | null;
+  remoteCheckOut: string | null;
 };
 
 type TimeRequestManagementOverviewProps = {
@@ -69,6 +91,16 @@ function formatMonthLabel(value: Date) {
   return `Tháng ${String(value.getMonth() + 1).padStart(2, "0")}/${value.getFullYear()}`;
 }
 
+function formatDurationLabel(totalMinutes: number) {
+  const safe = Math.max(0, Math.round(totalMinutes));
+  const hours = Math.floor(safe / 60);
+  const minutes = safe % 60;
+  if (minutes === 0) {
+    return `${hours}h`;
+  }
+  return `${hours}h${String(minutes).padStart(2, "0")}`;
+}
+
 function resolveRequestMinutes(item: TimeRequestRow) {
   if (item.type === "remote") {
     return calculateWorkedMinutesBetweenTimestamps(item.remote_check_in, item.remote_check_out) ?? 0;
@@ -82,16 +114,7 @@ function resolveRequestMinutes(item: TimeRequestRow) {
 function toRequestStatus(
   reviewers: TimeRequestReviewerRow[] | null | undefined,
 ): CorrectionRequest["status"] {
-  if (!reviewers || reviewers.length === 0) {
-    return "pending";
-  }
-  if (reviewers.some((item) => item.is_approved === false)) {
-    return "rejected";
-  }
-  if (reviewers.every((item) => item.is_approved === true)) {
-    return "approved";
-  }
-  return "pending";
+  return getTimeRequestReviewStatus(reviewers);
 }
 
 function RequestStatus({ status }: { status: CorrectionRequest["status"] }) {
@@ -125,6 +148,9 @@ export function TimeRequestManagementOverview({
   profileError = null,
   createRequestHref,
 }: TimeRequestManagementOverviewProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [selectedMonth, setSelectedMonth] = useState<Date>(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -136,6 +162,37 @@ export function TimeRequestManagementOverview({
   const [requestPage, setRequestPage] = useState(1);
   const [isLoadingRequests, setIsLoadingRequests] = useState<boolean>(false);
   const [requestsError, setRequestsError] = useState<string>("");
+  const [openRequestError, setOpenRequestError] = useState<string>("");
+  const [copiedRequestId, setCopiedRequestId] = useState<string | null>(null);
+  const openedRequestId = searchParams.get("request")?.trim() || null;
+
+  const updateRequestQuery = (requestId: string | null) => {
+    const nextParams = new URLSearchParams(searchParams.toString());
+    if (requestId) {
+      nextParams.set("request", requestId);
+    } else {
+      nextParams.delete("request");
+    }
+
+    const nextQuery = nextParams.toString();
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+  };
+
+  const handleCopyLink = async (requestId: string) => {
+    const sharePath = buildTimeRequestSharePath(requestId);
+    const shareUrl = typeof window === "undefined" ? sharePath : `${window.location.origin}${sharePath}`;
+
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopiedRequestId(requestId);
+      window.setTimeout(() => {
+        setCopiedRequestId((current) => (current === requestId ? null : current));
+      }, 1800);
+      setOpenRequestError("");
+    } catch {
+      setOpenRequestError("Không thể sao chép link. Trình duyệt hiện tại không hỗ trợ thao tác này.");
+    }
+  };
 
   useEffect(() => {
     if (!profileId) {
@@ -159,7 +216,7 @@ export function TimeRequestManagementOverview({
         const { data, error } = await supabase
           .from("time_requests")
           .select(
-            "id,date,type,minutes,reason,remote_check_in,remote_check_out,created_at,time_request_reviewers(is_approved,reviewed_at,created_at)",
+            "id,date,type,leave_subtype,leave_session,requested_hours,minutes,reason,remote_check_in,remote_check_out,created_at,time_request_reviewers(is_approved,reviewed_at,created_at)",
           )
           .eq("profile_id", profileId)
           .gte("date", startIso)
@@ -181,12 +238,25 @@ export function TimeRequestManagementOverview({
             id: item.id,
             requestDateISO: toDateOnlyIso(item.created_at),
             correctionDateISO: toDateOnlyIso(item.date),
-            type: getTimeRequestTypeLabel(item.type),
+            type: getTimeRequestDisplayLabel(item.type, {
+              leaveSubtype: item.leave_subtype,
+              leaveSession: item.leave_session,
+            }),
+            typeValue: item.type ?? null,
+            leaveSubtype: item.leave_subtype ?? null,
+            leaveSession: item.leave_session ?? null,
+            requestedHours: item.requested_hours ?? null,
             minutes: resolvedMinutes,
             reason: item.reason?.trim()
               ? item.reason.trim()
-              : getTimeRequestReason(item.type, resolvedMinutes),
+                : getTimeRequestReason(item.type, resolvedMinutes, {
+                  leaveSubtype: item.leave_subtype,
+                  leaveSession: item.leave_session,
+                  requestedHours: item.requested_hours,
+                }),
             status: toRequestStatus(item.time_request_reviewers),
+            remoteCheckIn: item.remote_check_in ?? null,
+            remoteCheckOut: item.remote_check_out ?? null,
           };
         });
 
@@ -213,6 +283,68 @@ export function TimeRequestManagementOverview({
     };
   }, [profileError, profileId, selectedMonth]);
 
+  useEffect(() => {
+    if (!openedRequestId) {
+      setOpenRequestError("");
+      return;
+    }
+
+    if (!profileId) {
+      return;
+    }
+
+    let isActive = true;
+
+    const syncOpenedRequestMonth = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("time_requests")
+          .select("id,date,profile_id")
+          .eq("id", openedRequestId)
+          .maybeSingle();
+
+        if (error || !data?.id) {
+          throw new Error(error?.message ?? "Không tìm thấy yêu cầu thời gian.");
+        }
+
+        if (!data.profile_id || String(data.profile_id) !== profileId) {
+          throw new Error("Yêu cầu này không thuộc danh sách cá nhân của bạn.");
+        }
+
+        if (!isActive) {
+          return;
+        }
+
+        setOpenRequestError("");
+
+        if (typeof data.date === "string" && data.date) {
+          const requestDate = new Date(`${data.date}T00:00:00`);
+          if (!Number.isNaN(requestDate.getTime())) {
+            const requestMonth = new Date(requestDate.getFullYear(), requestDate.getMonth(), 1);
+            if (
+              requestMonth.getFullYear() !== selectedMonth.getFullYear() ||
+              requestMonth.getMonth() !== selectedMonth.getMonth()
+            ) {
+              setSelectedMonth(requestMonth);
+            }
+          }
+        }
+      } catch (error) {
+        if (!isActive) {
+          return;
+        }
+
+        setOpenRequestError(error instanceof Error ? error.message : "Không thể mở yêu cầu thời gian.");
+      }
+    };
+
+    void syncOpenedRequestMonth();
+
+    return () => {
+      isActive = false;
+    };
+  }, [openedRequestId, profileId, selectedMonth]);
+
   const filteredCorrectionRequests = useMemo(() => {
     if (requestFilter === "all") {
       return correctionRequests;
@@ -232,6 +364,57 @@ export function TimeRequestManagementOverview({
   useEffect(() => {
     setRequestPage(1);
   }, [requestFilter, selectedMonth]);
+
+  const openedRequest = useMemo(() => {
+    if (!openedRequestId) {
+      return null;
+    }
+
+    return correctionRequests.find((item) => item.id === openedRequestId) ?? null;
+  }, [correctionRequests, openedRequestId]);
+
+  const openedRequestDetail = useMemo(() => {
+    if (!openedRequest) {
+      return null;
+    }
+
+    const remoteTimeLabel =
+      openedRequest.typeValue === "remote" && openedRequest.remoteCheckIn && openedRequest.remoteCheckOut
+        ? `Khung giờ làm việc từ xa: ${openedRequest.remoteCheckIn.slice(11, 16)} - ${openedRequest.remoteCheckOut.slice(11, 16)}`
+        : null;
+
+    const leaveDetailLabel =
+      openedRequest.typeValue === "approved_leave" || openedRequest.typeValue === "unauthorized_leave"
+        ? getLeaveRequestSubtypeLabel(openedRequest.leaveSubtype, openedRequest.leaveSession) +
+          (openedRequest.leaveSubtype === "early_leave" && openedRequest.requestedHours
+            ? ` ${openedRequest.requestedHours} giờ`
+            : "")
+        : null;
+
+    return {
+      id: openedRequest.id,
+      typeLabel: openedRequest.type,
+      requestDateLabel: formatDateVi(openedRequest.requestDateISO),
+      correctionDateLabel: formatDateVi(openedRequest.correctionDateISO),
+      statusLabel:
+        openedRequest.status === "approved"
+          ? "Đã duyệt"
+          : openedRequest.status === "rejected"
+            ? "Từ chối"
+            : "Chờ duyệt",
+      statusClassName:
+        openedRequest.status === "approved"
+          ? "bg-emerald-50 text-emerald-700"
+          : openedRequest.status === "rejected"
+            ? "bg-rose-50 text-rose-700"
+            : "bg-amber-50 text-amber-700",
+      durationLabel: openedRequest.minutes > 0 ? formatDurationLabel(openedRequest.minutes) : "--",
+      reason: openedRequest.reason,
+      sharePath: buildTimeRequestSharePath(openedRequest.id),
+      leaveDetailLabel,
+      remoteTimeLabel,
+    };
+  }, [openedRequest]);
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white">
@@ -313,6 +496,10 @@ export function TimeRequestManagementOverview({
         </div>
       </div>
 
+      {openRequestError ? (
+        <div className="border-b border-rose-100 bg-rose-50 px-5 py-3 text-sm text-rose-700">{openRequestError}</div>
+      ) : null}
+
       <div className="overflow-x-auto">
         <table className="w-full min-w-[920px] text-left">
           <thead>
@@ -364,7 +551,28 @@ export function TimeRequestManagementOverview({
                   <td className="px-5 py-4">
                     <RequestStatus status={item.status} />
                   </td>
-                  <td className="px-5 py-4 text-right text-lg text-slate-400">◉</td>
+                  <td className="px-5 py-4">
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => updateRequestQuery(item.id)}
+                        title="Xem chi tiết"
+                        aria-label="Xem chi tiết"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyLink(item.id)}
+                        title="Sao chép link"
+                        aria-label="Sao chép link"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+                      >
+                        <Link2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))
             )}
@@ -397,6 +605,20 @@ export function TimeRequestManagementOverview({
           </div>
         </div>
       ) : null}
+
+      <TimeRequestDetailDialog
+        open={Boolean(openedRequestDetail)}
+        onOpenChange={(open) => {
+          if (!open) {
+            updateRequestQuery(null);
+          }
+        }}
+        request={openedRequestDetail}
+        isCopyingLink={Boolean(openedRequestDetail && copiedRequestId === openedRequestDetail.id)}
+        onCopyLink={
+          openedRequestDetail ? () => void handleCopyLink(openedRequestDetail.id) : undefined
+        }
+      />
     </section>
   );
 }

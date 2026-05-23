@@ -32,7 +32,7 @@ export function CommentRenderer({ bodyJson, bodyText }: CommentRendererProps) {
   const extensions = useMemo(
     () =>
       createCommentEditorExtensions({
-        profiles: [],
+        getProfiles: () => [],
         editable: false,
         openLinksOnClick: true,
       }),

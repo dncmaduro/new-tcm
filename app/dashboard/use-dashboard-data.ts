@@ -9,7 +9,15 @@ import {
   type AttendanceTimeRow,
 } from "@/lib/attendance";
 import { fetchHolidaysInRange } from "@/lib/holidays";
-import { getTimeRequestTypeLabel, type TimeRequestType } from "@/lib/constants/time-requests";
+import {
+  getTimeRequestDisplayLabel,
+  getTimeRequestReviewStatus,
+  getTimeRequestTypeLabel,
+  type LeaveRequestSession,
+  type LeaveRequestSubtype,
+  type TimeRequestReviewStatus,
+  type TimeRequestType,
+} from "@/lib/constants/time-requests";
 import {
   buildCompletedTrend,
   buildGoalProgressItems,
@@ -143,6 +151,8 @@ type TimeRequestRow = {
   id: string;
   date: string | null;
   type: TimeRequestType | null;
+  leave_subtype: LeaveRequestSubtype | null;
+  leave_session: LeaveRequestSession | null;
   minutes: number | null;
   reason: string | null;
   remote_check_in: string | null;
@@ -348,33 +358,24 @@ const getRoleScope = (
   return "member";
 };
 
-const toRequestStatus = (reviewers: TimeRequestReviewerRow[] | null | undefined) => {
-  if (!reviewers || reviewers.length === 0) {
-    return "pending";
-  }
-  if (reviewers.some((item) => item.is_approved === false)) {
-    return "rejected";
-  }
-  if (reviewers.every((item) => item.is_approved === true)) {
-    return "approved";
-  }
-  return "pending";
-};
+const toRequestStatus = (reviewers: TimeRequestReviewerRow[] | null | undefined): TimeRequestReviewStatus =>
+  getTimeRequestReviewStatus(reviewers);
 
-const getTimeRequestBadgeLabel = (type: TimeRequestType | null) => {
-  if (type === "remote") {
+const getTimeRequestBadgeDisplayLabel = (request: TimeRequestRow) => {
+  if (request.type === "approved_leave" || request.type === "unauthorized_leave") {
+    return getTimeRequestDisplayLabel(request.type, {
+      leaveSubtype: request.leave_subtype,
+      leaveSession: request.leave_session,
+    });
+  }
+
+  if (request.type === "remote") {
     return "Làm việc từ xa";
   }
-  if (type === "overtime") {
+  if (request.type === "overtime") {
     return "Tăng ca";
   }
-  if (type === "approved_leave") {
-    return "Nghỉ có phép";
-  }
-  if (type === "unauthorized_leave") {
-    return "Thiếu công không phép";
-  }
-  return getTimeRequestTypeLabel(type);
+  return getTimeRequestTypeLabel(request.type);
 };
 
 const getTimeRequestBadgeClassName = (
@@ -426,17 +427,17 @@ const buildTimeTracker = ({
     return {
       label:
         reviewStatus === "approved"
-          ? `${getTimeRequestBadgeLabel(request.type)} đã duyệt`
+          ? `${getTimeRequestBadgeDisplayLabel(request)} đã duyệt`
           : reviewStatus === "rejected"
-            ? `${getTimeRequestBadgeLabel(request.type)} bị từ chối`
-            : getTimeRequestBadgeLabel(request.type),
+            ? `${getTimeRequestBadgeDisplayLabel(request)} bị từ chối`
+            : getTimeRequestBadgeDisplayLabel(request),
       className: getTimeRequestBadgeClassName(request.type, reviewStatus),
     };
   });
 
   const primaryRequest = requests[0] ?? null;
   const primaryRequestStatus = primaryRequest ? toRequestStatus(primaryRequest.time_request_reviewers) : null;
-  const primaryRequestLabel = primaryRequest ? getTimeRequestBadgeLabel(primaryRequest.type) : null;
+  const primaryRequestLabel = primaryRequest ? getTimeRequestBadgeDisplayLabel(primaryRequest) : null;
 
   return {
     statusLabel: (() => {
@@ -816,7 +817,7 @@ export function useDashboardData() {
             : Promise.resolve({ data: [], error: null }),
           supabase
             .from("time_requests")
-            .select("id,date,type,minutes,reason,remote_check_in,remote_check_out,created_at,time_request_reviewers(is_approved,reviewed_at,created_at)")
+            .select("id,date,type,leave_subtype,leave_session,minutes,reason,remote_check_in,remote_check_out,created_at,time_request_reviewers(is_approved,reviewed_at,created_at)")
             .eq("profile_id", profileId)
             .eq("date", todayIso)
             .order("created_at", { ascending: false }),

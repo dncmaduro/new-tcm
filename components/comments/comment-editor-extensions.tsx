@@ -16,7 +16,7 @@ import { MentionSuggestionList, type MentionSuggestionListHandle } from "./menti
 import type { MentionedProfile } from "./types";
 
 type CreateCommentEditorExtensionsOptions = {
-  profiles: MentionedProfile[];
+  getProfiles: () => MentionedProfile[];
   placeholder?: string;
   editable?: boolean;
   openLinksOnClick?: boolean;
@@ -207,7 +207,10 @@ export const CommentUploadPlaceholder = Node.create({
   },
 });
 
-const buildMentionExtension = (profiles: MentionedProfile[], isEditable: boolean) =>
+const buildMentionExtension = (
+  getProfiles: () => MentionedProfile[],
+  isEditable: boolean,
+) =>
   Mention.configure({
     HTMLAttributes: {
       class: "comment-mention",
@@ -229,6 +232,7 @@ const buildMentionExtension = (profiles: MentionedProfile[], isEditable: boolean
       char: "@",
       items: ({ query }) => {
         const normalizedQuery = query.trim().toLocaleLowerCase("vi");
+        const profiles = getProfiles();
 
         return profiles
           .filter((profile) =>
@@ -329,7 +333,7 @@ const buildMentionExtension = (profiles: MentionedProfile[], isEditable: boolean
   });
 
 export const createCommentEditorExtensions = ({
-  profiles,
+  getProfiles,
   placeholder,
   editable = true,
   openLinksOnClick = false,
@@ -352,7 +356,7 @@ export const createCommentEditorExtensions = ({
     CommentImage,
     CommentVideo,
     CommentUploadPlaceholder,
-    buildMentionExtension(profiles, editable),
+    buildMentionExtension(getProfiles, editable),
   ];
 
   if (editable && placeholder) {

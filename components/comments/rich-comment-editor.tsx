@@ -128,6 +128,7 @@ export const RichCommentEditor = forwardRef<RichCommentEditorHandle, RichComment
     const imageInputRef = useRef<HTMLInputElement | null>(null);
     const videoInputRef = useRef<HTMLInputElement | null>(null);
     const pendingMediaRef = useRef<UploadedCommentMedia[]>([]);
+    const profilesRef = useRef(profiles);
     const onChangeRef = useRef(onChange);
     const onErrorChangeRef = useRef(onErrorChange);
     const onUploadingChangeRef = useRef(onUploadingChange);
@@ -152,6 +153,10 @@ export const RichCommentEditor = forwardRef<RichCommentEditorHandle, RichComment
     useEffect(() => {
       onUploadingChangeRef.current = onUploadingChange;
     }, [onUploadingChange]);
+
+    useEffect(() => {
+      profilesRef.current = profiles;
+    }, [profiles]);
 
     const buildSnapshot = useCallback(
       (editorInstance: Editor, pendingMedia: UploadedCommentMedia[]) => {
@@ -309,12 +314,12 @@ export const RichCommentEditor = forwardRef<RichCommentEditorHandle, RichComment
     const extensions = useMemo(
       () =>
         createCommentEditorExtensions({
-          profiles,
+          getProfiles: () => profilesRef.current,
           placeholder,
           editable: !disabled,
           onUploadFiles: uploadFilesToEditor,
         }),
-      [disabled, placeholder, profiles, uploadFilesToEditor],
+      [disabled, placeholder, uploadFilesToEditor],
     );
 
     const editor = useEditor({

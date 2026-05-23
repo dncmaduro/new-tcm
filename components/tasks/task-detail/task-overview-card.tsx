@@ -20,6 +20,7 @@ import type { TaskFormState } from "./types";
 import {
   getTaskTypeLabel,
 } from "./utils";
+import type { ProfileLiteRow } from "./types";
 
 type TaskOverviewCardProps = {
   taskId: string;
@@ -27,6 +28,7 @@ type TaskOverviewCardProps = {
   keyResultName: string | null;
   keyResultHref: string | null;
   form: TaskFormState;
+  assigneeOptions: ProfileLiteRow[];
   isEditing: boolean;
   isEditingProgress: boolean;
   canManage: boolean;
@@ -46,6 +48,7 @@ type TaskOverviewCardProps = {
   onProgressInputChange: (value: string) => void;
   onProgressInputBlur: () => void;
   onNameChange: (value: string) => void;
+  onAssigneeChange: (value: string) => void;
   onTypeChange: (value: TaskTypeValue) => void;
   onPriorityChange: (value: TaskPriority) => void;
   onUnitChange: (value: KeyResultUnitValue) => void;
@@ -59,6 +62,7 @@ export function TaskOverviewCard({
   keyResultName,
   keyResultHref,
   form,
+  assigneeOptions,
   isEditing,
   isEditingProgress,
   canManage,
@@ -78,6 +82,7 @@ export function TaskOverviewCard({
   onProgressInputChange,
   onProgressInputBlur,
   onNameChange,
+  onAssigneeChange,
   onTypeChange,
   onPriorityChange,
   onUnitChange,
@@ -214,92 +219,110 @@ export function TaskOverviewCard({
       </div>
 
       {isEditing ? (
-        <div className="mt-5 grid gap-4 md:grid-cols-2">
-          <label className="space-y-1.5 md:col-span-2">
-            <span className="text-sm font-semibold text-slate-700">Tên công việc</span>
-            <input
-              value={form.name}
-              onChange={(event) => onNameChange(event.target.value)}
-              className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-            />
-          </label>
+        <div className="mt-5 rounded-[20px] border border-blue-100 bg-blue-50/50 p-4 md:p-5">
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="space-y-1.5">
+              <span className="text-sm font-semibold text-slate-700">Tên công việc</span>
+              <input
+                value={form.name}
+                onChange={(event) => onNameChange(event.target.value)}
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+            </label>
 
-          <label className="space-y-1.5">
-            <span className="text-sm font-semibold text-slate-700">Loại công việc</span>
-            <Select value={form.type} onValueChange={(value) => onTypeChange(value as TaskTypeValue)}>
-              <SelectTrigger className="h-10">
-                <SelectValue placeholder="Chọn loại công việc" />
-              </SelectTrigger>
-              <SelectContent>
-                {TASK_TYPES.map((type) => (
-                  <SelectItem key={type.value} value={type.value}>
-                    {type.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </label>
+            <label className="space-y-1.5">
+              <span className="text-sm font-semibold text-slate-700">Người phụ trách</span>
+              <Select value={form.assigneeId} onValueChange={onAssigneeChange}>
+                <SelectTrigger className="h-10 bg-white">
+                  <SelectValue placeholder="Chọn người phụ trách" />
+                </SelectTrigger>
+                <SelectContent>
+                  {assigneeOptions.map((profile) => (
+                    <SelectItem key={profile.id} value={profile.id}>
+                      {profile.name?.trim() || profile.email?.trim() || profile.id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
 
-          <label className="space-y-1.5">
-            <span className="text-sm font-semibold text-slate-700">Phân loại chỉ tiêu</span>
-            <Select
-              value={form.unit}
-              onValueChange={(value) => onUnitChange(normalizeKeyResultUnitForType(form.type, value) as KeyResultUnitValue)}
-              disabled={form.type === "okr"}
-            >
-              <SelectTrigger className="h-10">
-                <SelectValue placeholder={form.type === "okr" ? "Task OKR dùng phần trăm" : "Chọn loại chỉ tiêu"} />
-              </SelectTrigger>
-              <SelectContent>
-                {getAllowedKeyResultUnitsByType(form.type).map((unit) => (
-                  <SelectItem key={unit.value} value={unit.value}>
-                    {unit.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </label>
+            <label className="space-y-1.5">
+              <span className="text-sm font-semibold text-slate-700">Loại công việc</span>
+              <Select value={form.type} onValueChange={(value) => onTypeChange(value as TaskTypeValue)}>
+                <SelectTrigger className="h-10 bg-white">
+                  <SelectValue placeholder="Chọn loại công việc" />
+                </SelectTrigger>
+                <SelectContent>
+                  {TASK_TYPES.map((type) => (
+                    <SelectItem key={type.value} value={type.value}>
+                      {type.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
 
-          <label className="space-y-1.5">
-            <span className="text-sm font-semibold text-slate-700">Độ ưu tiên</span>
-            <Select value={form.priority} onValueChange={(value) => onPriorityChange(value as TaskPriority)}>
-              <SelectTrigger className="h-10">
-                <SelectValue placeholder="Chọn độ ưu tiên" />
-              </SelectTrigger>
-              <SelectContent>
-                {TASK_PRIORITIES.map((priority) => (
-                  <SelectItem key={priority.value} value={priority.value}>
-                    {getTaskPriorityOptionLabel(priority.value)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </label>
+            <label className="space-y-1.5">
+              <span className="text-sm font-semibold text-slate-700">Phân loại chỉ tiêu</span>
+              <Select
+                value={form.unit}
+                onValueChange={(value) => onUnitChange(normalizeKeyResultUnitForType(form.type, value) as KeyResultUnitValue)}
+                disabled={form.type === "okr"}
+              >
+                <SelectTrigger className="h-10 bg-white">
+                  <SelectValue placeholder={form.type === "okr" ? "Task OKR dùng phần trăm" : "Chọn loại chỉ tiêu"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {getAllowedKeyResultUnitsByType(form.type).map((unit) => (
+                    <SelectItem key={unit.value} value={unit.value}>
+                      {unit.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
 
-          <label className="space-y-1.5">
-            <span className="text-sm font-semibold text-slate-700">Chỉ tiêu cần đạt</span>
-            <FormattedNumberInput
-              value={form.target}
-              disabled={form.type === "okr"}
-              onValueChange={onTargetChange}
-              className={`h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
-                form.type === "okr"
-                  ? "cursor-not-allowed bg-slate-50 text-slate-400"
-                  : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              }`}
-              placeholder={form.type === "okr" ? "Task OKR luôn là 100%" : "Ví dụ: 40"}
-            />
-          </label>
+            <label className="space-y-1.5">
+              <span className="text-sm font-semibold text-slate-700">Độ ưu tiên</span>
+              <Select value={form.priority} onValueChange={(value) => onPriorityChange(value as TaskPriority)}>
+                <SelectTrigger className="h-10 bg-white">
+                  <SelectValue placeholder="Chọn độ ưu tiên" />
+                </SelectTrigger>
+                <SelectContent>
+                  {TASK_PRIORITIES.map((priority) => (
+                    <SelectItem key={priority.value} value={priority.value}>
+                      {getTaskPriorityOptionLabel(priority.value)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
 
-          <label className="flex items-center gap-3 rounded-2xl bg-slate-50 px-4 py-3 md:col-span-2">
-            <input
-              type="checkbox"
-              checked={form.isRecurring}
-              onChange={(event) => onRecurringChange(event.target.checked)}
-              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-            />
-            <span className="text-sm font-medium text-slate-700">Task lặp lại</span>
-          </label>
+            <label className="space-y-1.5">
+              <span className="text-sm font-semibold text-slate-700">Chỉ tiêu cần đạt</span>
+              <FormattedNumberInput
+                value={form.target}
+                disabled={form.type === "okr"}
+                onValueChange={onTargetChange}
+                className={`h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
+                  form.type === "okr"
+                    ? "cursor-not-allowed bg-slate-50 text-slate-400"
+                    : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                }`}
+                placeholder={form.type === "okr" ? "Task OKR luôn là 100%" : "Ví dụ: 40"}
+              />
+            </label>
+
+            <label className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 md:col-span-2">
+              <input
+                type="checkbox"
+                checked={form.isRecurring}
+                onChange={(event) => onRecurringChange(event.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-sm font-medium text-slate-700">Task lặp lại</span>
+            </label>
+          </div>
         </div>
       ) : null}
     </article>
