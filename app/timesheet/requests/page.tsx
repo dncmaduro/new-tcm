@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { TimeRequestManagementOverview } from "@/components/timesheet/time-request-management-overview";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
@@ -72,12 +72,14 @@ export default function TimeRequestManagementPage() {
           />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-7">
-            <TimeRequestManagementOverview
-              profileId={profileId}
-              isProfileLoading={isLoadingProfile}
-              profileError={profileError}
-              createRequestHref="/timesheet/time-request/new"
-            />
+            <Suspense fallback={<div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-500">Đang tải danh sách yêu cầu...</div>}>
+              <TimeRequestManagementOverview
+                profileId={profileId}
+                isProfileLoading={isLoadingProfile}
+                profileError={profileError}
+                createRequestHref="/timesheet/time-request/new"
+              />
+            </Suspense>
           </main>
         </div>
       </div>

@@ -2,7 +2,7 @@
 
 import { Eye } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { TimeRequestDetailDialog } from "@/components/timesheet/time-request-detail-dialog";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
@@ -217,7 +217,7 @@ function StatusBadge({ status }: { status: RequestStatus }) {
   );
 }
 
-export default function TimeRequestManagementPage() {
+function TimeRequestManagementPageContent() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -1106,5 +1106,13 @@ export default function TimeRequestManagementPage() {
         }
       />
     </div>
+  );
+}
+
+export default function TimeRequestManagementPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#f3f5fa]" />}>
+      <TimeRequestManagementPageContent />
+    </Suspense>
   );
 }
