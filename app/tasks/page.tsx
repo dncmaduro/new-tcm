@@ -2247,7 +2247,7 @@ function TasksPageContent() {
         <WorkspaceSidebar active="tasks" />
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <header className="sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-5 backdrop-blur lg:px-7">
+          <header className="sticky top-0 z-40 border-b border-slate-200 bg-[#f3f5fa]/95 px-4 py-5 backdrop-blur lg:px-7">
             <div>
               <p className="text-sm font-semibold text-gray-500">
                 <Link href="/dashboard" className="hover:text-gray-900">

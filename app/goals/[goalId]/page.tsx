@@ -1258,12 +1258,6 @@ function GoalDetailPageContent() {
                         )}
                       </div>
                     </div>
-                    {!isCheckingCreatePermission && !canCreateKeyResult ? (
-                      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                        Quyền tạo KR đang dùng cùng logic với quyền tạo mục tiêu. Tài khoản hiện tại
-                        chưa có quyền này.
-                      </div>
-                    ) : null}
 
                     {keyResultNotice ? (
                       <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
@@ -1513,7 +1507,6 @@ function GoalDetailPageContent() {
                       </div>
                     </div>
                   </article>
-
                 </aside>
               </div>
             ) : null}
