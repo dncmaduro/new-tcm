@@ -73,7 +73,7 @@ export default function TimesheetPage() {
               profileId={profileId}
               isProfileLoading={isLoadingProfile}
               profileError={profileError}
-              createRequestHref="/timesheet/time-request/new"
+              createRequestHref="/timesheet/time-request/new?returnTo=%2Ftimesheet"
             />
           </main>
         </div>

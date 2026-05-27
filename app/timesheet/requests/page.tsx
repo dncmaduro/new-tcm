@@ -77,7 +77,7 @@ export default function TimeRequestManagementPage() {
                 profileId={profileId}
                 isProfileLoading={isLoadingProfile}
                 profileError={profileError}
-                createRequestHref="/timesheet/time-request/new"
+                createRequestHref="/timesheet/time-request/new?returnTo=%2Ftimesheet%2Frequests"
               />
             </Suspense>
           </main>

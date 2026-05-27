@@ -118,6 +118,22 @@ const normalize24HourTimeInput = (value: string) => {
   return `${digits.slice(0, 2)}:${digits.slice(2)}`;
 };
 
+const sanitizeReturnPath = (value: string | null) => {
+  if (!value) {
+    return null;
+  }
+
+  if (!value.startsWith("/") || value.startsWith("//")) {
+    return null;
+  }
+
+  if (!value.startsWith("/timesheet")) {
+    return null;
+  }
+
+  return value;
+};
+
 const combineDateAndTimeToIso = (date: Date, timeValue: string) => {
   if (!timeValue || !isValid24HourTimeValue(timeValue)) {
     return null;
@@ -231,6 +247,8 @@ function CreateTimeRequestPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryCorrectionDate = searchParams.get("date");
+  const queryReturnTo = searchParams.get("returnTo");
+  const returnToHref = sanitizeReturnPath(queryReturnTo) ?? "/timesheet/requests";
   const [currentProfileId, setCurrentProfileId] = useState<string | null>(null);
   const [requestType, setRequestType] = useState<TimeRequestType | "">("");
   const [leaveSubtype, setLeaveSubtype] = useState<LeaveRequestSubtype | "">("");
@@ -859,7 +877,7 @@ function CreateTimeRequestPageContent() {
 
       setSubmitSuccess("Tạo yêu cầu thành công.");
       runWithoutConfirm(() => {
-        router.push("/timesheet/requests");
+        router.push(returnToHref);
         router.refresh();
       });
     } catch (error) {
@@ -1125,7 +1143,7 @@ function CreateTimeRequestPageContent() {
 
                 <div className="flex items-center justify-end gap-3 border-t border-slate-100 pt-4">
                   <Link
-                    href="/timesheet/requests"
+                    href={returnToHref}
                     className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50"
                   >
                     Hủy

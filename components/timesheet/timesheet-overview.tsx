@@ -180,6 +180,25 @@ function formatWeekdayVi(isoDate: string) {
   return new Intl.DateTimeFormat("vi-VN", { weekday: "long" }).format(date);
 }
 
+function appendQueryParams(
+  href: string,
+  params: Record<string, string | null | undefined>,
+) {
+  const [pathname, queryString = ""] = href.split("?");
+  const searchParams = new URLSearchParams(queryString);
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (!value) {
+      searchParams.delete(key);
+      return;
+    }
+    searchParams.set(key, value);
+  });
+
+  const nextQuery = searchParams.toString();
+  return nextQuery ? `${pathname}?${nextQuery}` : pathname;
+}
+
 function hasValidRemoteWindow(startValue: string | null, endValue: string | null) {
   if (!startValue || !endValue) {
     return false;
@@ -1268,7 +1287,7 @@ export function TimesheetOverview({
                     >
                       <ActionIcon
                         component={Link}
-                        href={`${createRequestHref}?date=${dateIso}`}
+                        href={appendQueryParams(createRequestHref, { date: dateIso })}
                         variant="light"
                         color="blue"
                         size="sm"
