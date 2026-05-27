@@ -349,6 +349,11 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
       return;
     }
 
+    if (!goal) {
+      router.push("/goals");
+      return;
+    }
+
     router.push(isEditMode ? `/goals/${goal.id}/key-results/${keyResultId}` : `/goals/${goal.id}`);
   };
   const requiredKeyResultType = goal ? normalizeGoalTypeValue(goal.type) : null;
