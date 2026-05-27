@@ -264,6 +264,8 @@ export default function PerformanceReportDetailPage() {
   const [isSavingSelf, setIsSavingSelf] = useState(false);
   const [isSavingReview, setIsSavingReview] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const reportOwnerName =
+    report?.profile_id ? (profileNameById[report.profile_id] ?? report.profile_id) : null;
 
   useEffect(() => {
     if (access.isLoading || !access.isLoaded || !reportId) {
@@ -1128,10 +1130,14 @@ export default function PerformanceReportDetailPage() {
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <WorkspacePageHeader
-            title="Chi tiết báo cáo hiệu suất"
+            title={
+              reportOwnerName
+                ? `Chi tiết báo cáo - ${reportOwnerName}`
+                : "Chi tiết báo cáo hiệu suất"
+            }
             items={[
               { label: "Báo cáo hiệu suất", href: "/reports" },
-              { label: "Chi tiết báo cáo" },
+              { label: reportOwnerName ?? "Chi tiết báo cáo" },
             ]}
           />
 
@@ -1154,11 +1160,7 @@ export default function PerformanceReportDetailPage() {
             ) : (
               <div className="space-y-6">
                 <ReportTopSummary
-                  employeeName={
-                    report.profile_id
-                      ? (profileNameById[report.profile_id] ?? report.profile_id)
-                      : "Chưa gán"
-                  }
+                  employeeName={reportOwnerName ?? "Chưa gán"}
                   departmentName={
                     report.department_id
                       ? (departmentNameById[report.department_id] ?? report.department_id)

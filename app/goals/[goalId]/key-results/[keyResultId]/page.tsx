@@ -7,6 +7,13 @@ import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { ActivityHistoryDialog } from "@/components/activity-history-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { formatGoalTypeLabel } from "@/lib/constants/goals";
 import {
   formatKeyResultContributionTypeLabel,
@@ -30,7 +37,6 @@ import { useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
 import {
   formatTimelineRangeVi,
-  getTimelineMissingReason,
   getTimelineOutsideParentWarning,
 } from "@/lib/timeline";
 
@@ -150,6 +156,9 @@ const taskTypeLabelMap = TASK_TYPES.reduce<Record<string, string>>((acc, type) =
 const formatDateTime = (value: string | null) => {
   return formatDateTimeDdMmYyyy(value, "Chưa có", "Không hợp lệ");
 };
+
+const getProfileDisplayName = (profile: Pick<ProfileRow, "name" | "email">) =>
+  profile.name?.trim() || profile.email?.trim() || "Chưa gán";
 
 const formatOptionalMetric = (value: number | null, unit: string | null) => {
   if (value === null || value === undefined || Number.isNaN(Number(value))) {
@@ -284,6 +293,7 @@ export default function KeyResultDetailPage() {
   const [, setGoalDepartmentName] = useState<string | null>(null);
   const [responsibleDepartmentName, setResponsibleDepartmentName] = useState<string | null>(null);
   const [tasks, setTasks] = useState<KeyResultTaskItem[]>([]);
+  const [assigneeOptions, setAssigneeOptions] = useState<ProfileRow[]>([]);
   const [outboundSupportLinks, setOutboundSupportLinks] = useState<OutboundSupportLinkItem[]>([]);
   const [inboundSupportLinks, setInboundSupportLinks] = useState<InboundSupportLinkItem[]>([]);
   const [currentMetricDraft, setCurrentMetricDraft] = useState("");
@@ -293,13 +303,16 @@ export default function KeyResultDetailPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [taskLoadError, setTaskLoadError] = useState<string | null>(null);
   const [supportLinkError, setSupportLinkError] = useState<string | null>(null);
+  const [assigneeOptionError, setAssigneeOptionError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSavingCurrentMetric, setIsSavingCurrentMetric] = useState(false);
   const [isDeletingKeyResult, setIsDeletingKeyResult] = useState(false);
+  const [reassigningTaskId, setReassigningTaskId] = useState<string | null>(null);
 
   const isCheckingCreatePermission = workspaceAccess.isLoading;
   const canCreateTask = workspaceAccess.canManage && !workspaceAccess.error;
+  const canManageTasks = workspaceAccess.canManage && !workspaceAccess.error;
   const statusNotice =
     searchParams.get("created") === "1"
       ? "Đã tạo KR."
@@ -428,6 +441,47 @@ export default function KeyResultDetailPage() {
     );
     setIsLoadingSupportLinks(false);
   }, []);
+
+  useEffect(() => {
+    if (!canManageTasks) {
+      return;
+    }
+
+    let isActive = true;
+
+    const loadAssigneeOptions = async () => {
+      setAssigneeOptionError(null);
+
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id,name,email")
+        .order("name", { ascending: true });
+
+      if (!isActive) {
+        return;
+      }
+
+      if (error) {
+        setAssigneeOptions([]);
+        setAssigneeOptionError(error.message || "Không tải được danh sách người phụ trách.");
+        return;
+      }
+
+      setAssigneeOptions(
+        ((data ?? []) as ProfileRow[]).map((profile) => ({
+          id: String(profile.id),
+          name: profile.name ? String(profile.name) : null,
+          email: profile.email ? String(profile.email) : null,
+        })),
+      );
+    };
+
+    void loadAssigneeOptions();
+
+    return () => {
+      isActive = false;
+    };
+  }, [canManageTasks]);
 
   useEffect(() => {
     if (!hasValidParams) {
@@ -595,7 +649,7 @@ export default function KeyResultDetailPage() {
 
           profileNameById = ((profilesData ?? []) as ProfileRow[]).reduce<Record<string, string>>(
             (acc, profile) => {
-              acc[String(profile.id)] = profile.name?.trim() || profile.email?.trim() || "Chưa gán";
+              acc[String(profile.id)] = getProfileDisplayName(profile);
               return acc;
             },
             {},
@@ -715,6 +769,48 @@ export default function KeyResultDetailPage() {
   const progressHint = keyResult ? getKeyResultProgressHint(keyResult.unit) : "";
   const isSupportKeyResult =
     normalizeKeyResultContributionTypeValue(keyResult?.contribution_type) === "support";
+
+  const handleReassignTask = useCallback(
+    async (taskId: string, nextAssigneeId: string) => {
+      if (!canManageTasks || reassigningTaskId === taskId) {
+        return;
+      }
+
+      const targetProfile = assigneeOptions.find((profile) => profile.id === nextAssigneeId) ?? null;
+      setActionError(null);
+      setNotice(null);
+      setReassigningTaskId(taskId);
+
+      const { error } = await supabase
+        .from("tasks")
+        .update({
+          assignee_id: nextAssigneeId,
+          profile_id: nextAssigneeId,
+        })
+        .eq("id", taskId);
+
+      if (error) {
+        setActionError(error.message || "Không thể cập nhật người phụ trách.");
+        setReassigningTaskId(null);
+        return;
+      }
+
+      setTasks((previousTasks) =>
+        previousTasks.map((task) =>
+          task.id === taskId
+            ? {
+                ...task,
+                assigneeId: nextAssigneeId,
+                assigneeName: targetProfile ? getProfileDisplayName(targetProfile) : task.assigneeName,
+              }
+            : task,
+        ),
+      );
+      setNotice("Đã cập nhật người phụ trách công việc.");
+      setReassigningTaskId(null);
+    },
+    [assigneeOptions, canManageTasks, reassigningTaskId],
+  );
 
   const handleSaveCurrentMetric = async () => {
     if (!keyResult || isSavingCurrentMetric) {
@@ -1109,10 +1205,10 @@ export default function KeyResultDetailPage() {
                             <div className="overflow-x-auto">
                               <table className="w-full min-w-[720px] table-fixed text-left">
                                 <colgroup>
-                                  <col />
+                                  <col className="w-[280px]" />
                                   <col className="w-24" />
                                   <col className="w-[220px]" />
-                                  <col className="w-[190px]" />
+                                  <col className="w-[220px]" />
                                 </colgroup>
                                 <thead>
                                   <tr className="border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-[0.08em] text-slate-400">
@@ -1172,16 +1268,16 @@ export default function KeyResultDetailPage() {
                                           </div>
                                         </td>
                                         <td className="px-4 py-4">
-                                          <div className="flex flex-wrap items-center gap-2 whitespace-nowrap">
+                                          <div className="flex items-center gap-2 whitespace-nowrap">
                                             {detailHref ? (
                                               <Link
                                                 href={detailHref}
-                                                className="inline-flex h-8 items-center rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                                                className="inline-flex h-8 w-[96px] items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-700 hover:bg-blue-100"
                                               >
                                                 Chi tiết KR
                                               </Link>
                                             ) : (
-                                              <span className="text-xs text-slate-400">
+                                              <span className="inline-flex h-8 w-[96px] items-center justify-center text-xs text-slate-400">
                                                 Không khả dụng
                                               </span>
                                             )}
@@ -1190,12 +1286,12 @@ export default function KeyResultDetailPage() {
                                             editHref ? (
                                               <Link
                                                 href={editHref}
-                                                className="inline-flex h-8 items-center rounded-lg border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                                                className="inline-flex h-8 w-[96px] items-center justify-center rounded-lg border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100"
                                               >
                                                 Sửa KR
                                               </Link>
                                             ) : (
-                                              <span className="text-xs text-slate-400">
+                                              <span className="inline-flex h-8 w-[96px] items-center justify-center text-xs text-slate-400">
                                                 Không khả dụng
                                               </span>
                                             )}
@@ -1259,6 +1355,11 @@ export default function KeyResultDetailPage() {
 
                     {!taskLoadError && tasks.length > 0 ? (
                       <>
+                        {canManageTasks && assigneeOptionError ? (
+                          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                            {assigneeOptionError}
+                          </div>
+                        ) : null}
                         <div className="mt-4 grid gap-3 md:grid-cols-3">
                           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
                             <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
@@ -1338,11 +1439,40 @@ export default function KeyResultDetailPage() {
                                           ) : null}
                                         </td>
                                         <td className="px-4 py-4">
-                                          <span
-                                            className={`text-sm ${task.assigneeId ? "text-slate-700" : "text-slate-400"}`}
-                                          >
-                                            {task.assigneeName}
-                                          </span>
+                                          {canManageTasks ? (
+                                            <div className="w-[220px]">
+                                              <Select
+                                                value={task.assigneeId ?? undefined}
+                                                onValueChange={(value) => void handleReassignTask(task.id, value)}
+                                                disabled={
+                                                  reassigningTaskId === task.id ||
+                                                  assigneeOptions.length === 0
+                                                }
+                                              >
+                                                <SelectTrigger className="h-10 bg-white text-sm">
+                                                  <SelectValue placeholder="Chọn người phụ trách" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                  {assigneeOptions.map((profile) => (
+                                                    <SelectItem key={profile.id} value={profile.id}>
+                                                      {getProfileDisplayName(profile)}
+                                                    </SelectItem>
+                                                  ))}
+                                                </SelectContent>
+                                              </Select>
+                                              {reassigningTaskId === task.id ? (
+                                                <p className="mt-2 text-xs text-slate-500">
+                                                  Đang cập nhật...
+                                                </p>
+                                              ) : null}
+                                            </div>
+                                          ) : (
+                                            <span
+                                              className={`text-sm ${task.assigneeId ? "text-slate-700" : "text-slate-400"}`}
+                                            >
+                                              {task.assigneeName}
+                                            </span>
+                                          )}
                                         </td>
                                         <td className="px-4 py-4">
                                           <div className="w-[140px]">

@@ -53,7 +53,6 @@ type TaskOverviewCardProps = {
   onPriorityChange: (value: TaskPriority) => void;
   onUnitChange: (value: KeyResultUnitValue) => void;
   onTargetChange: (value: string) => void;
-  onRecurringChange: (value: boolean) => void;
 };
 
 export function TaskOverviewCard({
@@ -87,7 +86,6 @@ export function TaskOverviewCard({
   onPriorityChange,
   onUnitChange,
   onTargetChange,
-  onRecurringChange,
 }: TaskOverviewCardProps) {
   return (
     <article className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_12px_30px_-24px_rgba(15,23,42,0.35)]">
@@ -311,16 +309,6 @@ export function TaskOverviewCard({
                 }`}
                 placeholder={form.type === "okr" ? "Task OKR luôn là 100%" : "Ví dụ: 40"}
               />
-            </label>
-
-            <label className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 md:col-span-2">
-              <input
-                type="checkbox"
-                checked={form.isRecurring}
-                onChange={(event) => onRecurringChange(event.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-              />
-              <span className="text-sm font-medium text-slate-700">Task lặp lại</span>
             </label>
           </div>
         </div>

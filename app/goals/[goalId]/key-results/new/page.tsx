@@ -1,7 +1,6 @@
 "use client";
 
 import { InfoCircledIcon } from "@radix-ui/react-icons";
-import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { KeyResultContributionInfo } from "@/components/key-result-contribution-info";
@@ -34,7 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatTimelineRangeVi, isDateRangeOrdered } from "@/lib/timeline";
+import { isDateRangeOrdered } from "@/lib/timeline";
 
 type GoalDetailRow = {
   id: string;
@@ -249,7 +248,7 @@ const toKeyResultFormState = (keyResult: ExistingKeyResultRow): KeyResultFormSta
   endDate: keyResult.end_date ?? "",
 });
 
-const getKeyResultNamePlaceholder = (departmentName: string | null | undefined) => {
+const getKeyResultNamePlaceholder = () => {
   return "";
 };
 
@@ -344,6 +343,14 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
   const { leaveConfirmDialog, runWithoutConfirm } = useLeaveFormConfirm({
     enabled: !isSubmitting,
   });
+  const handleCancel = () => {
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      router.back();
+      return;
+    }
+
+    router.push(isEditMode ? `/goals/${goal.id}/key-results/${keyResultId}` : `/goals/${goal.id}`);
+  };
   const requiredKeyResultType = goal ? normalizeGoalTypeValue(goal.type) : null;
   const requiredKeyResultTypeLabel = goal ? formatGoalTypeLabel(goal.type) : null;
 
@@ -707,18 +714,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
   const usesPercentAllocation = isSupportContribution && usesPercentSupportAllocation(form.unit);
   const usesValueAllocation = isSupportContribution && !usesPercentAllocation;
   const supportAllocationExpectedTotal = usesPercentAllocation ? 100 : Number(form.target) || 0;
-  const selectedResponsibleDepartmentName = useMemo(
-    () =>
-      goalDepartments.find((department) => department.departmentId === form.responsibleDepartmentId)
-        ?.name ??
-      goalDepartments[0]?.name ??
-      null,
-    [form.responsibleDepartmentId, goalDepartments],
-  );
-  const keyResultNamePlaceholder = useMemo(
-    () => getKeyResultNamePlaceholder(selectedResponsibleDepartmentName),
-    [selectedResponsibleDepartmentName],
-  );
+  const keyResultNamePlaceholder = useMemo(() => getKeyResultNamePlaceholder(), []);
   const activeSupportLinkDrafts = useMemo(
     () => supportLinkDrafts.filter(isSupportLinkDraftFilled),
     [supportLinkDrafts],
@@ -1651,16 +1647,13 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                     </div>
 
                     <div className="flex items-center gap-2">
-                    <Link
-                      href={
-                        isEditMode
-                          ? `/goals/${goal.id}/key-results/${keyResultId}`
-                          : `/goals/${goal.id}`
-                      }
+                    <button
+                      type="button"
+                      onClick={handleCancel}
                       className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 hover:bg-slate-50"
                     >
                       Hủy
-                    </Link>
+                    </button>
                     <button
                       type="submit"
                       disabled={isSubmitting || isDeletingKeyResult}

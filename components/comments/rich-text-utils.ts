@@ -55,6 +55,42 @@ const iterateNodes = (
   node.content?.forEach((childNode) => iterateNodes(childNode, visitor));
 };
 
+const collectTextNodes = (
+  node: JSONContent | null | undefined,
+  result: JSONContent[] = [],
+) => {
+  if (!node) {
+    return result;
+  }
+
+  if (typeof node.text === "string") {
+    result.push(node);
+  }
+
+  node.content?.forEach((childNode) => collectTextNodes(childNode, result));
+  return result;
+};
+
+const trimBoundaryWhitespaceInDocument = (document: RichTextDocument) => {
+  const textNodes = collectTextNodes(document);
+  if (textNodes.length === 0) {
+    return document;
+  }
+
+  const firstTextNode = textNodes[0];
+  const lastTextNode = textNodes[textNodes.length - 1];
+
+  if (typeof firstTextNode.text === "string") {
+    firstTextNode.text = firstTextNode.text.trimStart();
+  }
+
+  if (typeof lastTextNode.text === "string") {
+    lastTextNode.text = lastTextNode.text.trimEnd();
+  }
+
+  return document;
+};
+
 export const createEmptyRichTextDocument = (): RichTextDocument => ({
   type: "doc",
   content: [
@@ -240,7 +276,7 @@ export const getReferencedAttachmentPaths = (document: RichTextDocument) =>
   collectCommentAttachmentsFromDocument(document).map((attachment) => attachment.filePath);
 
 export const normalizeRichTextDocumentForStorage = (document: RichTextDocument) => {
-  const nextDocument = cloneDocument(document);
+  const nextDocument = trimBoundaryWhitespaceInDocument(cloneDocument(document));
 
   iterateNodes(nextDocument, (node) => {
     if (!node.type || !MEDIA_NODE_TYPES.has(node.type)) {

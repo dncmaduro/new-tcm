@@ -927,10 +927,10 @@ export default function RealtimeReportDetailPage() {
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <WorkspacePageHeader
-            title="Chi tiết quản lý hiệu suất realtime"
+            title={profileName ? `Realtime - ${profileName}` : "Chi tiết quản lý hiệu suất realtime"}
             items={[
               { label: "Quản lý hiệu suất", href: "/reports/realtime" },
-              { label: "Chi tiết realtime" },
+              { label: profileName || "Chi tiết realtime" },
             ]}
           />
 

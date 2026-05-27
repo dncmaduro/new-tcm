@@ -899,6 +899,7 @@ export function TimesheetOverview({
     }
     return { day, meta: dayMap[day] };
   });
+  const todayDateIso = toIsoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
 
   const activeRequests = openedFormDateIso
     ? correctionRequests.filter((item) => item.correctionDateISO === openedFormDateIso)
@@ -1219,12 +1220,22 @@ export function TimesheetOverview({
             const isRemoteSource = meta?.sourceType === "remote";
             const holiday = meta?.holiday ?? holidayByDate.get(dateIso) ?? null;
             const isHolidayDate = Boolean(holiday);
+            const isTodayDate = dateIso === todayDateIso;
+            const hasSameCheckInAndCheckOut =
+              Boolean(meta?.checkIn) &&
+              Boolean(meta?.checkOut) &&
+              meta?.checkIn !== "--:--" &&
+              meta?.checkOut !== "--:--" &&
+              meta?.checkIn === meta?.checkOut;
+            const isTodaySinglePunchState = isTodayDate && hasSameCheckInAndCheckOut;
+            const shouldHighlightMissingState = hasMissingHours && !isTodaySinglePunchState;
             const shouldShowMissingHoursLabel =
-              hasMissingHours && !isSundayColumn && !isHolidayDate;
+              shouldHighlightMissingState && !isSundayColumn && !isHolidayDate;
             const missingHoursLabel =
               typeof meta?.missingMinutes === "number"
                 ? formatDurationLabel(meta.missingMinutes)
                 : "--";
+            const displayedCheckOut = hasSameCheckInAndCheckOut ? "--:--" : (meta?.checkOut ?? "--:--");
 
             return (
               <div
@@ -1310,7 +1321,7 @@ export function TimesheetOverview({
                           ? "border-slate-200 bg-slate-100 text-slate-400"
                           : isRemoteSource
                             ? "border-indigo-200 bg-indigo-50 text-indigo-700"
-                            : hasMissingHours
+                            : shouldHighlightMissingState
                               ? "border-rose-200 bg-rose-50 text-rose-700"
                               : isHolidayDate
                                 ? "border-emerald-200 bg-emerald-50 text-emerald-700"
@@ -1325,14 +1336,14 @@ export function TimesheetOverview({
                           ? "border-slate-200 bg-slate-100 text-slate-400"
                           : isRemoteSource
                             ? "border-indigo-200 bg-indigo-50 text-indigo-700"
-                            : hasMissingHours
+                            : shouldHighlightMissingState
                               ? "border-rose-200 bg-rose-50 text-rose-700"
                               : isHolidayDate
                                 ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                                 : "border-slate-200 bg-slate-50 text-slate-700"
                       }`}
                     >
-                      {meta?.checkOut ?? "--:--"}
+                      {displayedCheckOut}
                     </p>
                   </div>
                   {isRemoteSource ? (

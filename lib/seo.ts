@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { createClient } from "@supabase/supabase-js";
 
 const SITE_NAME = "TCM";
 const LOGIN_DESCRIPTION =
@@ -30,6 +31,30 @@ export function getSiteUrl() {
   }
 
   return new URL(ABSOLUTE_URL_PATTERN.test(rawUrl) ? rawUrl : `https://${rawUrl}`);
+}
+
+export function createMetadataSupabaseClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return null;
+  }
+
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+}
+
+export function joinTitleSegments(...segments: Array<string | null | undefined>) {
+  return segments
+    .map((segment) => segment?.trim())
+    .filter((segment): segment is string => Boolean(segment))
+    .join(" | ");
 }
 
 export function getSiteMetadata(): Metadata {

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { useLeaveFormConfirm } from "@/components/use-leave-form-confirm";
@@ -247,6 +246,15 @@ function NewTaskPageContent() {
   const { leaveConfirmDialog, runWithoutConfirm } = useLeaveFormConfirm({
     enabled: !isSubmitting,
   });
+
+  const handleCancel = () => {
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      router.back();
+      return;
+    }
+
+    router.push("/tasks");
+  };
 
   const buildTaskMetricDraft = (
     taskType: TaskTypeValue,
@@ -1371,23 +1379,31 @@ function NewTaskPageContent() {
                     />
                   </div>
 
-                  {canBulkCreateByQuantity ? (
-                    <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                      <label
-                        htmlFor="bulk-create-enabled"
-                        className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-slate-700"
-                      >
-                        <input
-                          id="bulk-create-enabled"
-                          type="checkbox"
-                          checked={isBulkCreateEnabled}
-                          onChange={(event) => setIsBulkCreateEnabled(event.target.checked)}
-                          className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                        />
-                        <span>Tạo hàng loạt</span>
-                      </label>
-                    </div>
-                  ) : null}
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <label
+                      htmlFor="bulk-create-enabled"
+                      className={`inline-flex items-center gap-2 text-sm font-semibold ${
+                        canBulkCreateByQuantity
+                          ? "cursor-pointer text-slate-700"
+                          : "cursor-not-allowed text-slate-400"
+                      }`}
+                    >
+                      <input
+                        id="bulk-create-enabled"
+                        type="checkbox"
+                        checked={isBulkCreateEnabled}
+                        onChange={(event) => setIsBulkCreateEnabled(event.target.checked)}
+                        disabled={!canBulkCreateByQuantity}
+                        className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+                      />
+                      <span>Tạo hàng loạt</span>
+                    </label>
+                    <p className="text-sm text-slate-500">
+                      {canBulkCreateByQuantity
+                        ? `Bật chế độ này để tạo nhiều task một lúc. "Chỉ tiêu cần đạt" sẽ được hiểu là số lượng task cần tạo, từ 1 đến ${MAX_BULK_TASK_CREATE_COUNT}.`
+                        : "Chỉ hỗ trợ khi loại công việc là KPI và đơn vị đo là Số lượng."}
+                    </p>
+                  </div>
 
                   <div className="flex flex-col gap-3 border-t border-slate-100 pt-3 md:flex-row md:items-center md:justify-between">
                     <div className="flex items-center gap-3">
@@ -1402,12 +1418,13 @@ function NewTaskPageContent() {
                     </div>
 
                     <div className="flex items-center justify-end gap-2">
-                      <Link
-                        href="/tasks"
+                      <button
+                        type="button"
+                        onClick={handleCancel}
                         className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 hover:bg-slate-50"
                       >
                         Hủy
-                      </Link>
+                      </button>
                       <button
                         type="submit"
                         disabled={isSubmitting || !isFormValid}

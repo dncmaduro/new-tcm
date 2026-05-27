@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
@@ -487,6 +486,15 @@ function NewGoalPageContent() {
   const { leaveConfirmDialog, runWithoutConfirm } = useLeaveFormConfirm({
     enabled: !isSubmitting,
   });
+
+  const handleCancel = () => {
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      router.back();
+      return;
+    }
+
+    router.push("/goals");
+  };
 
   const showPermissionDebug = searchParams.get("debugPermission") === "1";
   const queryDepartmentId = searchParams.get("departmentId");
@@ -1464,12 +1472,13 @@ function NewGoalPageContent() {
                   </div>
 
                   <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
-                    <Link
-                      href="/goals"
+                    <button
+                      type="button"
+                      onClick={handleCancel}
                       className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 hover:bg-slate-50"
                     >
                       Hủy
-                    </Link>
+                    </button>
                     <button
                       type="submit"
                       disabled={isSubmitting || !isFormValid}

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { buildPageMetadata } from "@/lib/seo";
+import { buildPageMetadata, createMetadataSupabaseClient, joinTitleSegments } from "@/lib/seo";
 
 type EditKeyResultLayoutProps = Readonly<{
   children: ReactNode;
@@ -14,9 +14,22 @@ export async function generateMetadata({
   params,
 }: EditKeyResultLayoutProps): Promise<Metadata> {
   const { goalId, keyResultId } = await params;
+  const supabase = createMetadataSupabaseClient();
+  let keyResultName: string | null = null;
+
+  if (supabase) {
+    const { data } = await supabase
+      .from("key_results")
+      .select("name")
+      .eq("id", keyResultId)
+      .eq("goal_id", goalId)
+      .maybeSingle();
+    keyResultName = data?.name ? String(data.name) : null;
+  }
 
   return buildPageMetadata({
-    title: "Chỉnh sửa key result",
+    title:
+      joinTitleSegments("Chỉnh sửa key result", keyResultName) || "Chỉnh sửa key result",
     description:
       "Điều chỉnh thông tin, chỉ số và cấu hình thực thi của key result trên hệ thống TCM.",
     path: `/goals/${goalId}/key-results/${keyResultId}/edit`,

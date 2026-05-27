@@ -239,6 +239,7 @@ const KR_CARD_WIDTH = 216;
 const KR_CARD_HEIGHT = 112;
 const KR_CARD_GAP = 36;
 const GOAL_TO_KR_GAP = 128;
+const KR_ROW_GAP = 28;
 const WORLD_WIDTH = 3200;
 const WORLD_HEIGHT = 2200;
 const WORLD_INITIAL_SCALE = 0.86;
@@ -321,6 +322,75 @@ const formatDateTimeVi = (value: string | null) => {
   return formatDateTimeDdMmYyyy(value, "Chưa có", "Không hợp lệ");
 };
 
+const getKeyResultRowWidth = (count: number) =>
+  count > 0 ? count * KR_CARD_WIDTH + (count - 1) * KR_CARD_GAP : 0;
+
+const splitGoalKeyResultsByContribution = (items: GoalKeyResultPreview[]) => {
+  const directKeyResults = items.filter((item) => item.contributionType !== "support");
+  const supportKeyResults = items.filter((item) => item.contributionType === "support");
+
+  return {
+    directKeyResults,
+    supportKeyResults,
+  };
+};
+
+const getGoalKeyResultFootprint = (items: GoalKeyResultPreview[]) => {
+  if (items.length === 0) {
+    return {
+      width: CARD_WIDTH,
+      height: CARD_HEIGHT,
+    };
+  }
+
+  const { directKeyResults, supportKeyResults } = splitGoalKeyResultsByContribution(items);
+  const topRowItems = directKeyResults.length > 0 ? directKeyResults : supportKeyResults;
+  const bottomRowItems = directKeyResults.length > 0 ? supportKeyResults : [];
+  const topRowWidth = getKeyResultRowWidth(topRowItems.length);
+  const bottomRowWidth = getKeyResultRowWidth(bottomRowItems.length);
+  const width = Math.max(CARD_WIDTH, topRowWidth, bottomRowWidth);
+  const height =
+    CARD_HEIGHT +
+    GOAL_TO_KR_GAP +
+    KR_CARD_HEIGHT +
+    (bottomRowItems.length > 0 ? KR_ROW_GAP + KR_CARD_HEIGHT : 0);
+
+  return { width, height };
+};
+
+const getGoalKeyResultPositions = (
+  goal: Pick<GoalNode, "id" | "x" | "y" | "keyResultsPreview">,
+) => {
+  const { directKeyResults, supportKeyResults } = splitGoalKeyResultsByContribution(
+    goal.keyResultsPreview,
+  );
+  const topRowItems = directKeyResults.length > 0 ? directKeyResults : supportKeyResults;
+  const bottomRowItems = directKeyResults.length > 0 ? supportKeyResults : [];
+  const topRowWidth = getKeyResultRowWidth(topRowItems.length);
+  const bottomRowWidth = getKeyResultRowWidth(bottomRowItems.length);
+  const topRowStartX = goal.x + CARD_WIDTH / 2 - topRowWidth / 2;
+  const topRowY = goal.y + CARD_HEIGHT + GOAL_TO_KR_GAP;
+  const bottomRowStartX = goal.x + CARD_WIDTH / 2 - bottomRowWidth / 2;
+  const bottomRowY = topRowY + KR_CARD_HEIGHT + KR_ROW_GAP;
+  const positions: Record<string, CanvasNodePosition> = {};
+
+  topRowItems.forEach((keyResult, index) => {
+    positions[`kr:${goal.id}:${keyResult.id}`] = {
+      x: topRowStartX + index * (KR_CARD_WIDTH + KR_CARD_GAP),
+      y: topRowY,
+    };
+  });
+
+  bottomRowItems.forEach((keyResult, index) => {
+    positions[`kr:${goal.id}:${keyResult.id}`] = {
+      x: bottomRowStartX + index * (KR_CARD_WIDTH + KR_CARD_GAP),
+      y: bottomRowY,
+    };
+  });
+
+  return positions;
+};
+
 const buildGoalGraph = (
   rows: GoalRow[],
   departmentsById: Record<string, string>,
@@ -375,11 +445,10 @@ const buildGoalGraph = (
       progress,
     });
     const keyResultCount = keyResultsByGoalId[row.id]?.length ?? 0;
-    const keyResultFootprintWidth =
-      keyResultCount > 0 ? keyResultCount * KR_CARD_WIDTH + (keyResultCount - 1) * KR_CARD_GAP : 0;
-    const footprintWidth = Math.max(CARD_WIDTH, keyResultFootprintWidth);
-    const footprintHeight =
-      CARD_HEIGHT + (keyResultCount > 0 ? GOAL_TO_KR_GAP + KR_CARD_HEIGHT : 0);
+    const keyResultPreviewItems = keyResultsByGoalId[row.id] ?? [];
+    const keyResultFootprint = getGoalKeyResultFootprint(keyResultPreviewItems);
+    const footprintWidth = keyResultFootprint.width;
+    const footprintHeight = keyResultFootprint.height;
 
     return {
       node: {
@@ -413,7 +482,7 @@ const buildGoalGraph = (
         createdAt: row.created_at ?? null,
         keyResultCount,
         taskCount: taskCountByGoalId[row.id] ?? 0,
-        keyResultsPreview: keyResultsByGoalId[row.id] ?? [],
+        keyResultsPreview: keyResultPreviewItems,
         startDate: row.start_date ?? null,
         endDate: row.end_date ?? null,
         healthStatus,
@@ -484,18 +553,7 @@ const buildGoalGraph = (
         return acc;
       }
 
-      const totalWidth =
-        goal.keyResultsPreview.length * KR_CARD_WIDTH +
-        (goal.keyResultsPreview.length - 1) * KR_CARD_GAP;
-      const startX = goal.x + CARD_WIDTH / 2 - totalWidth / 2;
-      const y = goal.y + CARD_HEIGHT + GOAL_TO_KR_GAP;
-
-      goal.keyResultsPreview.forEach((keyResult, index) => {
-        acc[`kr:${goal.id}:${keyResult.id}`] = {
-          x: startX + index * (KR_CARD_WIDTH + KR_CARD_GAP),
-          y,
-        };
-      });
+      Object.assign(acc, getGoalKeyResultPositions(goal));
 
       return acc;
     },
@@ -1024,11 +1082,8 @@ function GoalsPageContent() {
         if (goal.keyResultsPreview.length === 0) {
           return [];
         }
-
-        const totalWidth =
-          goal.keyResultsPreview.length * KR_CARD_WIDTH +
-          (goal.keyResultsPreview.length - 1) * KR_CARD_GAP;
-        return goal.keyResultsPreview.map((keyResult, index) => ({
+        const fallbackPositions = getGoalKeyResultPositions(goal);
+        return goal.keyResultsPreview.map((keyResult) => ({
           id: `kr:${goal.id}:${keyResult.id}`,
           goalId: goal.id,
           keyResultId: keyResult.id,
@@ -1038,9 +1093,11 @@ function GoalsPageContent() {
           supportTargetSummary: keyResult.supportTargetSummary,
           x:
             keyResultNodePositions[`kr:${goal.id}:${keyResult.id}`]?.x ??
-            goal.x + CARD_WIDTH / 2 - totalWidth / 2 + index * (KR_CARD_WIDTH + KR_CARD_GAP),
+            fallbackPositions[`kr:${goal.id}:${keyResult.id}`]?.x ??
+            goal.x,
           y:
             keyResultNodePositions[`kr:${goal.id}:${keyResult.id}`]?.y ??
+            fallbackPositions[`kr:${goal.id}:${keyResult.id}`]?.y ??
             goal.y + CARD_HEIGHT + GOAL_TO_KR_GAP,
         }));
       }),
@@ -3114,6 +3171,31 @@ function GoalsPageContent() {
                         </div>
 
                         <div>
+                          <p className="text-sm text-slate-400">Phòng ban phụ trách</p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {selectedGoal.teamNames.length > 0 ? (
+                              selectedGoal.teamNames.map((teamName, index) => (
+                                <span
+                                  key={`${selectedKeyResult.id}-${teamName}`}
+                                  className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                                    index === 0
+                                      ? "bg-blue-50 text-blue-700"
+                                      : "bg-slate-100 text-slate-700"
+                                  }`}
+                                >
+                                  {teamName}
+                                  {index === 0 ? " · chính" : ""}
+                                </span>
+                              ))
+                            ) : (
+                              <p className="text-sm font-medium text-slate-800">
+                                {selectedGoal.phongBan || "Chưa có phòng ban phụ trách"}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div>
                           <p className="text-sm text-slate-400">Khung thời gian</p>
                           <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
                             <p className="text-sm font-medium text-slate-800">
@@ -3218,33 +3300,33 @@ function GoalsPageContent() {
                   </div>
                 </div>
                 <div className="border-t border-slate-200 bg-white/95 px-5 py-4 shadow-[0_-8px_24px_-20px_rgba(15,23,42,0.35)] backdrop-blur xl:px-6">
-                  <div className="space-y-3 flex gap-3">
+                  <div className="flex gap-3">
                     {selectedKeyResult ? (
                       <>
                         <Link
-                          href={`/goals/${selectedGoal.id}/key-results/${selectedKeyResult.id}`}
-                          className="flex h-11 w-full items-center justify-center rounded-xl border border-slate-200 bg-white text-base font-semibold text-slate-700"
-                        >
-                          Mở KR
-                        </Link>
-                        <Link
                           href={selectedKeyResultCreateTaskHref}
-                          className="flex h-11 w-full items-center justify-center rounded-xl bg-blue-600 text-base font-semibold text-white"
+                          className="flex h-11 flex-1 items-center justify-center rounded-xl border border-slate-200 bg-white text-base font-semibold text-slate-700 transition hover:bg-slate-50"
                         >
                           Thêm công việc
+                        </Link>
+                        <Link
+                          href={`/goals/${selectedGoal.id}/key-results/${selectedKeyResult.id}`}
+                          className="flex h-11 flex-1 items-center justify-center rounded-xl bg-blue-600 text-base font-semibold text-white transition hover:bg-blue-700"
+                        >
+                          Mở KR
                         </Link>
                       </>
                     ) : (
                       <>
                         <Link
                           href={`/goals/${selectedGoal.id}/key-results/new`}
-                          className="flex h-11 w-full items-center justify-center rounded-xl border border-slate-200 bg-white text-base font-semibold text-slate-700"
+                          className="flex h-11 flex-1 items-center justify-center rounded-xl border border-slate-200 bg-white text-base font-semibold text-slate-700 transition hover:bg-slate-50"
                         >
                           Thêm KR
                         </Link>
                         <Link
                           href={`/goals/${selectedGoal.id}`}
-                          className="flex h-11 w-full items-center justify-center rounded-xl bg-blue-600 text-base font-semibold text-white"
+                          className="flex h-11 flex-1 items-center justify-center rounded-xl bg-blue-600 text-base font-semibold text-white transition hover:bg-blue-700"
                         >
                           Mở trang chi tiết
                         </Link>

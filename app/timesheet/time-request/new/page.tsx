@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CalendarIcon } from "lucide-react";
 import { format } from "date-fns";
@@ -462,6 +461,15 @@ function CreateTimeRequestPageContent() {
   const handleRemoteTimeBlur = (value: string, setter: (nextValue: string) => void) => {
     const normalizedValue = normalize24HourTimeInput(value.trim());
     setter(normalizedValue);
+  };
+
+  const handleCancel = () => {
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      router.back();
+      return;
+    }
+
+    router.push(returnToHref);
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -1142,12 +1150,13 @@ function CreateTimeRequestPageContent() {
                 </div>
 
                 <div className="flex items-center justify-end gap-3 border-t border-slate-100 pt-4">
-                  <Link
-                    href={returnToHref}
+                  <button
+                    type="button"
+                    onClick={handleCancel}
                     className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50"
                   >
                     Hủy
-                  </Link>
+                  </button>
                   <button
                     type="submit"
                     disabled={
