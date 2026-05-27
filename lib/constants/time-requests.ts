@@ -2,22 +2,18 @@ export const TIME_REQUEST_TYPES = [
   {
     value: "approved_leave",
     label: "Nghỉ có phép / thiếu công có phép",
-    description: "Dùng cho nghỉ, về sớm hoặc đi muộn có phép.",
   },
   {
     value: "unauthorized_leave",
     label: "Nghỉ không phép / thiếu công không phép",
-    description: "Dùng cho nghỉ, về sớm hoặc đi muộn không phép.",
   },
   {
     value: "overtime",
     label: "Tăng ca",
-    description: "Dùng cho thời gian làm thêm ngoài giờ.",
   },
   {
     value: "remote",
     label: "Làm việc từ xa",
-    description: "Dùng cho ngày hoặc khoảng thời gian làm việc từ xa.",
   },
 ] as const;
 
@@ -64,10 +60,6 @@ export const LEAVE_REQUEST_SESSIONS: Array<{
 
 export function getTimeRequestTypeLabel(type: TimeRequestType | null | undefined) {
   return TIME_REQUEST_TYPES.find((item) => item.value === type)?.label ?? "Khác";
-}
-
-export function getTimeRequestTypeDescription(type: TimeRequestType | null | undefined) {
-  return TIME_REQUEST_TYPES.find((item) => item.value === type)?.description ?? "Yêu cầu điều chỉnh thời gian làm việc.";
 }
 
 export function isMissingTimeRequestType(type: TimeRequestType | null | undefined) {

@@ -24,7 +24,6 @@ import {
   getLeaveRequestDurationMinutes,
   getLeaveRequestHours,
   TIME_REQUEST_TYPES,
-  getTimeRequestTypeDescription,
   isMissingTimeRequestType,
   type LeaveRequestSession,
   type LeaveRequestSubtype,
@@ -109,8 +108,18 @@ const parseIntegerInput = (value: string) => {
 
 const formatHoursLabel = (value: number) => `${Math.max(0, value)} giờ`;
 
+const isValid24HourTimeValue = (value: string) => /^([01]\d|2[0-3]):([0-5]\d)$/.test(value);
+
+const normalize24HourTimeInput = (value: string) => {
+  const digits = value.replace(/\D/g, "").slice(0, 4);
+  if (digits.length <= 2) {
+    return digits;
+  }
+  return `${digits.slice(0, 2)}:${digits.slice(2)}`;
+};
+
 const combineDateAndTimeToIso = (date: Date, timeValue: string) => {
-  if (!timeValue || !/^\d{2}:\d{2}$/.test(timeValue)) {
+  if (!timeValue || !isValid24HourTimeValue(timeValue)) {
     return null;
   }
 
@@ -253,7 +262,9 @@ function CreateTimeRequestPageContent() {
   const requestedHoursPreview = parseIntegerInput(requestedHoursInput);
   const normalizedLeaveSubtype = isMissingLeaveRequest ? leaveSubtype || null : null;
   const normalizedLeaveSession =
-    isMissingLeaveRequest && leaveSubtype === "half_day" ? ("morning" as LeaveRequestSession) : null;
+    isMissingLeaveRequest && leaveSubtype === "half_day"
+      ? ("morning" as LeaveRequestSession)
+      : null;
   const normalizedRequestedHours =
     isMissingLeaveRequest && leaveSubtype === "early_leave" ? requestedHoursPreview : null;
   const requestedLeaveHoursPreview = isMissingLeaveRequest
@@ -428,6 +439,11 @@ function CreateTimeRequestPageContent() {
     if (normalizedValue !== parsedValue) {
       setMinutesInput(String(normalizedValue));
     }
+  };
+
+  const handleRemoteTimeBlur = (value: string, setter: (nextValue: string) => void) => {
+    const normalizedValue = normalize24HourTimeInput(value.trim());
+    setter(normalizedValue);
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -908,11 +924,6 @@ function CreateTimeRequestPageContent() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-slate-500">
-                    {requestType
-                      ? getTimeRequestTypeDescription(requestType)
-                      : "Nghỉ có phép/không phép hỗ trợ nghỉ buổi sáng, nghỉ cả ngày và xin về sớm."}
-                  </p>
                 </div>
 
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -978,10 +989,17 @@ function CreateTimeRequestPageContent() {
                           Giờ bắt đầu làm việc từ xa *
                         </label>
                         <input
-                          type="time"
-                          step={60}
+                          type="text"
+                          inputMode="numeric"
                           value={remoteCheckInInput}
-                          onChange={(event) => setRemoteCheckInInput(event.target.value)}
+                          onChange={(event) =>
+                            setRemoteCheckInInput(normalize24HourTimeInput(event.target.value))
+                          }
+                          onBlur={() =>
+                            handleRemoteTimeBlur(remoteCheckInInput, setRemoteCheckInInput)
+                          }
+                          placeholder="08:30"
+                          maxLength={5}
                           className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />
                       </div>
@@ -990,10 +1008,17 @@ function CreateTimeRequestPageContent() {
                           Giờ kết thúc làm việc từ xa *
                         </label>
                         <input
-                          type="time"
-                          step={60}
+                          type="text"
+                          inputMode="numeric"
                           value={remoteCheckOutInput}
-                          onChange={(event) => setRemoteCheckOutInput(event.target.value)}
+                          onChange={(event) =>
+                            setRemoteCheckOutInput(normalize24HourTimeInput(event.target.value))
+                          }
+                          onBlur={() =>
+                            handleRemoteTimeBlur(remoteCheckOutInput, setRemoteCheckOutInput)
+                          }
+                          placeholder="17:30"
+                          maxLength={5}
                           className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />
                       </div>
