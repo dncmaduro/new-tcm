@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ActionIcon, Tooltip } from "@mantine/core";
-import { Plus } from "lucide-react";
+import { FileText, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   getLeaveRequestSubtypeLabel,
@@ -1223,6 +1223,26 @@ export function TimesheetOverview({
                     >
                       {cell.day}
                     </span>
+                    {hasDayRequests && !isSundayColumn ? (
+                      <Tooltip
+                        label={`Xem ${dayRequests.length} form của ngày ${formatDateVi(dateIso)}`}
+                        withArrow
+                        position="top-start"
+                        openDelay={120}
+                      >
+                        <ActionIcon
+                          type="button"
+                          onClick={() => setOpenedFormDateIso(dateIso)}
+                          variant="light"
+                          color="blue"
+                          size="sm"
+                          radius="xl"
+                          aria-label={`Xem ${dayRequests.length} form của ngày ${formatDateVi(dateIso)}`}
+                        >
+                          <FileText size={14} strokeWidth={2.2} />
+                        </ActionIcon>
+                      </Tooltip>
+                    ) : null}
                     {isHolidayDate ? (
                       <Tooltip
                         label={holiday?.name?.trim() || "Ngày nghỉ"}
@@ -1315,17 +1335,6 @@ export function TimesheetOverview({
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setOpenedFormDateIso(dateIso)}
-                  className={`absolute bottom-2 left-2 right-2 h-6 rounded-md border border-blue-200 bg-blue-50 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 ${
-                    hasDayRequests && !isSundayColumn
-                      ? "inline-flex items-center justify-center"
-                      : "hidden"
-                  }`}
-                >
-                  Xem form ({dayRequests.length})
-                </button>
               </div>
             );
           })}
