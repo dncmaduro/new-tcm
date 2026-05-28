@@ -447,6 +447,7 @@ function appendProfileSection(
     worksheet.getCell(`I${rowNumber}`).numFmt = "0.00";
     worksheet.getCell(`E${rowNumber}`).numFmt = "0.00";
     worksheet.getCell(`F${rowNumber}`).numFmt = "0.00";
+    worksheet.getCell(`L${rowNumber}`).numFmt = "#,##0";
   });
 
   return {
