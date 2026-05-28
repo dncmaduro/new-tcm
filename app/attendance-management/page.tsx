@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { TimesheetOverview } from "@/components/timesheet/timesheet-overview";
+import type { AttendanceExportProfile } from "@/lib/attendance-export-workbook";
 import { collectAttendanceIds } from "@/lib/attendance";
 import { useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
@@ -26,14 +27,28 @@ type TimesProfileLinkRow = {
   attendance_id: number | null;
 };
 
-type ViewableProfile = {
+export type ViewableProfile = AttendanceExportProfile & {
   id: string;
-  name: string;
-  email: string | null;
-  roleLabel: string;
-  departmentLabel: string;
   rawRolePriority: number;
   attendanceIds: number[];
+};
+
+type ManagedAttendancePageContentProps = {
+  pageTitle?: string;
+  breadcrumbLabel?: string;
+  showExportButton?: boolean;
+  exportButtonLabel?: string;
+  forceAdminAccess?: boolean;
+  showExportAllButton?: boolean;
+  exportAllButtonLabel?: string;
+  onTimesheetExportRequest?: (params: {
+    selectedProfile: ViewableProfile;
+    selectedMonth: Date;
+  }) => Promise<void> | void;
+  onExportAllProfiles?: (params: {
+    profiles: ViewableProfile[];
+    selectedMonth: Date;
+  }) => Promise<void> | void;
 };
 
 const normalizeText = (value: string | null | undefined) =>
@@ -95,17 +110,35 @@ const getDescendantDepartmentIds = (
   return Array.from(scopedDepartmentIds);
 };
 
-export default function AttendanceManagementPage() {
+export function ManagedAttendancePageContent({
+  pageTitle = "Quản lý chấm công",
+  breadcrumbLabel = "Quản lý chấm công",
+  showExportButton = false,
+  exportButtonLabel = "Xuất CSV",
+  forceAdminAccess = false,
+  showExportAllButton = false,
+  exportAllButtonLabel = "Xuất tất cả nhân viên",
+  onTimesheetExportRequest,
+  onExportAllProfiles,
+}: ManagedAttendancePageContentProps) {
   const workspaceAccess = useWorkspaceAccess();
   const [viewableProfiles, setViewableProfiles] = useState<ViewableProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [isLoadingProfiles, setIsLoadingProfiles] = useState(true);
+  const [selectedMonth, setSelectedMonth] = useState<Date>(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+  const [isExportingAllProfiles, setIsExportingAllProfiles] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const canViewAttendanceManagement = workspaceAccess.canManage && !workspaceAccess.error;
+  const canViewAttendanceManagement =
+    forceAdminAccess || (workspaceAccess.canManage && !workspaceAccess.error);
   const permissionError =
-    workspaceAccess.error ??
-    (!workspaceAccess.isLoading && !workspaceAccess.canManage
+    forceAdminAccess
+      ? null
+      : workspaceAccess.error ??
+        (!workspaceAccess.isLoading && !workspaceAccess.canManage
       ? "Bạn chưa có quyền xem quản lý chấm công theo phạm vi quản lý hiện tại."
       : null);
 
@@ -147,7 +180,7 @@ export default function AttendanceManagementPage() {
         }
 
         let nextRoleScope: "director" | "leader" | "member" = "member";
-        if (workspaceAccess.hasDirectorRole) {
+        if (forceAdminAccess || workspaceAccess.hasDirectorRole) {
           nextRoleScope = "director";
         } else if (workspaceAccess.hasLeaderRole) {
           nextRoleScope = "leader";
@@ -401,6 +434,7 @@ export default function AttendanceManagementPage() {
     };
   }, [
     canViewAttendanceManagement,
+    forceAdminAccess,
     memberRoleIds,
     workspaceAccess.departments,
     workspaceAccess.hasDirectorRole,
@@ -430,13 +464,35 @@ export default function AttendanceManagementPage() {
     [selectedProfileId, viewableProfiles],
   );
 
+  const handleExportAllProfiles = async () => {
+    if (
+      isExportingAllProfiles ||
+      !onExportAllProfiles ||
+      isLoadingProfiles ||
+      viewableProfiles.length === 0
+    ) {
+      return;
+    }
+
+    setIsExportingAllProfiles(true);
+
+    try {
+      await onExportAllProfiles({
+        profiles: viewableProfiles,
+        selectedMonth: new Date(selectedMonth.getTime()),
+      });
+    } finally {
+      setIsExportingAllProfiles(false);
+    }
+  };
+
   return (
     <div className="h-screen overflow-hidden bg-[#f3f5fa] text-slate-900">
       <div className="flex h-full w-full">
         <WorkspaceSidebar active="attendanceManagement" />
 
         <div className="flex h-full min-h-0 w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <WorkspacePageHeader title="Quản lý chấm công" items={[{ label: "Quản lý chấm công" }]} />
+          <WorkspacePageHeader title={pageTitle} items={[{ label: breadcrumbLabel }]} />
 
           <main className="min-h-0 flex-1 overflow-hidden px-4 py-5 lg:px-7">
             {workspaceAccess.isLoading || isLoadingProfiles ? (
@@ -545,7 +601,23 @@ export default function AttendanceManagementPage() {
                               {selectedProfile.name}
                             </h2>
                           </div>
-                          <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
+                            {showExportAllButton ? (
+                              <button
+                                type="button"
+                                onClick={handleExportAllProfiles}
+                                disabled={
+                                  isExportingAllProfiles ||
+                                  isLoadingProfiles ||
+                                  viewableProfiles.length === 0
+                                }
+                                className="rounded-full bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                              >
+                                {isExportingAllProfiles
+                                  ? "Đang xuất tổng..."
+                                  : exportAllButtonLabel}
+                              </button>
+                            ) : null}
                             <span className="rounded-full bg-blue-50 px-3 py-1 font-semibold text-blue-700">
                               {selectedProfile.roleLabel}
                             </span>
@@ -570,8 +642,20 @@ export default function AttendanceManagementPage() {
                       <div className="mt-5">
                         <TimesheetOverview
                           profileId={selectedProfile.id}
-                          showExportButton
+                          showExportButton={showExportButton}
                           exportFileLabel={selectedProfile.name}
+                          exportButtonLabel={exportButtonLabel}
+                          selectedMonth={selectedMonth}
+                          onSelectedMonthChange={setSelectedMonth}
+                          onExportRequest={
+                            onTimesheetExportRequest
+                              ? (nextSelectedMonth) =>
+                                  onTimesheetExportRequest({
+                                    selectedProfile,
+                                    selectedMonth: nextSelectedMonth,
+                                  })
+                              : undefined
+                          }
                         />
                       </div>
                     </>
@@ -588,4 +672,8 @@ export default function AttendanceManagementPage() {
       </div>
     </div>
   );
+}
+
+export default function AttendanceManagementPage() {
+  return <ManagedAttendancePageContent />;
 }

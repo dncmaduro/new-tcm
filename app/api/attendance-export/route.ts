@@ -1,0 +1,153 @@
+import { NextResponse } from "next/server";
+
+import { buildAttendanceWorkbookBuffer, type AttendanceExportProfile } from "@/lib/attendance-export-workbook";
+import { loadTimesheetExportContext } from "@/lib/timesheet-export";
+import {
+  createServerSupabaseAuthClient,
+  createServerSupabaseServiceRoleClient,
+} from "@/lib/supabase-server";
+
+type ExportRequestPayload = {
+  selectedMonth?: string;
+  profiles?: AttendanceExportProfile[];
+  fileName?: string;
+};
+
+function parseAdminEmails(value: string | undefined) {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return [] as string[];
+  }
+
+  if (normalized.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(normalized);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => item.trim().toLowerCase())
+          .filter(Boolean);
+      }
+    } catch {
+      return [] as string[];
+    }
+  }
+
+  return normalized
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function getBearerToken(request: Request) {
+  const authorization = request.headers.get("authorization")?.trim() ?? "";
+  if (!authorization.toLowerCase().startsWith("bearer ")) {
+    return null;
+  }
+
+  const token = authorization.slice(7).trim();
+  return token || null;
+}
+
+function parseSelectedMonth(value: string | undefined) {
+  if (!value || !/^\d{4}-\d{2}$/.test(value)) {
+    return null;
+  }
+
+  const [yearValue, monthValue] = value.split("-");
+  const year = Number(yearValue);
+  const month = Number(monthValue);
+
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+    return null;
+  }
+
+  return new Date(year, month - 1, 1);
+}
+
+function sanitizeFileName(value: string | undefined, fallback: string) {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return fallback;
+  }
+
+  return normalized.replace(/[\\/:*?"<>|]+/g, "-");
+}
+
+export async function POST(request: Request) {
+  let payload: ExportRequestPayload;
+
+  try {
+    payload = (await request.json()) as ExportRequestPayload;
+  } catch {
+    return NextResponse.json({ error: "Body JSON không hợp lệ." }, { status: 400 });
+  }
+
+  const selectedMonth = parseSelectedMonth(payload.selectedMonth);
+  const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
+
+  if (!selectedMonth) {
+    return NextResponse.json({ error: "Tháng xuất không hợp lệ." }, { status: 400 });
+  }
+
+  if (profiles.length <= 0) {
+    return NextResponse.json({ error: "Thiếu danh sách nhân sự cần xuất." }, { status: 400 });
+  }
+
+  const accessToken = getBearerToken(request);
+  if (!accessToken) {
+    return NextResponse.json({ error: "Thiếu access token." }, { status: 401 });
+  }
+
+  try {
+    const authClient = createServerSupabaseAuthClient();
+    const { data: authData, error: authError } = await authClient.auth.getUser(accessToken);
+
+    if (authError || !authData.user?.email) {
+      return NextResponse.json({ error: "Phiên đăng nhập không hợp lệ." }, { status: 401 });
+    }
+
+    const adminEmails = parseAdminEmails(process.env.ADMIN_EMAILS);
+    if (adminEmails.length <= 0) {
+      return NextResponse.json(
+        { error: "Chưa cấu hình `ADMIN_EMAILS` trên server." },
+        { status: 500 },
+      );
+    }
+
+    if (!adminEmails.includes(authData.user.email.trim().toLowerCase())) {
+      return NextResponse.json({ error: "Bạn không có quyền xuất chấm công." }, { status: 403 });
+    }
+
+    const serviceRoleClient = createServerSupabaseServiceRoleClient();
+    const workbookEntries = await Promise.all(
+      profiles.map(async (profile) => ({
+        profile,
+        exportContext: await loadTimesheetExportContext(profile.id, selectedMonth, {
+          supabaseClient: serviceRoleClient,
+        }),
+      })),
+    );
+
+    const fileName = sanitizeFileName(
+      payload.fileName,
+      `attendance-export-${payload.selectedMonth}.xlsx`,
+    );
+    const workbookBuffer = await buildAttendanceWorkbookBuffer(workbookEntries);
+
+    return new NextResponse(workbookBuffer, {
+      status: 200,
+      headers: {
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "X-Export-File-Name": encodeURIComponent(fileName),
+        "Cache-Control": "no-store",
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Không thể xuất file chấm công.";
+
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

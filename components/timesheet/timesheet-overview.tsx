@@ -33,7 +33,7 @@ import { buildHolidayMap, fetchHolidaysInRange, type Holiday } from "@/lib/holid
 import { supabase } from "@/lib/supabase";
 import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
 
-type CalendarDay = {
+export type CalendarDay = {
   day: number;
   status?: AttendanceStatus;
   checkIn?: string;
@@ -51,7 +51,7 @@ type CalendarDay = {
   sourceNote?: string;
 };
 
-type CorrectionRequest = {
+export type CorrectionRequest = {
   id: string;
   requestDateISO: string;
   correctionDateISO: string;
@@ -99,7 +99,7 @@ type TimesProfileLinkRow = {
   created_at?: string | null;
 };
 
-type AttendanceStats = {
+export type AttendanceStats = {
   totalWorkDays: number;
   requiredWorkDays: number;
   absentDays: number;
@@ -114,6 +114,33 @@ type AttendanceBinding = {
   linkedDeviceBindings: AttendanceDeviceLink[];
 };
 
+export type TimesheetRequestDurationSummary = {
+  approvedLeaveMinutes: number;
+  unauthorizedLeaveMinutes: number;
+  remoteMinutes: number;
+  requestedOvertimeMinutes: number;
+};
+
+export type TimesheetExportRow = {
+  dateIso: string;
+  weekday: string;
+  checkIn: string;
+  checkOut: string;
+  statusLabel: string;
+  missingHours: string;
+  requestCount: number;
+  requestSummary: string;
+};
+
+export type TimesheetExportContext = {
+  selectedMonth: Date;
+  exportRows: TimesheetExportRow[];
+  adjustedCalendarDays: CalendarDay[];
+  adjustedAttendanceStats: AttendanceStats;
+  correctionRequests: CorrectionRequest[];
+  requestDurationSummary: TimesheetRequestDurationSummary;
+};
+
 type TimesheetOverviewProps = {
   profileId: string | null;
   isProfileLoading?: boolean;
@@ -121,7 +148,11 @@ type TimesheetOverviewProps = {
   createRequestHref?: string | null;
   showExportButton?: boolean;
   exportFileLabel?: string | null;
-  onExportCsv?: (context: { selectedMonth: Date }) => Promise<void> | void;
+  exportButtonLabel?: string;
+  selectedMonth?: Date;
+  onSelectedMonthChange?: (value: Date) => void;
+  onExportRequest?: (selectedMonth: Date) => Promise<void> | void;
+  onExport?: (context: TimesheetExportContext) => Promise<void> | void;
 };
 
 const weekDayLabels = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
@@ -345,12 +376,17 @@ export function TimesheetOverview({
   createRequestHref = null,
   showExportButton = false,
   exportFileLabel = null,
-  onExportCsv,
+  exportButtonLabel = "Xuất CSV",
+  selectedMonth: selectedMonthProp,
+  onSelectedMonthChange,
+  onExportRequest,
+  onExport,
 }: TimesheetOverviewProps) {
-  const [selectedMonth, setSelectedMonth] = useState<Date>(() => {
+  const [internalSelectedMonth, setInternalSelectedMonth] = useState<Date>(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
+  const selectedMonth = selectedMonthProp ?? internalSelectedMonth;
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
   const [isLoadingAttendance, setIsLoadingAttendance] = useState<boolean>(false);
@@ -358,7 +394,22 @@ export function TimesheetOverview({
   const [attendanceBinding, setAttendanceBinding] = useState<AttendanceBinding | null>(null);
   const [correctionRequests, setCorrectionRequests] = useState<CorrectionRequest[]>([]);
   const [openedFormDateIso, setOpenedFormDateIso] = useState<string | null>(null);
-  const [isExportingCsv, setIsExportingCsv] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+
+  const setSelectedMonth = (value: Date | ((current: Date) => Date)) => {
+    const resolvedValue =
+      typeof value === "function" ? value(new Date(selectedMonth.getTime())) : value;
+    const normalizedValue = new Date(
+      resolvedValue.getFullYear(),
+      resolvedValue.getMonth(),
+      1,
+    );
+
+    if (!selectedMonthProp) {
+      setInternalSelectedMonth(normalizedValue);
+    }
+    onSelectedMonthChange?.(normalizedValue);
+  };
 
   useEffect(() => {
     setOpenedFormDateIso(null);
@@ -1021,16 +1072,28 @@ export function TimesheetOverview({
     });
   }, [calendarMonth, calendarYear, dayMap, holidayByDate, requestsByDate, totalDays]);
 
-  const handleExportCsv = async () => {
-    if (isExportingCsv) {
+  const handleExport = async () => {
+    if (isExporting) {
       return;
     }
 
-    setIsExportingCsv(true);
+    setIsExporting(true);
 
     try {
-      if (onExportCsv) {
-        await onExportCsv({ selectedMonth: new Date(selectedMonth.getTime()) });
+      if (onExportRequest) {
+        await onExportRequest(new Date(selectedMonth.getTime()));
+        return;
+      }
+
+      if (onExport) {
+        await onExport({
+          selectedMonth: new Date(selectedMonth.getTime()),
+          exportRows,
+          adjustedCalendarDays,
+          adjustedAttendanceStats,
+          correctionRequests,
+          requestDurationSummary,
+        });
         return;
       }
 
@@ -1079,7 +1142,7 @@ export function TimesheetOverview({
         URL.revokeObjectURL(objectUrl);
       }, 0);
     } finally {
-      setIsExportingCsv(false);
+      setIsExporting(false);
     }
   };
 
@@ -1165,18 +1228,17 @@ export function TimesheetOverview({
             {showExportButton ? (
               <button
                 type="button"
-                onClick={handleExportCsv}
+                onClick={handleExport}
                 disabled={
-                  isExportingCsv ||
-                  (!onExportCsv &&
-                    (isProfileLoading ||
-                      isLoadingAttendance ||
-                      !profileId ||
-                      attendanceBinding?.attendanceIds.length === 0))
+                  isExporting ||
+                  isProfileLoading ||
+                  isLoadingAttendance ||
+                  !profileId ||
+                  attendanceBinding?.attendanceIds.length === 0
                 }
                 className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
               >
-                {isExportingCsv ? "Đang xuất..." : "Xuất CSV"}
+                {isExporting ? "Đang xuất..." : exportButtonLabel}
               </button>
             ) : null}
           </div>
