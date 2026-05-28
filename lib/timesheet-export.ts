@@ -22,7 +22,10 @@ import {
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildHolidayMap, fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
-import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
+import {
+  calculateWorkedMinutesBetweenTimestamps,
+  formatTimestampToVietnamHHmm,
+} from "@/lib/work-time";
 import type {
   CalendarDay,
   CorrectionRequest,
@@ -78,16 +81,7 @@ function toIsoDate(year: number, month: number, day: number) {
 }
 
 function toLocalTimeHHmm(value: string | null | undefined) {
-  if (!value) {
-    return "--:--";
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "--:--";
-  }
-  const hh = String(date.getHours()).padStart(2, "0");
-  const mm = String(date.getMinutes()).padStart(2, "0");
-  return `${hh}:${mm}`;
+  return formatTimestampToVietnamHHmm(value);
 }
 
 function formatDurationLabel(totalMinutes: number) {
