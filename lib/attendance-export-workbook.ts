@@ -27,6 +27,7 @@ type ProfileSectionLayout = {
   tableHeaderRow: number;
   tableFirstDataRow: number;
   tableLastDataRow: number;
+  penaltyCellAddress: string;
 };
 
 const BASE_FONT = { name: "Times New Roman", size: 11 };
@@ -95,6 +96,10 @@ function formatMonthTitle(value: Date) {
   return `BẢNG CHI TIẾT CHẤM CÔNG THÁNG ${String(value.getMonth() + 1).padStart(2, "0")}/${value.getFullYear()}`;
 }
 
+function formatPenaltySheetTitle(value: Date) {
+  return `TỔNG HỢP TIỀN PHẠT THÁNG ${String(value.getMonth() + 1).padStart(2, "0")}/${value.getFullYear()}`;
+}
+
 function buildDayRows(context: TimesheetExportContext): ExportDayRow[] {
   const totalDaysInMonth = new Date(
     context.selectedMonth.getFullYear(),
@@ -154,8 +159,8 @@ function buildDayRows(context: TimesheetExportContext): ExportDayRow[] {
         ),
         meta?.checkIn && meta.checkIn !== "--:--" ? meta.checkIn : "",
         meta?.checkOut && meta.checkOut !== "--:--" ? meta.checkOut : "",
-        lateMinutes > 0 ? lateMinutes : "",
-        earlyLeaveMinutes > 0 ? earlyLeaveMinutes : "",
+        lateMinutes > 0 ? formatHoursDecimal(lateMinutes) : "",
+        earlyLeaveMinutes > 0 ? formatHoursDecimal(earlyLeaveMinutes) : "",
         workingMinutes > 0 ? formatHoursDecimal(workingMinutes) : "",
         formatWorkdayCredit(meta ?? { day: dayNumber }),
         overtimeMinutes > 0 ? formatHoursDecimal(overtimeMinutes) : "",
@@ -440,6 +445,8 @@ function appendProfileSection(
     worksheet.getCell(`G${rowNumber}`).numFmt = "0.00";
     worksheet.getCell(`H${rowNumber}`).numFmt = "0.00";
     worksheet.getCell(`I${rowNumber}`).numFmt = "0.00";
+    worksheet.getCell(`E${rowNumber}`).numFmt = "0.00";
+    worksheet.getCell(`F${rowNumber}`).numFmt = "0.00";
   });
 
   return {
@@ -448,7 +455,92 @@ function appendProfileSection(
     tableHeaderRow: headerRowIndex,
     tableFirstDataRow: headerRowIndex + 1,
     tableLastDataRow: headerRowIndex + dayRows.length,
+    penaltyCellAddress: `L${headerRowIndex + 1}`,
   };
+}
+
+function buildPenaltySummarySheet(
+  workbook: ExcelJS.Workbook,
+  entries: Array<{
+    profile: AttendanceExportProfile;
+    exportContext: TimesheetExportContext;
+  }>,
+  layouts: ProfileSectionLayout[],
+) {
+  const worksheet = workbook.addWorksheet("Tiền phạt");
+  worksheet.properties.defaultRowHeight = 20;
+  worksheet.columns = [
+    { key: "index", width: 10 },
+    { key: "name", width: 28 },
+    { key: "role", width: 24 },
+    { key: "department", width: 24 },
+    { key: "penalty", width: 18 },
+  ];
+
+  const title = entries[0]
+    ? formatPenaltySheetTitle(entries[0].exportContext.selectedMonth)
+    : "TỔNG HỢP TIỀN PHẠT";
+
+  worksheet.mergeCells("A1:E1");
+  const titleCell = worksheet.getCell("A1");
+  titleCell.value = title;
+  titleCell.font = TITLE_FONT;
+  titleCell.alignment = { horizontal: "left", vertical: "middle" };
+  setRowHeight(worksheet, 1, 38);
+
+  const headerRow = worksheet.getRow(3);
+  headerRow.values = ["STT", "Tên nhân viên", "Chức vụ", "Phòng ban", "Số tiền phạt"];
+  headerRow.font = BOLD_FONT;
+  headerRow.alignment = { horizontal: "center", vertical: "middle" };
+  for (let column = 1; column <= 5; column += 1) {
+    setCellBorder(headerRow.getCell(column));
+  }
+
+  entries.forEach(({ profile }, index) => {
+    const layout = layouts[index];
+    const rowNumber = 4 + index;
+    const row = worksheet.getRow(rowNumber);
+    row.getCell(1).value = index + 1;
+    row.getCell(2).value = profile.name;
+    row.getCell(3).value = translateRoleLabel(profile.roleLabel);
+    row.getCell(4).value = profile.departmentLabel || "";
+    row.getCell(5).value = {
+      formula: `'Chấm công'!${layout.penaltyCellAddress}`,
+    };
+
+    row.getCell(1).alignment = { horizontal: "center", vertical: "middle" };
+    row.getCell(2).alignment = { horizontal: "left", vertical: "middle" };
+    row.getCell(3).alignment = { horizontal: "left", vertical: "middle" };
+    row.getCell(4).alignment = { horizontal: "left", vertical: "middle" };
+    row.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
+    row.getCell(5).numFmt = "#,##0";
+
+    for (let column = 1; column <= 5; column += 1) {
+      setCellBorder(row.getCell(column));
+    }
+  });
+
+  const totalRowNumber = 4 + entries.length;
+  const totalRow = worksheet.getRow(totalRowNumber);
+  totalRow.getCell(1).value = "Tổng";
+  mergeCells(worksheet, `A${totalRowNumber}:D${totalRowNumber}`);
+  totalRow.getCell(1).font = BOLD_FONT;
+  totalRow.getCell(1).alignment = { horizontal: "left", vertical: "middle" };
+  totalRow.getCell(5).value =
+    entries.length > 0
+      ? {
+          formula: `SUM(E4:E${totalRowNumber - 1})`,
+        }
+      : 0;
+  totalRow.getCell(5).font = BOLD_FONT;
+  totalRow.getCell(5).alignment = { horizontal: "right", vertical: "middle" };
+  totalRow.getCell(5).numFmt = "#,##0";
+
+  for (let column = 1; column <= 5; column += 1) {
+    setCellBorder(totalRow.getCell(column));
+  }
+
+  setBaseSheetStyle(worksheet);
 }
 
 export async function buildAttendanceWorkbookBuffer(
@@ -460,6 +552,7 @@ export async function buildAttendanceWorkbookBuffer(
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "TCM";
   workbook.created = new Date();
+  workbook.calcProperties.fullCalcOnLoad = true;
 
   const worksheet = workbook.addWorksheet("Chấm công");
   worksheet.properties.defaultRowHeight = 20;
@@ -509,6 +602,8 @@ export async function buildAttendanceWorkbookBuffer(
       layout.tableLastDataRow,
     );
   });
+
+  buildPenaltySummarySheet(workbook, entries, layouts);
 
   return workbook.xlsx.writeBuffer();
 }

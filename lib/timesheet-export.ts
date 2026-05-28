@@ -22,6 +22,7 @@ import {
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildHolidayMap, fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
+import { canReadTimekeepingData } from "@/lib/timekeeping-access";
 import {
   calculateWorkedMinutesBetweenTimestamps,
   formatTimestampToVietnamHHmm,
@@ -58,6 +59,7 @@ type TimeRequestRow = {
 type ProfileAttendanceRow = {
   id: string;
   attendance_id: number | null;
+  is_timekeeping_enabled: boolean | null;
 };
 
 type TimesProfileLinkRow = {
@@ -271,7 +273,11 @@ async function loadBaseCalendarDays(
     { data: profileAttendanceData, error: profileAttendanceError },
     { data: attendanceLinkRows, error: attendanceLinkError },
   ] = await Promise.all([
-    supabaseClient.from("profiles").select("id,attendance_id").eq("id", profileId).maybeSingle(),
+    supabaseClient
+      .from("profiles")
+      .select("id,attendance_id,is_timekeeping_enabled")
+      .eq("id", profileId)
+      .maybeSingle(),
     supabaseClient
       .from("times_profiles")
       .select("attendance_id,device_id,created_at")
@@ -283,6 +289,10 @@ async function loadBaseCalendarDays(
   }
   if (attendanceLinkError) {
     throw attendanceLinkError;
+  }
+
+  if (!canReadTimekeepingData(profileAttendanceData as ProfileAttendanceRow | null)) {
+    return [];
   }
 
   const directAttendanceId = normalizeAttendanceId(
@@ -736,6 +746,28 @@ function buildExportRows(
   });
 }
 
+function buildEmptyExportContext(selectedMonth: Date): TimesheetExportContext {
+  return {
+    selectedMonth: new Date(selectedMonth.getTime()),
+    exportRows: [],
+    adjustedCalendarDays: [],
+    adjustedAttendanceStats: {
+      totalWorkDays: 0,
+      requiredWorkDays: 0,
+      absentDays: 0,
+      missingMinutes: 0,
+      overtimeMinutes: 0,
+    },
+    correctionRequests: [],
+    requestDurationSummary: {
+      approvedLeaveMinutes: 0,
+      unauthorizedLeaveMinutes: 0,
+      remoteMinutes: 0,
+      requestedOvertimeMinutes: 0,
+    },
+  };
+}
+
 export async function loadTimesheetExportContext(
   profileId: string,
   selectedMonth: Date,
@@ -745,6 +777,20 @@ export async function loadTimesheetExportContext(
   },
 ): Promise<TimesheetExportContext> {
   const supabaseClient = options?.supabaseClient ?? supabase;
+  const { data: profileData, error: profileError } = await supabaseClient
+    .from("profiles")
+    .select("id,is_timekeeping_enabled")
+    .eq("id", profileId)
+    .maybeSingle();
+
+  if (profileError) {
+    throw profileError;
+  }
+
+  if (!profileData || !canReadTimekeepingData(profileData)) {
+    return buildEmptyExportContext(selectedMonth);
+  }
+
   const holidays =
     options?.holidaysOverride ??
     (await (async () => {

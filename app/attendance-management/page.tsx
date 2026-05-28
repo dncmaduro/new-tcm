@@ -207,6 +207,7 @@ export function ManagedAttendancePageContent({
             supabase
               .from("profiles")
               .select("id,name,email,attendance_id")
+              .eq("is_timekeeping_enabled", true)
               .order("name", { ascending: true }),
             supabase.from("user_role_in_department").select("profile_id,department_id,role_id"),
           ]);
@@ -284,6 +285,7 @@ export function ManagedAttendancePageContent({
             .from("profiles")
             .select("id,name,email,attendance_id")
             .in("id", targetProfileIds)
+            .eq("is_timekeeping_enabled", true)
             .order("name", { ascending: true });
 
           if (profilesError) {

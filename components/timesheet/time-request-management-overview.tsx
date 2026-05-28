@@ -61,7 +61,8 @@ type TimeRequestManagementOverviewProps = {
   profileId: string | null;
   isProfileLoading?: boolean;
   profileError?: string | null;
-  createRequestHref: string;
+  canReadTimekeepingData?: boolean;
+  createRequestHref?: string | null;
 };
 
 const REQUESTS_PAGE_SIZE = 10;
@@ -146,7 +147,8 @@ export function TimeRequestManagementOverview({
   profileId,
   isProfileLoading = false,
   profileError = null,
-  createRequestHref,
+  canReadTimekeepingData = true,
+  createRequestHref = null,
 }: TimeRequestManagementOverviewProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -195,9 +197,9 @@ export function TimeRequestManagementOverview({
   };
 
   useEffect(() => {
-    if (!profileId) {
+    if (!profileId || !canReadTimekeepingData) {
       setIsLoadingRequests(false);
-      setRequestsError(profileError ?? "");
+      setRequestsError(!profileId ? profileError ?? "" : "");
       setCorrectionRequests([]);
       return;
     }
@@ -281,7 +283,7 @@ export function TimeRequestManagementOverview({
     return () => {
       isActive = false;
     };
-  }, [profileError, profileId, selectedMonth]);
+  }, [canReadTimekeepingData, profileError, profileId, selectedMonth]);
 
   useEffect(() => {
     if (!openedRequestId) {
@@ -289,7 +291,7 @@ export function TimeRequestManagementOverview({
       return;
     }
 
-    if (!profileId) {
+    if (!profileId || !canReadTimekeepingData) {
       return;
     }
 
@@ -343,7 +345,7 @@ export function TimeRequestManagementOverview({
     return () => {
       isActive = false;
     };
-  }, [openedRequestId, profileId, selectedMonth]);
+  }, [canReadTimekeepingData, openedRequestId, profileId, selectedMonth]);
 
   const filteredCorrectionRequests = useMemo(() => {
     if (requestFilter === "all") {
@@ -445,12 +447,14 @@ export function TimeRequestManagementOverview({
           >
             ›
           </button>
-          <Link
-            href={createRequestHref}
-            className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
-          >
-            Tạo yêu cầu
-          </Link>
+          {createRequestHref ? (
+            <Link
+              href={createRequestHref}
+              className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+            >
+              Tạo yêu cầu
+            </Link>
+          ) : null}
         </div>
       </div>
 

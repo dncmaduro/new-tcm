@@ -44,6 +44,7 @@ import {
 } from "@/lib/dashboard";
 import { buildKeyResultProgressMap } from "@/lib/okr";
 import { supabase } from "@/lib/supabase";
+import { canReadTimekeepingData } from "@/lib/timekeeping-access";
 
 type ProfileRow = {
   id: string;
@@ -667,7 +668,7 @@ export function useDashboardData() {
 
         const { data: profileData, error: profileError } = await supabase
           .from("profiles")
-          .select("id,name,email,attendance_id")
+          .select("id,name,email,attendance_id,is_timekeeping_enabled")
           .eq("user_id", authData.user.id)
           .maybeSingle();
 
@@ -677,6 +678,7 @@ export function useDashboardData() {
 
         const profileId = String(profileData.id);
         const profileName = profileData.name?.trim() || profileData.email?.trim() || "Thành viên";
+        const canReadOwnTimekeeping = canReadTimekeepingData(profileData);
 
         const [
           attendanceLinkResult,
@@ -686,7 +688,12 @@ export function useDashboardData() {
           profileListResult,
           ownerGoalResult,
         ] = await Promise.all([
-          supabase.from("times_profiles").select("attendance_id,device_id").eq("profile_id", profileId),
+          canReadOwnTimekeeping
+            ? supabase
+                .from("times_profiles")
+                .select("attendance_id,device_id")
+                .eq("profile_id", profileId)
+            : Promise.resolve({ data: [], error: null }),
           supabase.from("roles").select("id,name"),
           supabase.from("user_role_in_department").select("profile_id,department_id,role_id").eq("profile_id", profileId),
           supabase.from("departments").select("id,name,parent_department_id"),
@@ -799,7 +806,7 @@ export function useDashboardData() {
         ] = await Promise.all([
           loadTasksByProfileIds([profileId]),
           roleScope === "member" ? Promise.resolve([] as TaskQueryRow[]) : loadTasksByProfileIds(scopeProfileIds),
-          attendanceDeviceBindings.length > 0 || attendanceIds.length > 0
+          canReadOwnTimekeeping && (attendanceDeviceBindings.length > 0 || attendanceIds.length > 0)
             ? (() => {
                 let query = supabase
                   .from("times")
@@ -815,12 +822,14 @@ export function useDashboardData() {
                 return query.order("updated_at", { ascending: false });
               })()
             : Promise.resolve({ data: [], error: null }),
-          supabase
-            .from("time_requests")
-            .select("id,date,type,leave_subtype,leave_session,minutes,reason,remote_check_in,remote_check_out,created_at,time_request_reviewers(is_approved,reviewed_at,created_at)")
-            .eq("profile_id", profileId)
-            .eq("date", todayIso)
-            .order("created_at", { ascending: false }),
+          canReadOwnTimekeeping
+            ? supabase
+                .from("time_requests")
+                .select("id,date,type,leave_subtype,leave_session,minutes,reason,remote_check_in,remote_check_out,created_at,time_request_reviewers(is_approved,reviewed_at,created_at)")
+                .eq("profile_id", profileId)
+                .eq("date", todayIso)
+                .order("created_at", { ascending: false })
+            : Promise.resolve({ data: [], error: null }),
           scopeProfileIds.length > 0
             ? supabase
                 .from("activity_logs")

@@ -30,22 +30,15 @@ import {
 } from "@/lib/constants/time-requests";
 import { fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
+import {
+  canCreateTimeRequest,
+  TIMEKEEPING_DISABLED_MESSAGE,
+  type TimekeepingCreateProfile,
+} from "@/lib/timekeeping-access";
 import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
 
-type RoleRow = {
+type CurrentProfileAccess = TimekeepingCreateProfile & {
   id: string;
-  name: string | null;
-};
-
-type UserRoleRow = {
-  profile_id: string | null;
-  department_id: string | null;
-  role_id: string | null;
-};
-
-type DepartmentRow = {
-  id: string;
-  parent_department_id: string | null;
 };
 
 type LeaveBalanceRow = {
@@ -56,13 +49,6 @@ type LeaveBalanceRow = {
   used_hours: number | null;
   created_at: string | null;
 };
-
-const normalizeText = (value: string | null | undefined) =>
-  (value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase();
 
 const toIsoDate = (value: Date) => {
   const year = value.getFullYear();
@@ -163,7 +149,7 @@ const combineDateAndTimeToIso = (date: Date, timeValue: string) => {
   return combined.toISOString();
 };
 
-const fetchCurrentProfileId = async () => {
+const fetchCurrentProfileAccess = async (): Promise<CurrentProfileAccess> => {
   const { data: authData, error: authError } = await supabase.auth.getUser();
   if (authError || !authData.user) {
     throw new Error("Không xác thực được người dùng.");
@@ -171,7 +157,7 @@ const fetchCurrentProfileId = async () => {
 
   const { data: profileData, error: profileError } = await supabase
     .from("profiles")
-    .select("id")
+    .select("id,is_active,is_timekeeping_enabled")
     .eq("user_id", authData.user.id)
     .maybeSingle();
 
@@ -179,7 +165,11 @@ const fetchCurrentProfileId = async () => {
     throw new Error(profileError?.message ?? "Không tìm thấy hồ sơ người dùng.");
   }
 
-  return String(profileData.id);
+  return {
+    id: String(profileData.id),
+    is_active: profileData.is_active,
+    is_timekeeping_enabled: profileData.is_timekeeping_enabled,
+  };
 };
 
 const fetchLeaveBalanceForMonth = async (profileId: string, targetDate: Date) => {
@@ -222,26 +212,6 @@ const fetchLeaveBalanceForMonth = async (profileId: string, targetDate: Date) =>
   return data as LeaveBalanceRow;
 };
 
-const getAncestors = (
-  startDepartmentIds: string[],
-  parentDepartmentById: Record<string, string | null>,
-  includeSelf: boolean,
-) => {
-  const scoped = new Set<string>();
-  startDepartmentIds.forEach((startId) => {
-    let cursor: string | null = startId;
-    let isFirst = true;
-    while (cursor) {
-      if ((includeSelf || !isFirst) && !scoped.has(cursor)) {
-        scoped.add(cursor);
-      }
-      cursor = parentDepartmentById[cursor] ?? null;
-      isFirst = false;
-    }
-  });
-  return Array.from(scoped);
-};
-
 function CreateTimeRequestPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -249,6 +219,7 @@ function CreateTimeRequestPageContent() {
   const queryReturnTo = searchParams.get("returnTo");
   const returnToHref = sanitizeReturnPath(queryReturnTo) ?? "/timesheet/requests";
   const [currentProfileId, setCurrentProfileId] = useState<string | null>(null);
+  const [currentProfileAccess, setCurrentProfileAccess] = useState<CurrentProfileAccess | null>(null);
   const [requestType, setRequestType] = useState<TimeRequestType | "">("");
   const [leaveSubtype, setLeaveSubtype] = useState<LeaveRequestSubtype | "">("");
   const [requestedHoursInput, setRequestedHoursInput] = useState<string>("");
@@ -305,14 +276,15 @@ function CreateTimeRequestPageContent() {
       ? calculateWorkedMinutesBetweenTimestamps(remoteCheckInIso, remoteCheckOutIso)
       : null;
 
-  const resolveCurrentProfileId = async () => {
-    if (currentProfileId) {
-      return currentProfileId;
+  const resolveCurrentProfileAccess = async () => {
+    if (currentProfileAccess?.id) {
+      return currentProfileAccess;
     }
 
-    const resolvedProfileId = await fetchCurrentProfileId();
-    setCurrentProfileId(resolvedProfileId);
-    return resolvedProfileId;
+    const resolvedProfile = await fetchCurrentProfileAccess();
+    setCurrentProfileId(resolvedProfile.id);
+    setCurrentProfileAccess(resolvedProfile);
+    return resolvedProfile;
   };
 
   useEffect(() => {
@@ -320,16 +292,21 @@ function CreateTimeRequestPageContent() {
 
     const bootstrapProfile = async () => {
       try {
-        const profileId = await fetchCurrentProfileId();
+        const profile = await fetchCurrentProfileAccess();
         if (!isActive) {
           return;
         }
-        setCurrentProfileId(profileId);
+        setCurrentProfileId(profile.id);
+        setCurrentProfileAccess(profile);
+        if (!canCreateTimeRequest(profile)) {
+          setFormError(TIMEKEEPING_DISABLED_MESSAGE);
+        }
       } catch {
         if (!isActive) {
           return;
         }
         setCurrentProfileId(null);
+        setCurrentProfileAccess(null);
       }
     };
 
@@ -403,7 +380,12 @@ function CreateTimeRequestPageContent() {
   }, [correctionDate]);
 
   useEffect(() => {
-    if (!isApprovedLeaveRequest || !currentProfileId || !correctionDate) {
+    if (
+      !isApprovedLeaveRequest ||
+      !currentProfileId ||
+      !correctionDate ||
+      !canCreateTimeRequest(currentProfileAccess)
+    ) {
       setLeaveBalance(null);
       setLeaveBalanceError("");
       setIsLoadingLeaveBalance(false);
@@ -440,7 +422,7 @@ function CreateTimeRequestPageContent() {
     return () => {
       isActive = false;
     };
-  }, [correctionDate, currentProfileId, isApprovedLeaveRequest]);
+  }, [correctionDate, currentProfileAccess, currentProfileId, isApprovedLeaveRequest]);
 
   const handleMinutesBlur = () => {
     if (!requiresMinutesInput) {
@@ -476,39 +458,6 @@ function CreateTimeRequestPageContent() {
     event.preventDefault();
     setFormError("");
     setSubmitSuccess("");
-
-    const reviewerDebug = {
-      submittedAt: new Date().toISOString(),
-      requestType,
-      leaveSubtype,
-      requestedHoursInput,
-      correctionDate: correctionDate ? toIsoDate(correctionDate) : null,
-      inputMinutes: minutesInput,
-      remoteCheckIn: remoteCheckInIso,
-      remoteCheckOut: remoteCheckOutIso,
-      leaveMinutes: null as number | null,
-      requestedLeaveHours: null as number | null,
-      reason: reasonInput,
-      requesterProfileId: null as string | null,
-      leaveBalance: null as null | {
-        total_hours: number;
-        used_hours: number;
-        remaining_hours: number;
-      },
-      roles: [] as Array<{ id: string; name: string | null }>,
-      memberRoleIds: [] as string[],
-      leaderRoleIds: [] as string[],
-      directorRoleIds: [] as string[],
-      requesterRoles: [] as Array<{ department_id: string | null; role_id: string | null }>,
-      requesterScope: null as "member" | "leader" | "director" | null,
-      ownLeaderDepartmentIds: [] as string[],
-      parentDepartmentIds: [] as string[],
-      scopedDepartmentIds: [] as string[],
-      parentLeaders: [] as string[],
-      directorReviewers: [] as string[],
-      reviewerProfileIds: [] as string[],
-      error: null as string | null,
-    };
 
     if (!requestType) {
       setFormError("Vui lòng chọn loại yêu cầu.");
@@ -567,11 +516,6 @@ function CreateTimeRequestPageContent() {
       : isMissingLeaveRequest
         ? getLeaveRequestDurationMinutes(leaveSubtype || null, parsedRequestedHours)
         : parsedMinutes;
-    reviewerDebug.leaveMinutes = normalizedMinutes;
-    reviewerDebug.requestedLeaveHours =
-      isMissingLeaveRequest && typeof normalizedMinutes === "number"
-        ? normalizedMinutes / 60
-        : null;
 
     if (isMissingLeaveRequest && (!normalizedMinutes || normalizedMinutes <= 0)) {
       setFormError("Không xác định được thời lượng nghỉ hợp lệ.");
@@ -591,15 +535,18 @@ function CreateTimeRequestPageContent() {
     setIsSubmitting(true);
 
     try {
-      const requesterProfileId = await resolveCurrentProfileId();
-      reviewerDebug.requesterProfileId = requesterProfileId;
+      const requesterProfile = await resolveCurrentProfileAccess();
+
+      if (!canCreateTimeRequest(requesterProfile)) {
+        throw new Error(TIMEKEEPING_DISABLED_MESSAGE);
+      }
 
       if (
         isApprovedLeaveRequest &&
         typeof normalizedMinutes === "number" &&
         normalizedMinutes > 0
       ) {
-        const leaveBalanceRow = await fetchLeaveBalanceForMonth(requesterProfileId, correctionDate);
+        const leaveBalanceRow = await fetchLeaveBalanceForMonth(requesterProfile.id, correctionDate);
         const totalHours =
           typeof leaveBalanceRow.total_hours === "number"
             ? Math.max(0, leaveBalanceRow.total_hours)
@@ -611,12 +558,6 @@ function CreateTimeRequestPageContent() {
         const remainingHours = Math.max(0, totalHours - usedHours);
         const requestedHours = typeof normalizedMinutes === "number" ? normalizedMinutes / 60 : 0;
 
-        reviewerDebug.leaveBalance = {
-          total_hours: totalHours,
-          used_hours: usedHours,
-          remaining_hours: remainingHours,
-        };
-
         if (requestedHours > remainingHours) {
           throw new Error(
             `Số giờ phép còn lại của tháng này không đủ. Còn ${remainingHours} giờ, yêu cầu ${requestedHours} giờ.`,
@@ -624,263 +565,35 @@ function CreateTimeRequestPageContent() {
         }
       }
 
-      const [
-        { data: rolesData, error: rolesError },
-        { data: requesterRolesData, error: requesterRolesError },
-      ] = await Promise.all([
-        supabase.from("roles").select("id,name"),
-        supabase
-          .from("user_role_in_department")
-          .select("profile_id,department_id,role_id")
-          .eq("profile_id", requesterProfileId),
-      ]);
-
-      if (rolesError) {
-        throw new Error(rolesError.message || "Không tải được danh sách vai trò.");
-      }
-      if (requesterRolesError) {
-        throw new Error(
-          requesterRolesError.message || "Không tải được vai trò của người tạo yêu cầu.",
-        );
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token ?? null;
+      if (!accessToken) {
+        throw new Error("Phiên đăng nhập không hợp lệ.");
       }
 
-      const typedRoles = (rolesData ?? []) as RoleRow[];
-      const typedRequesterRoles = (requesterRolesData ?? []) as UserRoleRow[];
-      reviewerDebug.roles = typedRoles.map((role) => ({
-        id: String(role.id),
-        name: role.name ?? null,
-      }));
-      reviewerDebug.requesterRoles = typedRequesterRoles.map((row) => ({
-        department_id: row.department_id ? String(row.department_id) : null,
-        role_id: row.role_id ? String(row.role_id) : null,
-      }));
-
-      const leaderRoleIds = typedRoles
-        .filter((role) => {
-          const roleName = normalizeText(role.name);
-          return (
-            roleName === "leader" || roleName.includes("leader") || roleName.includes("truong nhom")
-          );
-        })
-        .map((role) => String(role.id));
-      const memberRoleIds = typedRoles
-        .filter((role) => {
-          const roleName = normalizeText(role.name);
-          return (
-            roleName === "member" || roleName.includes("member") || roleName.includes("thanh vien")
-          );
-        })
-        .map((role) => String(role.id));
-      const directorRoleIds = typedRoles
-        .filter((role) => {
-          const roleName = normalizeText(role.name);
-          return (
-            roleName === "giam doc" || roleName.includes("giam doc") || roleName === "director"
-          );
-        })
-        .map((role) => String(role.id));
-      reviewerDebug.leaderRoleIds = leaderRoleIds;
-      reviewerDebug.memberRoleIds = memberRoleIds;
-      reviewerDebug.directorRoleIds = directorRoleIds;
-
-      const hasDirectorRole = typedRequesterRoles.some(
-        (row) => row.role_id && directorRoleIds.includes(String(row.role_id)),
-      );
-      const hasLeaderRole = typedRequesterRoles.some(
-        (row) => row.role_id && leaderRoleIds.includes(String(row.role_id)),
-      );
-      const requesterScope: "member" | "leader" | "director" = hasDirectorRole
-        ? "director"
-        : hasLeaderRole
-          ? "leader"
-          : "member";
-      reviewerDebug.requesterScope = requesterScope;
-
-      const { data: departmentsData, error: departmentsError } = await supabase
-        .from("departments")
-        .select("id,parent_department_id");
-      if (departmentsError) {
-        throw new Error(departmentsError.message || "Không tải được cây phòng ban.");
-      }
-
-      const parentDepartmentById = ((departmentsData ?? []) as DepartmentRow[]).reduce<
-        Record<string, string | null>
-      >((acc, item) => {
-        acc[String(item.id)] = item.parent_department_id ? String(item.parent_department_id) : null;
-        return acc;
-      }, {});
-
-      let reviewerProfileIds: string[] = [];
-
-      if (requesterScope === "member") {
-        const currentDepartmentIds = [
-          ...new Set(
-            typedRequesterRoles
-              .filter(
-                (row) =>
-                  row.department_id && row.role_id && memberRoleIds.includes(String(row.role_id)),
-              )
-              .map((row) => String(row.department_id)),
-          ),
-        ];
-        const fallbackDepartmentIds =
-          currentDepartmentIds.length > 0
-            ? currentDepartmentIds
-            : [
-                ...new Set(
-                  typedRequesterRoles
-                    .map((row) => row.department_id)
-                    .filter(Boolean)
-                    .map((item) => String(item)),
-                ),
-              ];
-
-        const scopedDepartmentIds = getAncestors(fallbackDepartmentIds, parentDepartmentById, true);
-        reviewerDebug.scopedDepartmentIds = scopedDepartmentIds;
-
-        if (leaderRoleIds.length > 0 && scopedDepartmentIds.length > 0) {
-          const { data: reviewerRows, error: reviewerError } = await supabase
-            .from("user_role_in_department")
-            .select("profile_id")
-            .in("department_id", scopedDepartmentIds)
-            .in("role_id", leaderRoleIds);
-
-          if (reviewerError) {
-            throw new Error(
-              reviewerError.message || "Không tải được danh sách Leader duyệt yêu cầu.",
-            );
-          }
-
-          reviewerProfileIds = [
-            ...new Set(
-              (reviewerRows ?? [])
-                .map((row) => row.profile_id)
-                .filter(Boolean)
-                .map((item) => String(item))
-                .filter((item) => item !== requesterProfileId),
-            ),
-          ];
-        }
-      } else if (requesterScope === "leader") {
-        const ownLeaderDepartmentIds = [
-          ...new Set(
-            typedRequesterRoles
-              .filter(
-                (row) =>
-                  row.department_id && row.role_id && leaderRoleIds.includes(String(row.role_id)),
-              )
-              .map((row) => String(row.department_id)),
-          ),
-        ];
-        reviewerDebug.ownLeaderDepartmentIds = ownLeaderDepartmentIds;
-
-        const parentDepartmentIds = getAncestors(
-          ownLeaderDepartmentIds,
-          parentDepartmentById,
-          false,
-        );
-        reviewerDebug.parentDepartmentIds = parentDepartmentIds;
-        let parentLeaders: string[] = [];
-        if (leaderRoleIds.length > 0 && parentDepartmentIds.length > 0) {
-          const { data: parentLeaderRows, error: parentLeaderError } = await supabase
-            .from("user_role_in_department")
-            .select("profile_id")
-            .in("department_id", parentDepartmentIds)
-            .in("role_id", leaderRoleIds);
-
-          if (parentLeaderError) {
-            throw new Error(parentLeaderError.message || "Không tải được Leader phòng ban cha.");
-          }
-
-          parentLeaders = [
-            ...new Set(
-              (parentLeaderRows ?? [])
-                .map((row) => row.profile_id)
-                .filter(Boolean)
-                .map((item) => String(item)),
-            ),
-          ];
-          reviewerDebug.parentLeaders = parentLeaders;
-        }
-
-        let directorReviewers: string[] = [];
-        if (directorRoleIds.length > 0) {
-          const { data: directorRows, error: directorError } = await supabase
-            .from("user_role_in_department")
-            .select("profile_id")
-            .in("role_id", directorRoleIds);
-
-          if (directorError) {
-            throw new Error(
-              directorError.message || "Không tải được người duyệt vai trò Giám đốc.",
-            );
-          }
-
-          directorReviewers = [
-            ...new Set(
-              (directorRows ?? [])
-                .map((row) => row.profile_id)
-                .filter(Boolean)
-                .map((item) => String(item)),
-            ),
-          ];
-          reviewerDebug.directorReviewers = directorReviewers;
-        }
-
-        reviewerProfileIds = [...new Set([...parentLeaders, ...directorReviewers])].filter(
-          (item) => item !== requesterProfileId,
-        );
-      }
-
-      reviewerDebug.reviewerProfileIds = reviewerProfileIds;
-
-      if (
-        (requesterScope === "member" || requesterScope === "leader") &&
-        reviewerProfileIds.length === 0
-      ) {
-        if (requesterScope === "leader") {
-          throw new Error(
-            "Không tìm thấy người duyệt cho Leader. Cần có Leader phòng ban cha hoặc role Giám đốc trong user_role_in_department.",
-          );
-        }
-        throw new Error("Không tìm thấy người duyệt phù hợp theo cấu hình phòng ban hiện tại.");
-      }
-
-      const { data: createdRequest, error: createRequestError } = await supabase
-        .from("time_requests")
-        .insert({
-          profile_id: requesterProfileId,
-          date: toIsoDate(correctionDate),
-          type: requestType,
+      const response = await fetch("/api/time-requests", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          correctionDate: toIsoDate(correctionDate),
+          requestType,
+          leaveSubtype: isMissingLeaveRequest ? leaveSubtype || null : null,
+          leaveSession: normalizedLeaveSession,
+          requestedHours:
+            isMissingLeaveRequest && leaveSubtype === "early_leave" ? parsedRequestedHours : null,
           minutes: normalizedMinutes,
           reason: normalizedReason,
-          request_schema_version: 2,
-          leave_subtype: isMissingLeaveRequest ? leaveSubtype || null : null,
-          leave_session: normalizedLeaveSession,
-          requested_hours:
-            isMissingLeaveRequest && leaveSubtype === "early_leave" ? parsedRequestedHours : null,
-          remote_check_in: isRemoteRequest ? remoteCheckInIso : null,
-          remote_check_out: isRemoteRequest ? remoteCheckOutIso : null,
-        })
-        .select("id")
-        .maybeSingle();
+          remoteCheckIn: isRemoteRequest ? remoteCheckInIso : null,
+          remoteCheckOut: isRemoteRequest ? remoteCheckOutIso : null,
+        }),
+      });
 
-      if (createRequestError || !createdRequest?.id) {
-        throw new Error(createRequestError?.message || "Không thể tạo yêu cầu thời gian.");
-      }
-
-      if (reviewerProfileIds.length > 0) {
-        const reviewerPayload = reviewerProfileIds.map((reviewerProfileId) => ({
-          time_request_id: String(createdRequest.id),
-          profile_id: reviewerProfileId,
-        }));
-
-        const { error: insertReviewerError } = await supabase
-          .from("time_request_reviewers")
-          .insert(reviewerPayload);
-        if (insertReviewerError) {
-          throw new Error(insertReviewerError.message || "Không thể tạo danh sách người duyệt.");
-        }
+      const responseBody = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) {
+        throw new Error(responseBody?.error || "Không thể tạo yêu cầu thời gian.");
       }
 
       setSubmitSuccess("Tạo yêu cầu thành công.");
@@ -889,13 +602,9 @@ function CreateTimeRequestPageContent() {
         router.refresh();
       });
     } catch (error) {
-      reviewerDebug.error = error instanceof Error ? error.message : "Không thể gửi yêu cầu.";
       setFormError(error instanceof Error ? error.message : "Không thể gửi yêu cầu.");
     } finally {
       setIsSubmitting(false);
-      console.groupCollapsed("[time-request/new] Debug người duyệt");
-      console.log(reviewerDebug);
-      console.groupEnd();
     }
   };
 
@@ -1162,7 +871,8 @@ function CreateTimeRequestPageContent() {
                     disabled={
                       isPastMonthSelection ||
                       isSubmitting ||
-                      (isApprovedLeaveRequest && isLoadingLeaveBalance)
+                      (isApprovedLeaveRequest && isLoadingLeaveBalance) ||
+                      !canCreateTimeRequest(currentProfileAccess)
                     }
                     className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
                   >

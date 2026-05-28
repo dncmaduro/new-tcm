@@ -5,9 +5,15 @@ import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { TimesheetOverview } from "@/components/timesheet/timesheet-overview";
 import { supabase } from "@/lib/supabase";
+import {
+  canCreateTimeRequest,
+  canReadTimekeepingData,
+  type TimekeepingCreateProfile,
+} from "@/lib/timekeeping-access";
 
 export default function TimesheetPage() {
   const [profileId, setProfileId] = useState<string | null>(null);
+  const [profileAccess, setProfileAccess] = useState<TimekeepingCreateProfile | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [profileError, setProfileError] = useState<string | null>(null);
 
@@ -26,7 +32,7 @@ export default function TimesheetPage() {
 
         const { data: profile, error: profileLookupError } = await supabase
           .from("profiles")
-          .select("id")
+          .select("id,is_active,is_timekeeping_enabled")
           .eq("user_id", authData.user.id)
           .maybeSingle();
 
@@ -39,12 +45,17 @@ export default function TimesheetPage() {
         }
 
         setProfileId(String(profile.id));
+        setProfileAccess({
+          is_active: profile.is_active,
+          is_timekeeping_enabled: profile.is_timekeeping_enabled,
+        });
       } catch (error) {
         if (!isActive) {
           return;
         }
 
         setProfileId(null);
+        setProfileAccess(null);
         setProfileError(error instanceof Error ? error.message : "Không thể tải hồ sơ người dùng.");
       } finally {
         if (isActive) {
@@ -73,7 +84,12 @@ export default function TimesheetPage() {
               profileId={profileId}
               isProfileLoading={isLoadingProfile}
               profileError={profileError}
-              createRequestHref="/timesheet/time-request/new?returnTo=%2Ftimesheet"
+              canReadTimekeepingData={canReadTimekeepingData(profileAccess)}
+              createRequestHref={
+                canCreateTimeRequest(profileAccess)
+                  ? "/timesheet/time-request/new?returnTo=%2Ftimesheet"
+                  : null
+              }
             />
           </main>
         </div>

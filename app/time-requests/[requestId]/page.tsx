@@ -8,6 +8,7 @@ import {
   resolveTimeRequestManagementScope,
 } from "@/lib/time-request-access";
 import { supabase } from "@/lib/supabase";
+import { canReadTimekeepingData } from "@/lib/timekeeping-access";
 
 type TimeRequestLookupRow = {
   id: string;
@@ -41,6 +42,22 @@ export default function SharedTimeRequestEntryPage() {
         }
 
         const request = requestData as TimeRequestLookupRow;
+        if (request.profile_id) {
+          const { data: profileData, error: profileError } = await supabase
+            .from("profiles")
+            .select("id,is_timekeeping_enabled")
+            .eq("id", request.profile_id)
+            .maybeSingle();
+
+          if (profileError) {
+            throw new Error(profileError.message || "Không tải được hồ sơ nhân sự.");
+          }
+
+          if (!profileData || !canReadTimekeepingData(profileData)) {
+            throw new Error("Không tìm thấy yêu cầu thời gian.");
+          }
+        }
+
         if (request.profile_id && String(request.profile_id) === viewerProfileId) {
           router.replace(`/timesheet/requests?request=${encodeURIComponent(requestId)}`);
           return;

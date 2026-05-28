@@ -28,6 +28,7 @@ import {
 import { formatDateDdMmYyyy, formatDateTimeDdMmYyyy } from "@/lib/date-format";
 import { buildHolidayMap, fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
+import { canReadTimekeepingData } from "@/lib/timekeeping-access";
 import {
   buildTimeRequestSharePath,
   canManageTimeRequestProfile,
@@ -41,6 +42,7 @@ type ProfileRow = {
   id: string;
   name: string | null;
   email?: string | null;
+  is_timekeeping_enabled?: boolean | null;
 };
 
 type RequestStatus = TimeRequestReviewStatus;
@@ -273,31 +275,45 @@ function TimeRequestManagementPageContent() {
         setRoleScope(managementScope.roleScope);
         setManagedProfileIds(managementScope.managedProfileIds);
 
-        const requestsQuery = supabase
-          .from("time_requests")
-          .select(
-            "id,profile_id,date,type,leave_subtype,leave_session,requested_hours,minutes,reason,remote_check_in,remote_check_out,created_at,updated_at,time_request_reviewers(id,profile_id,is_approved,comment,reviewed_at,created_at)",
-          )
-          .order("created_at", { ascending: false });
+        const scopeProfileIds =
+          managementScope.roleScope === "director"
+            ? null
+            : (managementScope.managedProfileIds ?? []);
+        const eligibleProfilesQuery = supabase
+          .from("profiles")
+          .select("id,name,email,is_timekeeping_enabled")
+          .eq("is_timekeeping_enabled", true);
+        const { data: eligibleProfilesData, error: eligibleProfilesError } =
+          scopeProfileIds === null
+            ? await eligibleProfilesQuery.neq("id", viewerProfileId)
+            : scopeProfileIds.length > 0
+              ? await eligibleProfilesQuery.in("id", scopeProfileIds)
+              : { data: [], error: null };
+
+        if (eligibleProfilesError) {
+          throw new Error(eligibleProfilesError.message || "Không tải được thông tin nhân sự.");
+        }
+
+        const eligibleProfiles = ((eligibleProfilesData ?? []) as ProfileRow[]).filter((profile) =>
+          canReadTimekeepingData(profile),
+        );
+        const eligibleProfileIds = eligibleProfiles.map((profile) => String(profile.id));
 
         let requestRows: TimeRequestRow[] = [];
-        if (managementScope.roleScope === "director") {
-          const { data, error } = await requestsQuery.neq("profile_id", viewerProfileId);
+        if (eligibleProfileIds.length > 0) {
+          const { data, error } = await supabase
+            .from("time_requests")
+            .select(
+              "id,profile_id,date,type,leave_subtype,leave_session,requested_hours,minutes,reason,remote_check_in,remote_check_out,created_at,updated_at,time_request_reviewers(id,profile_id,is_approved,comment,reviewed_at,created_at)",
+            )
+            .in("profile_id", eligibleProfileIds)
+            .order("created_at", { ascending: false });
+
           if (error) {
             throw new Error(error.message || "Không tải được yêu cầu thời gian.");
           }
+
           requestRows = (data ?? []) as TimeRequestRow[];
-        } else {
-          const targetProfileIds = managementScope.managedProfileIds ?? [];
-          if (targetProfileIds.length === 0) {
-            requestRows = [];
-          } else {
-            const { data, error } = await requestsQuery.in("profile_id", targetProfileIds);
-            if (error) {
-              throw new Error(error.message || "Không tải được yêu cầu thời gian.");
-            }
-            requestRows = (data ?? []) as TimeRequestRow[];
-          }
         }
 
         if (!isActive) {
@@ -330,34 +346,16 @@ function TimeRequestManagementPageContent() {
           })),
         );
 
-        const requesterProfileIds = [
-          ...new Set(
-            requestRows
-              .map((row) => row.profile_id)
-              .filter(Boolean)
-              .map((item) => String(item)),
-          ),
-        ];
-
-        if (requesterProfileIds.length === 0) {
+        if (eligibleProfiles.length === 0) {
           setProfileNameById({});
           return;
-        }
-
-        const { data: profilesData, error: profilesError } = await supabase
-          .from("profiles")
-          .select("id,name,email")
-          .in("id", requesterProfileIds);
-
-        if (profilesError) {
-          throw new Error(profilesError.message || "Không tải được thông tin nhân sự.");
         }
 
         if (!isActive) {
           return;
         }
 
-        const nameMap = ((profilesData ?? []) as ProfileRow[]).reduce<Record<string, string>>(
+        const nameMap = eligibleProfiles.reduce<Record<string, string>>(
           (acc, profile) => {
             acc[String(profile.id)] = profile.name
               ? String(profile.name)
@@ -423,6 +421,22 @@ function TimeRequestManagementPageContent() {
 
         if (error || !data?.id) {
           throw new Error(error?.message ?? "Không tìm thấy yêu cầu thời gian.");
+        }
+
+        if (data.profile_id) {
+          const { data: profileData, error: profileError } = await supabase
+            .from("profiles")
+            .select("id,is_timekeeping_enabled")
+            .eq("id", data.profile_id)
+            .maybeSingle();
+
+          if (profileError) {
+            throw new Error(profileError.message || "Không tải được hồ sơ nhân sự.");
+          }
+
+          if (!profileData || !canReadTimekeepingData(profileData)) {
+            throw new Error("Không tìm thấy yêu cầu thời gian.");
+          }
         }
 
         const isAllowed = canManageTimeRequestProfile(currentProfileId, data.profile_id, {

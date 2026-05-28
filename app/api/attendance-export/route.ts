@@ -6,6 +6,7 @@ import {
   createServerSupabaseAuthClient,
   createServerSupabaseServiceRoleClient,
 } from "@/lib/supabase-server";
+import { canReadTimekeepingData } from "@/lib/timekeeping-access";
 
 type ExportRequestPayload = {
   selectedMonth?: string;
@@ -120,8 +121,32 @@ export async function POST(request: Request) {
     }
 
     const serviceRoleClient = createServerSupabaseServiceRoleClient();
+    const requestedProfileIds = [...new Set(profiles.map((profile) => profile.id).filter(Boolean))];
+    const { data: eligibleProfileRows, error: eligibleProfilesError } = await serviceRoleClient
+      .from("profiles")
+      .select("id,is_timekeeping_enabled")
+      .in("id", requestedProfileIds);
+
+    if (eligibleProfilesError) {
+      throw eligibleProfilesError;
+    }
+
+    const eligibleProfileIds = new Set(
+      (eligibleProfileRows ?? [])
+        .filter((profile) => canReadTimekeepingData(profile))
+        .map((profile) => String(profile.id)),
+    );
+    const exportProfiles = profiles.filter((profile) => eligibleProfileIds.has(profile.id));
+
+    if (exportProfiles.length <= 0) {
+      return NextResponse.json(
+        { error: "Không có nhân sự nào được bật tính công để xuất dữ liệu." },
+        { status: 400 },
+      );
+    }
+
     const workbookEntries = await Promise.all(
-      profiles.map(async (profile) => ({
+      exportProfiles.map(async (profile) => ({
         profile,
         exportContext: await loadTimesheetExportContext(profile.id, selectedMonth, {
           supabaseClient: serviceRoleClient,

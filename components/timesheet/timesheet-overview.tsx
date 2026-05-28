@@ -31,6 +31,7 @@ import {
 import { formatDateDdMmYyyy } from "@/lib/date-format";
 import { buildHolidayMap, fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
+import { canReadTimekeepingData as canReadTimekeepingProfileData } from "@/lib/timekeeping-access";
 import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
 
 export type CalendarDay = {
@@ -91,6 +92,7 @@ type TimeRequestRow = {
 type ProfileAttendanceRow = {
   id: string;
   attendance_id: number | null;
+  is_timekeeping_enabled?: boolean | null;
 };
 
 type TimesProfileLinkRow = {
@@ -145,6 +147,7 @@ type TimesheetOverviewProps = {
   profileId: string | null;
   isProfileLoading?: boolean;
   profileError?: string | null;
+  canReadTimekeepingData?: boolean;
   createRequestHref?: string | null;
   showExportButton?: boolean;
   exportFileLabel?: string | null;
@@ -373,6 +376,7 @@ export function TimesheetOverview({
   profileId,
   isProfileLoading = false,
   profileError = null,
+  canReadTimekeepingData = true,
   createRequestHref = null,
   showExportButton = false,
   exportFileLabel = null,
@@ -438,7 +442,7 @@ export function TimesheetOverview({
   }, [selectedMonth]);
 
   useEffect(() => {
-    if (!profileId) {
+    if (!profileId || !canReadTimekeepingData) {
       setCorrectionRequests([]);
       return;
     }
@@ -512,12 +516,12 @@ export function TimesheetOverview({
     return () => {
       isActive = false;
     };
-  }, [profileError, profileId, selectedMonth]);
+  }, [canReadTimekeepingData, profileError, profileId, selectedMonth]);
 
   useEffect(() => {
-    if (!profileId) {
+    if (!profileId || !canReadTimekeepingData) {
       setIsLoadingAttendance(false);
-      setAttendanceError(profileError ?? "");
+      setAttendanceError(!profileId ? profileError ?? "" : "");
       setAttendanceBinding(null);
       setCalendarDays([]);
       return;
@@ -538,7 +542,11 @@ export function TimesheetOverview({
           { data: profileAttendanceData, error: profileAttendanceError },
           { data: attendanceLinkRows, error: attendanceLinkError },
         ] = await Promise.all([
-          supabase.from("profiles").select("id,attendance_id").eq("id", profileId).maybeSingle(),
+          supabase
+            .from("profiles")
+            .select("id,attendance_id,is_timekeeping_enabled")
+            .eq("id", profileId)
+            .maybeSingle(),
           supabase
             .from("times_profiles")
             .select("attendance_id,device_id,created_at")
@@ -551,6 +559,19 @@ export function TimesheetOverview({
 
         if (attendanceLinkError) {
           throw attendanceLinkError;
+        }
+
+        if (
+          !canReadTimekeepingProfileData(profileAttendanceData as ProfileAttendanceRow | null)
+        ) {
+          if (!isActive) {
+            return;
+          }
+
+          setAttendanceError("");
+          setAttendanceBinding(null);
+          setCalendarDays([]);
+          return;
         }
 
         const directAttendanceId = normalizeAttendanceId(
@@ -750,7 +771,7 @@ export function TimesheetOverview({
     return () => {
       isActive = false;
     };
-  }, [holidays, profileError, profileId, selectedMonth]);
+  }, [canReadTimekeepingData, holidays, profileError, profileId, selectedMonth]);
 
   const calendarYear = selectedMonth.getFullYear();
   const calendarMonth = selectedMonth.getMonth() + 1;
