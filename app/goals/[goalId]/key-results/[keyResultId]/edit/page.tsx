@@ -1,7 +1,7 @@
-"use client";
+import PageContent from "./page-content";
 
-import { GoalKeyResultFormPage } from "../../new/page";
+export const dynamic = "force-dynamic";
 
-export default function EditGoalKeyResultPage() {
-  return <GoalKeyResultFormPage mode="edit" />;
+export default function Page() {
+  return <PageContent />;
 }

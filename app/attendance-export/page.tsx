@@ -1,5 +1,7 @@
 import AttendanceExportClient from "@/app/attendance-export/attendance-export-client";
 
+export const dynamic = "force-dynamic";
+
 function parseAdminEmails(value: string | undefined) {
   const normalized = value?.trim();
   if (!normalized) {

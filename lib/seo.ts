@@ -14,6 +14,9 @@ const DEFAULT_KEYWORDS = [
 ];
 const FALLBACK_BASE_URL = "http://localhost:3000";
 const ABSOLUTE_URL_PATTERN = /^https?:\/\//i;
+const PRODUCTION_ENV_VALUES = new Set(["prod", "production"]);
+
+export const PUBLIC_SITEMAP_PATHS = ["/", "/forgot-password"] as const;
 
 type BuildPageMetadataOptions = {
   title: string;
@@ -24,13 +27,72 @@ type BuildPageMetadataOptions = {
 };
 
 export function getSiteUrl() {
-  const rawUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  const rawUrl =
+    process.env.NEXT_PUBLIC_SITE_URL?.trim() ?? process.env.NEXT_PUBLIC_APP_URL?.trim();
 
   if (!rawUrl) {
     return new URL(FALLBACK_BASE_URL);
   }
 
   return new URL(ABSOLUTE_URL_PATTERN.test(rawUrl) ? rawUrl : `https://${rawUrl}`);
+}
+
+function isLocalHostname(hostname: string) {
+  const normalized = hostname.trim().toLowerCase();
+
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized.endsWith(".local")
+  );
+}
+
+export function isProductionIndexingEnabled() {
+  if (process.env.NODE_ENV !== "production") {
+    return false;
+  }
+
+  const vercelEnv = process.env.VERCEL_ENV?.trim().toLowerCase();
+  if (vercelEnv && vercelEnv !== "production") {
+    return false;
+  }
+
+  const appEnv = process.env.NEXT_PUBLIC_APP_ENV?.trim().toLowerCase();
+  if (appEnv && !PRODUCTION_ENV_VALUES.has(appEnv)) {
+    return false;
+  }
+
+  return !isLocalHostname(getSiteUrl().hostname);
+}
+
+export function isPublicIndexablePath(path: string) {
+  return PUBLIC_SITEMAP_PATHS.includes(path as (typeof PUBLIC_SITEMAP_PATHS)[number]);
+}
+
+function buildRobots(allowIndex: boolean) {
+  if (!allowIndex) {
+    return {
+      index: false,
+      follow: false,
+      googleBot: {
+        index: false,
+        follow: false,
+      },
+    };
+  }
+
+  return {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-image-preview": "large" as const,
+      "max-snippet": -1,
+      "max-video-preview": -1,
+    },
+  };
 }
 
 export function createMetadataSupabaseClient() {
@@ -59,6 +121,7 @@ export function joinTitleSegments(...segments: Array<string | null | undefined>)
 
 export function getSiteMetadata(): Metadata {
   const siteUrl = getSiteUrl();
+  const robots = buildRobots(isProductionIndexingEnabled() && isPublicIndexablePath("/"));
 
   return {
     metadataBase: siteUrl,
@@ -97,14 +160,7 @@ export function getSiteMetadata(): Metadata {
       title: `Đăng nhập | ${SITE_NAME}`,
       description: LOGIN_DESCRIPTION,
     },
-    robots: {
-      index: false,
-      follow: false,
-      googleBot: {
-        index: false,
-        follow: false,
-      },
-    },
+    robots,
   };
 }
 
@@ -113,30 +169,13 @@ export function buildPageMetadata({
   description,
   path,
   keywords = [],
-  noIndex = true,
+  noIndex = false,
 }: BuildPageMetadataOptions): Metadata {
   const canonicalUrl = new URL(path, getSiteUrl());
   const pageKeywords = Array.from(new Set([...DEFAULT_KEYWORDS, ...keywords]));
-  const robots = noIndex
-    ? {
-        index: false,
-        follow: false,
-        googleBot: {
-          index: false,
-          follow: false,
-        },
-      }
-    : {
-        index: true,
-        follow: true,
-        googleBot: {
-          index: true,
-          follow: true,
-          "max-image-preview": "large" as const,
-          "max-snippet": -1,
-          "max-video-preview": -1,
-        },
-      };
+  const robots = buildRobots(
+    !noIndex && isProductionIndexingEnabled() && isPublicIndexablePath(path),
+  );
 
   return {
     title,

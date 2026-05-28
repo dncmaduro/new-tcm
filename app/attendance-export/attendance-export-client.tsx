@@ -2,7 +2,10 @@
 
 import { useEffect, useState } from "react";
 
-import { ManagedAttendancePageContent, type ViewableProfile } from "@/app/attendance-management/page";
+import {
+  ManagedAttendancePageContent,
+  type ViewableProfile,
+} from "@/app/attendance-management/page-content";
 import type { AttendanceExportProfile } from "@/lib/attendance-export-workbook";
 import { supabase } from "@/lib/supabase";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
