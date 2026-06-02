@@ -29,6 +29,7 @@ import { type ReactNode, type RefObject, ComponentType, useEffect, useMemo, useR
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AppBrandMark } from "@/components/app-brand-mark";
+import { fetchAttendanceExportAccess } from "@/lib/attendance-export-client-access";
 import { supabase } from "@/lib/supabase";
 import { useWorkspaceSidebarStore } from "@/lib/stores/workspace-sidebar-store";
 import { useWorkspaceAccess, useWorkspaceAccessStore } from "@/lib/stores/workspace-access-store";
@@ -323,10 +324,30 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   const [isTimeMenuOpen, setIsTimeMenuOpen] = useState(false);
   const [isManagementMenuOpen, setIsManagementMenuOpen] = useState(false);
   const [openCollapsedGroup, setOpenCollapsedGroup] = useState<CollapsedGroupKey | null>(null);
+  const [canAccessAttendanceExport, setCanAccessAttendanceExport] = useState(false);
 
   useEffect(() => {
     hydrateSidebarFromStorage();
   }, [hydrateSidebarFromStorage]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadAttendanceExportAccess = async () => {
+      const access = await fetchAttendanceExportAccess();
+      if (!isActive) {
+        return;
+      }
+
+      setCanAccessAttendanceExport(access.allowed);
+    };
+
+    void loadAttendanceExportAccess();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   useEffect(() => {
     const sidebarWidth = `${isCollapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_EXPANDED_WIDTH}px`;
@@ -372,7 +393,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   });
   const visibleTimeItems = timeSidebarItems.filter((item) => {
     if (item.key === "attendanceExport") {
-      return workspaceAccess.canManageAttendance;
+      return canAccessAttendanceExport;
     }
     return true;
   });
