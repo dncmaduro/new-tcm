@@ -40,6 +40,7 @@ type SidebarKey =
   | "tasks"
   | "realtimeReports"
   | "timesheet"
+  | "attendanceExport"
   | "timeRequestForms"
   | "attendanceManagement"
   | "timeRequestManagement"
@@ -78,6 +79,7 @@ const workSidebarItems: SidebarItem[] = [
 
 const timeSidebarItems: SidebarItem[] = [
   { key: "timesheet", label: "Chấm công", href: "/timesheet" },
+  { key: "attendanceExport", label: "Xuất chấm công", href: "/attendance-export" },
   { key: "timeRequestForms", label: "Yêu cầu thời gian", href: "/timesheet/requests" },
 ];
 
@@ -102,6 +104,7 @@ const getSidebarItemIcon = (key: SidebarKey): ComponentType<{ className?: string
   if (key === "tasks") return ListTodo;
   if (key === "reports") return FileText;
   if (key === "timesheet") return CalendarDays;
+  if (key === "attendanceExport") return FileText;
   if (key === "timeRequestForms") return ClipboardList;
   if (key === "realtimeReports") return Activity;
   if (key === "attendanceManagement") return ShieldCheck;
@@ -363,12 +366,18 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
       return workspaceAccess.hasDirectorRole || workspaceAccess.hasRootLeaderAccess;
     }
     if (item.key === "attendanceManagement") {
-      return workspaceAccess.canManage;
+      return workspaceAccess.canManageAttendance;
+    }
+    return true;
+  });
+  const visibleTimeItems = timeSidebarItems.filter((item) => {
+    if (item.key === "attendanceExport") {
+      return workspaceAccess.canManageAttendance;
     }
     return true;
   });
   const workGroupActive = workSidebarItems.some((item) => item.key === active);
-  const timeGroupActive = timeSidebarItems.some((item) => item.key === active);
+  const timeGroupActive = visibleTimeItems.some((item) => item.key === active);
   const managementGroupActive = visibleManagementItems.some((item) => item.key === active);
 
   const sidebarName = useMemo(() => {
@@ -564,7 +573,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
               <SidebarGroup
                 label="Thời gian"
                 icon={Clock3}
-                items={timeSidebarItems}
+                items={visibleTimeItems}
                 active={active}
                 isOpen={isCollapsed ? openCollapsedGroup === "time" : isTimeMenuOpen}
                 onOpenChange={setIsTimeMenuOpen}

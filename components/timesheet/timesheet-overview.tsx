@@ -679,7 +679,7 @@ export function TimesheetOverview({
             lateMinutes: metrics.lateMinutes,
             earlyLeaveMinutes: metrics.earlyLeaveMinutes,
             missingMinutes: metrics.missingMinutes,
-            overtimeMinutes: metrics.overtimeMinutes,
+            overtimeMinutes: 0,
             isHoliday: metrics.isHoliday,
             holiday: metrics.holiday,
             sourceType: "machine",
@@ -822,6 +822,21 @@ export function TimesheetOverview({
     }, {});
   }, [correctionRequests]);
 
+  const approvedOvertimeMinutesByDate = useMemo(() => {
+    return correctionRequests.reduce<Record<string, number>>((acc, item) => {
+      if (
+        item.status !== "approved" ||
+        item.typeValue !== "overtime" ||
+        !item.correctionDateISO
+      ) {
+        return acc;
+      }
+
+      acc[item.correctionDateISO] = (acc[item.correctionDateISO] ?? 0) + Math.max(0, item.minutes);
+      return acc;
+    }, {});
+  }, [correctionRequests]);
+
   const adjustedCalendarDays = useMemo(() => {
     const calendarByDay = calendarDays.reduce<Map<number, CalendarDay>>((acc, day) => {
       acc.set(day.day, day);
@@ -884,7 +899,7 @@ export function TimesheetOverview({
         lateMinutes: metrics.lateMinutes,
         earlyLeaveMinutes: metrics.earlyLeaveMinutes,
         missingMinutes: metrics.missingMinutes,
-        overtimeMinutes: metrics.overtimeMinutes,
+        overtimeMinutes: 0,
         isHoliday: metrics.isHoliday,
         holiday: metrics.holiday,
         sourceType: "remote",
@@ -895,16 +910,21 @@ export function TimesheetOverview({
     return Array.from(calendarByDay.values()).map((day) => {
       const dateIso = day.dateIso ?? toIsoDate(calendarYear, calendarMonth, day.day);
       const approvedLeaveRequests = approvedLeaveRequestsByDate[dateIso] ?? [];
-      if (day.isHoliday || approvedLeaveRequests.length === 0) {
-        return day;
-      }
+      const dayWithLeaveAdjustments =
+        day.isHoliday || approvedLeaveRequests.length === 0
+          ? day
+          : approvedLeaveRequests.reduce((currentDay, request) => {
+              return applyApprovedLeaveRequest(currentDay, request);
+            }, day);
 
-      return approvedLeaveRequests.reduce((currentDay, request) => {
-        return applyApprovedLeaveRequest(currentDay, request);
-      }, day);
+      return {
+        ...dayWithLeaveAdjustments,
+        overtimeMinutes: approvedOvertimeMinutesByDate[dateIso] ?? 0,
+      };
     });
   }, [
     approvedLeaveRequestsByDate,
+    approvedOvertimeMinutesByDate,
     approvedRemoteRequestByDate,
     calendarDays,
     calendarMonth,
@@ -915,6 +935,11 @@ export function TimesheetOverview({
   const adjustedAttendanceStats = useMemo(() => {
     return adjustedCalendarDays.reduce<AttendanceStats>(
       (acc, day) => {
+        acc.overtimeMinutes +=
+          typeof day.overtimeMinutes === "number" && Number.isFinite(day.overtimeMinutes)
+            ? Math.max(0, day.overtimeMinutes)
+            : 0;
+
         if (day.isHoliday) {
           return acc;
         }
@@ -941,10 +966,6 @@ export function TimesheetOverview({
         }
 
         acc.missingMinutes += missingMinutes;
-        acc.overtimeMinutes +=
-          typeof day.overtimeMinutes === "number" && Number.isFinite(day.overtimeMinutes)
-            ? Math.max(0, day.overtimeMinutes)
-            : 0;
         return acc;
       },
       {

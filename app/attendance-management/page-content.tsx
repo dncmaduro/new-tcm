@@ -36,6 +36,8 @@ export type ViewableProfile = AttendanceExportProfile & {
 type ManagedAttendancePageContentProps = {
   pageTitle?: string;
   breadcrumbLabel?: string;
+  activeSidebarKey?: "attendanceManagement" | "attendanceExport";
+  permissionErrorMessage?: string;
   showExportButton?: boolean;
   exportButtonLabel?: string;
   forceAdminAccess?: boolean;
@@ -113,6 +115,8 @@ const getDescendantDepartmentIds = (
 export function ManagedAttendancePageContent({
   pageTitle = "Quản lý chấm công",
   breadcrumbLabel = "Quản lý chấm công",
+  activeSidebarKey = "attendanceManagement",
+  permissionErrorMessage = "Bạn chưa có quyền xem quản lý chấm công theo phạm vi quản lý hiện tại.",
   showExportButton = false,
   exportButtonLabel = "Xuất CSV",
   forceAdminAccess = false,
@@ -133,14 +137,14 @@ export function ManagedAttendancePageContent({
   const [isExportingAllProfiles, setIsExportingAllProfiles] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const canViewAttendanceManagement =
-    forceAdminAccess || (workspaceAccess.canManage && !workspaceAccess.error);
+    forceAdminAccess || (workspaceAccess.canManageAttendance && !workspaceAccess.error);
   const permissionError =
     forceAdminAccess
       ? null
       : workspaceAccess.error ??
-        (!workspaceAccess.isLoading && !workspaceAccess.canManage
-      ? "Bạn chưa có quyền xem quản lý chấm công theo phạm vi quản lý hiện tại."
-      : null);
+        (!workspaceAccess.isLoading && !workspaceAccess.canManageAttendance
+          ? permissionErrorMessage
+          : null);
 
   const memberRoleIds = useMemo(
     () =>
@@ -491,7 +495,7 @@ export function ManagedAttendancePageContent({
   return (
     <div className="h-screen overflow-hidden bg-[#f3f5fa] text-slate-900">
       <div className="flex h-full w-full">
-        <WorkspaceSidebar active="attendanceManagement" />
+        <WorkspaceSidebar active={activeSidebarKey} />
 
         <div className="flex h-full min-h-0 w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <WorkspacePageHeader title={pageTitle} items={[{ label: breadcrumbLabel }]} />

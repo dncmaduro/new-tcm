@@ -388,7 +388,7 @@ function appendProfileSection(
   writeSummaryValue(
     worksheet,
     `C${startRow + 4}:D${startRow + 4}`,
-    formatHoursDecimal(exportContext.adjustedAttendanceStats.overtimeMinutes),
+    formatHoursDecimal(exportContext.requestDurationSummary.requestedOvertimeMinutes),
   );
   writeSummaryLabel(worksheet, `E${startRow + 4}:F${startRow + 4}`, "Tổng số phút thiếu");
   writeSummaryValue(
