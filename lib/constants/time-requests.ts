@@ -27,22 +27,18 @@ export const EARLY_LEAVE_MAX_MINUTES = 4 * 60;
 export const LEAVE_REQUEST_SUBTYPES: Array<{
   value: LeaveRequestSubtype;
   label: string;
-  description: string;
 }> = [
   {
     value: "half_day",
     label: "Nghỉ buổi sáng",
-    description: "Dùng cho nghỉ nửa ngày buổi sáng.",
   },
   {
     value: "full_day",
     label: "Nghỉ cả ngày",
-    description: "Dùng cho nghỉ trọn ngày làm việc.",
   },
   {
     value: "early_leave",
     label: "Xin về sớm",
-    description: "Dùng cho xin về sớm theo giờ rời công ty thực tế.",
   },
 ];
 

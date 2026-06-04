@@ -218,7 +218,9 @@ function CreateTimeRequestPageContent() {
   const queryReturnTo = searchParams.get("returnTo");
   const returnToHref = sanitizeReturnPath(queryReturnTo) ?? "/timesheet/requests";
   const [currentProfileId, setCurrentProfileId] = useState<string | null>(null);
-  const [currentProfileAccess, setCurrentProfileAccess] = useState<CurrentProfileAccess | null>(null);
+  const [currentProfileAccess, setCurrentProfileAccess] = useState<CurrentProfileAccess | null>(
+    null,
+  );
   const [requestType, setRequestType] = useState<TimeRequestType | "">("");
   const [leaveSubtype, setLeaveSubtype] = useState<LeaveRequestSubtype | "">("");
   const [earlyLeaveTimeInput, setEarlyLeaveTimeInput] = useState<string>("");
@@ -260,7 +262,7 @@ function CreateTimeRequestPageContent() {
       : null;
   const requestedLeaveMinutesPreview = isMissingLeaveRequest
     ? leaveSubtype === "early_leave"
-      ? normalizedEarlyLeaveMinutesPreview ?? 0
+      ? (normalizedEarlyLeaveMinutesPreview ?? 0)
       : getLeaveRequestDurationMinutes(normalizedLeaveSubtype, null)
     : 0;
   const requestedLeaveHoursPreview = isMissingLeaveRequest
@@ -500,7 +502,11 @@ function CreateTimeRequestPageContent() {
       isMissingLeaveRequest && leaveSubtype === "early_leave"
         ? getEarlyLeaveMinutesFromTimeValue(earlyLeaveTimeInput)
         : null;
-    if (isMissingLeaveRequest && leaveSubtype === "early_leave" && parsedEarlyLeaveMinutes === null) {
+    if (
+      isMissingLeaveRequest &&
+      leaveSubtype === "early_leave" &&
+      parsedEarlyLeaveMinutes === null
+    ) {
       setFormError(`Giờ về sớm phải trước ${EARLY_LEAVE_FIXED_CHECKOUT_TIME} và tối đa 4 giờ.`);
       return;
     }
@@ -551,7 +557,10 @@ function CreateTimeRequestPageContent() {
         typeof normalizedMinutes === "number" &&
         normalizedMinutes > 0
       ) {
-        const leaveBalanceRow = await fetchLeaveBalanceForMonth(requesterProfile.id, correctionDate);
+        const leaveBalanceRow = await fetchLeaveBalanceForMonth(
+          requesterProfile.id,
+          correctionDate,
+        );
         const totalHours =
           typeof leaveBalanceRow.total_hours === "number"
             ? Math.max(0, leaveBalanceRow.total_hours)
@@ -649,8 +658,8 @@ function CreateTimeRequestPageContent() {
                 ) : null}
                 {isBlockedPastDate ? (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                    Chỉ có thể tạo yêu cầu lùi tối đa {TIME_REQUEST_BACKDATE_LIMIT_DAYS} ngày.
-                    Nếu ngày thuộc tháng trước nhưng vẫn nằm trong khoảng này thì vẫn được phép tạo.
+                    Chỉ có thể tạo yêu cầu lùi tối đa {TIME_REQUEST_BACKDATE_LIMIT_DAYS} ngày. Nếu
+                    ngày thuộc tháng trước nhưng vẫn nằm trong khoảng này thì vẫn được phép tạo.
                   </div>
                 ) : null}
                 <div className="space-y-2">
@@ -795,19 +804,11 @@ function CreateTimeRequestPageContent() {
                           ))}
                         </SelectContent>
                       </Select>
-                      <p className="text-xs text-slate-500">
-                        {leaveSubtype
-                          ? (LEAVE_REQUEST_SUBTYPES.find((item) => item.value === leaveSubtype)
-                              ?.description ?? "")
-                          : "Chọn nghỉ buổi sáng, nghỉ cả ngày hoặc xin về sớm."}
-                      </p>
                     </div>
 
                     {leaveSubtype === "early_leave" ? (
                       <div className="space-y-2">
-                        <label className="text-sm font-semibold text-slate-800">
-                          Giờ về sớm *
-                        </label>
+                        <label className="text-sm font-semibold text-slate-800">Giờ về sớm *</label>
                         <input
                           type="text"
                           inputMode="numeric"
@@ -822,18 +823,7 @@ function CreateTimeRequestPageContent() {
                           maxLength={5}
                           className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />
-                        <p className="text-xs text-slate-500">
-                          Nhập giờ bạn muốn về sớm. Hệ thống lấy mốc checkout cố định là{" "}
-                          {EARLY_LEAVE_FIXED_CHECKOUT_TIME}, nên ví dụ chọn 14:00 sẽ tự tính thành
-                          210 phút. Chỉ chấp nhận về sớm tối đa 4 giờ
-                          {isApprovedLeaveRequest &&
-                          leaveBalance &&
-                          !isLoadingLeaveBalance &&
-                          !leaveBalanceError &&
-                          requestedLeaveHoursPreview > 0
-                            ? `, sau khi gửi sẽ còn ${Math.max(0, remainingLeaveHours - requestedLeaveHoursPreview)} giờ phép.`
-                            : "."}
-                        </p>
+
                         {normalizedEarlyLeaveMinutesPreview ? (
                           <p className="text-xs font-medium text-slate-500">
                             Hệ thống sẽ ghi nhận {normalizedEarlyLeaveMinutesPreview} phút thiếu
