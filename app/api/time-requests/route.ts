@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import {
+  getEarlyLeaveMinutesFromTimeValue,
   getLeaveRequestDurationMinutes,
   isMissingTimeRequestType,
   type LeaveRequestSession,
@@ -22,6 +23,7 @@ type CreateTimeRequestPayload = {
   leaveSubtype?: LeaveRequestSubtype | null;
   leaveSession?: LeaveRequestSession | null;
   requestedHours?: number | null;
+  earlyLeaveTime?: string | null;
   minutes?: number | null;
   reason?: string | null;
   remoteCheckIn?: string | null;
@@ -357,17 +359,25 @@ export async function POST(request: Request) {
     typeof payload.requestedHours === "number" && Number.isFinite(payload.requestedHours)
       ? payload.requestedHours
       : null;
+  const earlyLeaveTime = payload.earlyLeaveTime?.trim() || null;
   const remoteCheckIn = payload.remoteCheckIn?.trim() || null;
   const remoteCheckOut = payload.remoteCheckOut?.trim() || null;
   const remoteMinutes =
     requestType === "remote"
       ? calculateWorkedMinutesBetweenTimestamps(remoteCheckIn, remoteCheckOut)
       : null;
+  const earlyLeaveMinutes =
+    isMissingTimeRequestType(requestType) && payload.leaveSubtype === "early_leave"
+      ? (getEarlyLeaveMinutesFromTimeValue(earlyLeaveTime) ??
+        getLeaveRequestDurationMinutes(payload.leaveSubtype ?? null, requestedHours))
+      : null;
   const normalizedMinutes =
     requestType === "remote"
       ? remoteMinutes
       : isMissingTimeRequestType(requestType)
-        ? getLeaveRequestDurationMinutes(payload.leaveSubtype ?? null, requestedHours)
+        ? payload.leaveSubtype === "early_leave"
+          ? earlyLeaveMinutes
+          : getLeaveRequestDurationMinutes(payload.leaveSubtype ?? null, requestedHours)
         : typeof payload.minutes === "number" && Number.isFinite(payload.minutes)
           ? Math.max(0, Math.round(payload.minutes))
           : null;
@@ -457,8 +467,10 @@ export async function POST(request: Request) {
         leave_subtype: isMissingTimeRequestType(requestType) ? payload.leaveSubtype ?? null : null,
         leave_session: payload.leaveSession ?? null,
         requested_hours:
-          isMissingTimeRequestType(requestType) && payload.leaveSubtype === "early_leave"
-            ? requestedHours
+          isMissingTimeRequestType(requestType) &&
+          payload.leaveSubtype === "early_leave" &&
+          typeof normalizedMinutes === "number"
+            ? normalizedMinutes / 60
             : null,
         remote_check_in: requestType === "remote" ? remoteCheckIn : null,
         remote_check_out: requestType === "remote" ? remoteCheckOut : null,

@@ -15,7 +15,8 @@ import {
 } from "@/components/ui/select";
 import {
   TIME_REQUEST_TYPES,
-  getLeaveRequestSubtypeLabel,
+  getEarlyLeaveTimeValueFromMinutes,
+  getLeaveRequestSubtypeDetailLabel,
   getTimeRequestDisplayLabel,
   getTimeRequestReason,
   getTimeRequestReviewStatus,
@@ -117,9 +118,17 @@ const formatDurationLabel = (totalMinutes: number | null) => {
 const toRequestStatus = (reviewers: TimeRequestReviewerRow[] | null | undefined): RequestStatus =>
   getTimeRequestReviewStatus(reviewers);
 
-const formatMinutesLabel = (type: TimeRequestType | null, minutes: number | null) => {
+const formatMinutesLabel = (
+  type: TimeRequestType | null,
+  minutes: number | null,
+  leaveSubtype: LeaveRequestSubtype | null = null,
+) => {
   if (typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0) {
     if (isMissingTimeRequestType(type)) {
+      if (leaveSubtype === "early_leave") {
+        const earlyLeaveTime = getEarlyLeaveTimeValueFromMinutes(minutes);
+        return earlyLeaveTime ? `Về lúc ${earlyLeaveTime}` : `${minutes} phút thiếu`;
+      }
       return `${minutes} phút thiếu`;
     }
     if (type === "remote") {
@@ -146,24 +155,13 @@ const formatMinutesLabel = (type: TimeRequestType | null, minutes: number | null
 const formatLeaveDetailLabel = (
   subtype: LeaveRequestSubtype | null,
   session: LeaveRequestSession | null,
-  requestedHours: number | null,
-) => {
-  if (!subtype) {
-    return null;
-  }
-
-  const subtypeLabel = getLeaveRequestSubtypeLabel(subtype, session);
-  if (
-    subtype === "early_leave" &&
-    typeof requestedHours === "number" &&
-    Number.isFinite(requestedHours) &&
-    requestedHours > 0
-  ) {
-    return `${subtypeLabel} ${requestedHours} giờ`;
-  }
-
-  return subtypeLabel;
-};
+  minutes: number | null,
+) =>
+  subtype
+    ? getLeaveRequestSubtypeDetailLabel(subtype, session, {
+        minutes,
+      })
+    : null;
 
 const resolveRequestMinutes = (request: TimeRequestRow) => {
   if (request.type === "remote") {
@@ -671,7 +669,10 @@ function TimeRequestManagementPageContent() {
           : requestStatus === "rejected"
             ? "bg-rose-50 text-rose-700"
             : "bg-amber-50 text-amber-700",
-      durationLabel: formatDurationLabel(openedRequest.minutes),
+      durationLabel:
+        openedRequest.leave_subtype === "early_leave"
+          ? `Về lúc ${getEarlyLeaveTimeValueFromMinutes(openedRequest.minutes) ?? "--:--"}`
+          : formatDurationLabel(openedRequest.minutes),
       reason: openedRequest.reason?.trim()
         ? openedRequest.reason.trim()
         : getTimeRequestReason(openedRequest.type, openedRequest.minutes, {
@@ -686,7 +687,7 @@ function TimeRequestManagementPageContent() {
       leaveDetailLabel: formatLeaveDetailLabel(
         openedRequest.leave_subtype,
         openedRequest.leave_session,
-        openedRequest.requested_hours,
+        openedRequest.minutes,
       ),
       remoteTimeLabel:
         openedRequest.type === "remote"
@@ -927,16 +928,15 @@ function TimeRequestManagementPageContent() {
                                     leaveSession: item.leave_session,
                                   })}
                                 </span>
-                                {/* <p className="text-xs text-slate-500">{getTimeRequestTypeDescription(item.type)}</p> */}
-                                {/* {isMissingTimeRequestType(item.type) ? (
+                                {isMissingTimeRequestType(item.type) ? (
                                   <p className="text-xs text-slate-500">
                                     {formatLeaveDetailLabel(
                                       item.leave_subtype,
                                       item.leave_session,
-                                      item.requested_hours,
+                                      item.minutes,
                                     ) ?? "--"}
                                   </p>
-                                ) : null} */}
+                                ) : null}
                               </div>
                             </td>
                             <td className="px-5 py-4 text-sm text-slate-700">
@@ -962,7 +962,11 @@ function TimeRequestManagementPageContent() {
                               )}
                             </td>
                             <td className="px-5 py-4 text-sm font-semibold text-slate-700">
-                              {formatMinutesLabel(item.type, item.minutes)}
+                              {formatMinutesLabel(
+                                item.type,
+                                item.minutes,
+                                item.leave_subtype ?? null,
+                              )}
                               {item.type === "remote" ? (
                                 <p className="mt-1 text-xs font-normal text-indigo-600">
                                   Làm việc từ xa

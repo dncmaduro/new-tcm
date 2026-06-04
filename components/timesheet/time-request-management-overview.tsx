@@ -5,7 +5,8 @@ import { Eye, Link2 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
-  getLeaveRequestSubtypeLabel,
+  getLeaveRequestSubtypeDetailLabel,
+  getEarlyLeaveTimeValueFromMinutes,
   getTimeRequestDisplayLabel,
   getTimeRequestReason,
   getTimeRequestReviewStatus,
@@ -387,10 +388,13 @@ export function TimeRequestManagementOverview({
 
     const leaveDetailLabel =
       openedRequest.typeValue === "approved_leave" || openedRequest.typeValue === "unauthorized_leave"
-        ? getLeaveRequestSubtypeLabel(openedRequest.leaveSubtype, openedRequest.leaveSession) +
-          (openedRequest.leaveSubtype === "early_leave" && openedRequest.requestedHours
-            ? ` ${openedRequest.requestedHours} giờ`
-            : "")
+        ? getLeaveRequestSubtypeDetailLabel(openedRequest.leaveSubtype, openedRequest.leaveSession, {
+            minutes: openedRequest.minutes,
+          })
+        : null;
+    const earlyLeaveTimeLabel =
+      openedRequest.leaveSubtype === "early_leave"
+        ? getEarlyLeaveTimeValueFromMinutes(openedRequest.minutes)
         : null;
 
     return {
@@ -410,7 +414,11 @@ export function TimeRequestManagementOverview({
           : openedRequest.status === "rejected"
             ? "bg-rose-50 text-rose-700"
             : "bg-amber-50 text-amber-700",
-      durationLabel: openedRequest.minutes > 0 ? formatDurationLabel(openedRequest.minutes) : "--",
+      durationLabel: earlyLeaveTimeLabel
+        ? `Về lúc ${earlyLeaveTimeLabel}`
+        : openedRequest.minutes > 0
+          ? formatDurationLabel(openedRequest.minutes)
+          : "--",
       reason: openedRequest.reason,
       sharePath: buildTimeRequestSharePath(openedRequest.id),
       leaveDetailLabel,
@@ -545,9 +553,18 @@ export function TimeRequestManagementOverview({
                     {formatDateVi(item.correctionDateISO)}
                   </td>
                   <td className="px-5 py-4">
-                    <span className="rounded bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">
-                      {item.type}
-                    </span>
+                    <div className="space-y-1">
+                      <span className="rounded bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">
+                        {item.type}
+                      </span>
+                      {item.leaveSubtype ? (
+                        <p className="text-xs text-slate-500">
+                          {getLeaveRequestSubtypeDetailLabel(item.leaveSubtype, item.leaveSession, {
+                            minutes: item.minutes,
+                          })}
+                        </p>
+                      ) : null}
+                    </div>
                   </td>
                   <td className="px-5 py-4 text-sm text-slate-500">
                     <p className="max-w-[280px] truncate">{item.reason}</p>

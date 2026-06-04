@@ -19,9 +19,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  EARLY_LEAVE_FIXED_CHECKOUT_TIME,
+  getEarlyLeaveHoursFromMinutes,
+  getEarlyLeaveMinutesFromTimeValue,
   LEAVE_REQUEST_SUBTYPES,
   getLeaveRequestDurationMinutes,
-  getLeaveRequestHours,
   TIME_REQUEST_TYPES,
   isMissingTimeRequestType,
   type LeaveRequestSession,
@@ -219,7 +221,7 @@ function CreateTimeRequestPageContent() {
   const [currentProfileAccess, setCurrentProfileAccess] = useState<CurrentProfileAccess | null>(null);
   const [requestType, setRequestType] = useState<TimeRequestType | "">("");
   const [leaveSubtype, setLeaveSubtype] = useState<LeaveRequestSubtype | "">("");
-  const [requestedHoursInput, setRequestedHoursInput] = useState<string>("");
+  const [earlyLeaveTimeInput, setEarlyLeaveTimeInput] = useState<string>("");
   const [correctionDate, setCorrectionDate] = useState<Date | undefined>(
     () => fromIsoDateParam(queryCorrectionDate) ?? new Date(),
   );
@@ -247,16 +249,22 @@ function CreateTimeRequestPageContent() {
   const isBlockedPastDate = correctionDate ? isTimeRequestDateTooFarInPast(correctionDate) : false;
   const requiresMinutesInput = !isMissingLeaveRequest && !isRemoteRequest;
   const parsedMinutesPreview = parseIntegerInput(minutesInput);
-  const requestedHoursPreview = parseIntegerInput(requestedHoursInput);
   const normalizedLeaveSubtype = isMissingLeaveRequest ? leaveSubtype || null : null;
   const normalizedLeaveSession =
     isMissingLeaveRequest && leaveSubtype === "half_day"
       ? ("morning" as LeaveRequestSession)
       : null;
-  const normalizedRequestedHours =
-    isMissingLeaveRequest && leaveSubtype === "early_leave" ? requestedHoursPreview : null;
+  const normalizedEarlyLeaveMinutesPreview =
+    isMissingLeaveRequest && leaveSubtype === "early_leave"
+      ? getEarlyLeaveMinutesFromTimeValue(earlyLeaveTimeInput)
+      : null;
+  const requestedLeaveMinutesPreview = isMissingLeaveRequest
+    ? leaveSubtype === "early_leave"
+      ? normalizedEarlyLeaveMinutesPreview ?? 0
+      : getLeaveRequestDurationMinutes(normalizedLeaveSubtype, null)
+    : 0;
   const requestedLeaveHoursPreview = isMissingLeaveRequest
-    ? getLeaveRequestHours(normalizedLeaveSubtype, normalizedRequestedHours)
+    ? getEarlyLeaveHoursFromMinutes(requestedLeaveMinutesPreview)
     : 0;
   const totalLeaveHours =
     typeof leaveBalance?.total_hours === "number" ? Math.max(0, leaveBalance.total_hours) : 0;
@@ -346,14 +354,14 @@ function CreateTimeRequestPageContent() {
     }
 
     setLeaveSubtype("");
-    setRequestedHoursInput("");
+    setEarlyLeaveTimeInput("");
   }, [isMissingLeaveRequest]);
 
   useEffect(() => {
-    if (leaveSubtype !== "early_leave" && requestedHoursInput) {
-      setRequestedHoursInput("");
+    if (leaveSubtype !== "early_leave" && earlyLeaveTimeInput) {
+      setEarlyLeaveTimeInput("");
     }
-  }, [leaveSubtype, requestedHoursInput]);
+  }, [earlyLeaveTimeInput, leaveSubtype]);
 
   useEffect(() => {
     if (!correctionDate) {
@@ -488,17 +496,12 @@ function CreateTimeRequestPageContent() {
       return;
     }
 
-    const parsedRequestedHours = parseIntegerInput(requestedHoursInput);
-    if (
-      isMissingLeaveRequest &&
-      leaveSubtype === "early_leave" &&
-      (parsedRequestedHours === null ||
-        !Number.isFinite(parsedRequestedHours) ||
-        !Number.isInteger(parsedRequestedHours) ||
-        parsedRequestedHours < 1 ||
-        parsedRequestedHours > 4)
-    ) {
-      setFormError("Xin về sớm phải chọn số giờ từ 1 đến 4.");
+    const parsedEarlyLeaveMinutes =
+      isMissingLeaveRequest && leaveSubtype === "early_leave"
+        ? getEarlyLeaveMinutesFromTimeValue(earlyLeaveTimeInput)
+        : null;
+    if (isMissingLeaveRequest && leaveSubtype === "early_leave" && parsedEarlyLeaveMinutes === null) {
+      setFormError(`Giờ về sớm phải trước ${EARLY_LEAVE_FIXED_CHECKOUT_TIME} và tối đa 4 giờ.`);
       return;
     }
 
@@ -514,7 +517,9 @@ function CreateTimeRequestPageContent() {
     const normalizedMinutes = isRemoteRequest
       ? computedRemoteMinutes
       : isMissingLeaveRequest
-        ? getLeaveRequestDurationMinutes(leaveSubtype || null, parsedRequestedHours)
+        ? leaveSubtype === "early_leave"
+          ? parsedEarlyLeaveMinutes
+          : getLeaveRequestDurationMinutes(leaveSubtype || null, null)
         : parsedMinutes;
 
     if (isMissingLeaveRequest && (!normalizedMinutes || normalizedMinutes <= 0)) {
@@ -583,7 +588,13 @@ function CreateTimeRequestPageContent() {
           leaveSubtype: isMissingLeaveRequest ? leaveSubtype || null : null,
           leaveSession: normalizedLeaveSession,
           requestedHours:
-            isMissingLeaveRequest && leaveSubtype === "early_leave" ? parsedRequestedHours : null,
+            isMissingLeaveRequest &&
+            leaveSubtype === "early_leave" &&
+            typeof normalizedMinutes === "number"
+              ? normalizedMinutes / 60
+              : null,
+          earlyLeaveTime:
+            isMissingLeaveRequest && leaveSubtype === "early_leave" ? earlyLeaveTimeInput : null,
           minutes: normalizedMinutes,
           reason: normalizedReason,
           remoteCheckIn: isRemoteRequest ? remoteCheckInIso : null,
@@ -795,21 +806,26 @@ function CreateTimeRequestPageContent() {
                     {leaveSubtype === "early_leave" ? (
                       <div className="space-y-2">
                         <label className="text-sm font-semibold text-slate-800">
-                          Số giờ xin về sớm *
+                          Giờ về sớm *
                         </label>
                         <input
-                          type="number"
+                          type="text"
                           inputMode="numeric"
-                          min={1}
-                          max={4}
-                          step={1}
-                          value={requestedHoursInput}
-                          onChange={(event) => setRequestedHoursInput(event.target.value)}
-                          placeholder="Nhập số giờ, ví dụ: 2"
+                          value={earlyLeaveTimeInput}
+                          onChange={(event) =>
+                            setEarlyLeaveTimeInput(normalize24HourTimeInput(event.target.value))
+                          }
+                          onBlur={() =>
+                            handleRemoteTimeBlur(earlyLeaveTimeInput, setEarlyLeaveTimeInput)
+                          }
+                          placeholder="Ví dụ: 14:00"
+                          maxLength={5}
                           className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />
                         <p className="text-xs text-slate-500">
-                          Nhập số giờ xin về sớm. Hệ thống hiện chỉ chấp nhận nghỉ tối đa 4 giờ
+                          Nhập giờ bạn muốn về sớm. Hệ thống lấy mốc checkout cố định là{" "}
+                          {EARLY_LEAVE_FIXED_CHECKOUT_TIME}, nên ví dụ chọn 14:00 sẽ tự tính thành
+                          210 phút. Chỉ chấp nhận về sớm tối đa 4 giờ
                           {isApprovedLeaveRequest &&
                           leaveBalance &&
                           !isLoadingLeaveBalance &&
@@ -818,6 +834,12 @@ function CreateTimeRequestPageContent() {
                             ? `, sau khi gửi sẽ còn ${Math.max(0, remainingLeaveHours - requestedLeaveHoursPreview)} giờ phép.`
                             : "."}
                         </p>
+                        {normalizedEarlyLeaveMinutesPreview ? (
+                          <p className="text-xs font-medium text-slate-500">
+                            Hệ thống sẽ ghi nhận {normalizedEarlyLeaveMinutesPreview} phút thiếu
+                            công.
+                          </p>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>

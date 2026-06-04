@@ -21,6 +21,8 @@ export type TimeRequestType = (typeof TIME_REQUEST_TYPES)[number]["value"];
 export type LeaveRequestSubtype = "half_day" | "full_day" | "early_leave";
 export type LeaveRequestSession = "morning" | "afternoon";
 export type TimeRequestReviewStatus = "pending" | "approved" | "rejected";
+export const EARLY_LEAVE_FIXED_CHECKOUT_TIME = "17:30";
+export const EARLY_LEAVE_MAX_MINUTES = 4 * 60;
 
 export const LEAVE_REQUEST_SUBTYPES: Array<{
   value: LeaveRequestSubtype;
@@ -40,7 +42,7 @@ export const LEAVE_REQUEST_SUBTYPES: Array<{
   {
     value: "early_leave",
     label: "Xin về sớm",
-    description: "Dùng cho xin về sớm theo số giờ.",
+    description: "Dùng cho xin về sớm theo giờ rời công ty thực tế.",
   },
 ];
 
@@ -96,6 +98,91 @@ export function getLeaveRequestSubtypeLabel(
   }
 
   return "Khác";
+}
+
+function parseTimeValueToMinutes(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const normalizedValue = value.trim();
+  const match = normalizedValue.match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+  if (!match) {
+    return null;
+  }
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null;
+  }
+
+  return hours * 60 + minutes;
+}
+
+function formatMinutesToTimeValue(totalMinutes: number) {
+  const normalizedMinutes = Math.max(0, Math.trunc(totalMinutes));
+  const hours = Math.floor(normalizedMinutes / 60);
+  const minutes = normalizedMinutes % 60;
+
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+export function getEarlyLeaveMinutesFromTimeValue(value: string | null | undefined) {
+  const checkoutMinutes = parseTimeValueToMinutes(EARLY_LEAVE_FIXED_CHECKOUT_TIME);
+  const selectedMinutes = parseTimeValueToMinutes(value);
+
+  if (checkoutMinutes === null || selectedMinutes === null) {
+    return null;
+  }
+
+  const diffMinutes = checkoutMinutes - selectedMinutes;
+  if (diffMinutes <= 0 || diffMinutes > EARLY_LEAVE_MAX_MINUTES) {
+    return null;
+  }
+
+  return diffMinutes;
+}
+
+export function getEarlyLeaveTimeValueFromMinutes(minutes: number | null | undefined) {
+  if (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes <= 0) {
+    return null;
+  }
+
+  const checkoutMinutes = parseTimeValueToMinutes(EARLY_LEAVE_FIXED_CHECKOUT_TIME);
+  if (checkoutMinutes === null) {
+    return null;
+  }
+
+  const selectedMinutes = checkoutMinutes - Math.round(minutes);
+  if (selectedMinutes < 0) {
+    return null;
+  }
+
+  return formatMinutesToTimeValue(selectedMinutes);
+}
+
+export function getEarlyLeaveHoursFromMinutes(minutes: number | null | undefined) {
+  if (typeof minutes !== "number" || !Number.isFinite(minutes) || minutes <= 0) {
+    return 0;
+  }
+
+  return minutes / 60;
+}
+
+export function getLeaveRequestSubtypeDetailLabel(
+  subtype: LeaveRequestSubtype | null | undefined,
+  session?: LeaveRequestSession | null,
+  options?: {
+    minutes?: number | null;
+  },
+) {
+  if (subtype === "early_leave") {
+    const earlyLeaveTime = getEarlyLeaveTimeValueFromMinutes(options?.minutes);
+    return earlyLeaveTime ? `Xin về sớm lúc ${earlyLeaveTime}` : "Xin về sớm";
+  }
+
+  return getLeaveRequestSubtypeLabel(subtype, session);
 }
 
 export function getLeaveRequestDurationMinutes(
@@ -183,20 +270,26 @@ export function getTimeRequestReason(
     if (!options?.leaveSubtype) {
       return `Xin thiếu thời gian có phép ${safeMinutes} phút.`;
     }
-    const subtypeLabel = getLeaveRequestSubtypeLabel(
-      options?.leaveSubtype,
-      options?.leaveSession ?? null,
-    ).toLowerCase();
+    if (options.leaveSubtype === "early_leave") {
+      const earlyLeaveTime = getEarlyLeaveTimeValueFromMinutes(safeMinutes);
+      return earlyLeaveTime
+        ? `Xin về sớm có phép lúc ${earlyLeaveTime}.`
+        : `Xin về sớm có phép ${safeMinutes} phút.`;
+    }
+    const subtypeLabel = getLeaveRequestSubtypeLabel(options?.leaveSubtype, options?.leaveSession ?? null).toLowerCase();
     return `Xin ${subtypeLabel} có phép ${safeMinutes} phút.`;
   }
   if (type === "unauthorized_leave") {
     if (!options?.leaveSubtype) {
       return `Xin ghi nhận thiếu thời gian không phép ${safeMinutes} phút.`;
     }
-    const subtypeLabel = getLeaveRequestSubtypeLabel(
-      options?.leaveSubtype,
-      options?.leaveSession ?? null,
-    ).toLowerCase();
+    if (options.leaveSubtype === "early_leave") {
+      const earlyLeaveTime = getEarlyLeaveTimeValueFromMinutes(safeMinutes);
+      return earlyLeaveTime
+        ? `Xin ghi nhận về sớm không phép lúc ${earlyLeaveTime}.`
+        : `Xin ghi nhận về sớm không phép ${safeMinutes} phút.`;
+    }
+    const subtypeLabel = getLeaveRequestSubtypeLabel(options?.leaveSubtype, options?.leaveSession ?? null).toLowerCase();
     return `Xin ghi nhận ${subtypeLabel} không phép ${safeMinutes} phút.`;
   }
   if (type === "overtime") {

@@ -6,6 +6,7 @@ import { FileText, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   getLeaveRequestSubtypeLabel,
+  getLeaveRequestSubtypeDetailLabel,
   getTimeRequestDisplayLabel,
   getTimeRequestReason,
   getTimeRequestReviewStatus,
@@ -315,7 +316,9 @@ function applyApprovedLeaveRequest(day: CalendarDay, request: CorrectionRequest)
       status: nextMissingMinutes === 0 ? ("ontime" as AttendanceStatus) : day.status,
       earlyLeaveMinutes: nextEarlyLeaveMinutes,
       missingMinutes: nextMissingMinutes,
-      sourceNote: "Có đơn xin về sớm được duyệt",
+      sourceNote: `Có đơn ${getLeaveRequestSubtypeDetailLabel("early_leave", null, {
+        minutes: request.minutes,
+      }).toLowerCase()} được duyệt`,
     };
   }
 
