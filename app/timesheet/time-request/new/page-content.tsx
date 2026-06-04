@@ -32,7 +32,11 @@ import { fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
 import {
   canCreateTimeRequest,
+  getEarliestAllowedTimeRequestDateIso,
+  isTimeRequestDateTooFarInPast,
   TIMEKEEPING_DISABLED_MESSAGE,
+  TIME_REQUEST_BACKDATE_LIMIT_DAYS,
+  TIME_REQUEST_DATE_WINDOW_MESSAGE,
   type TimekeepingCreateProfile,
 } from "@/lib/timekeeping-access";
 import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
@@ -61,13 +65,6 @@ const toMonthStartIso = (value: Date) => {
   const year = value.getFullYear();
   const month = String(value.getMonth() + 1).padStart(2, "0");
   return `${year}-${month}-01`;
-};
-
-const toMonthKey = (value: Date) => value.getFullYear() * 12 + value.getMonth();
-
-const isDateInPastMonth = (value: Date) => {
-  const now = new Date();
-  return toMonthKey(value) < toMonthKey(now);
 };
 
 const fromIsoDateParam = (value: string | null) => {
@@ -240,11 +237,14 @@ function CreateTimeRequestPageContent() {
   const { leaveConfirmDialog, runWithoutConfirm } = useLeaveFormConfirm({
     enabled: !isSubmitting,
   });
-  const currentMonthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const earliestAllowedCorrectionDateIso = getEarliestAllowedTimeRequestDateIso();
+  const earliestAllowedCorrectionDate = earliestAllowedCorrectionDateIso
+    ? fromIsoDateParam(earliestAllowedCorrectionDateIso)
+    : undefined;
   const isApprovedLeaveRequest = requestType === "approved_leave";
   const isMissingLeaveRequest = isMissingTimeRequestType(requestType || null);
   const isRemoteRequest = requestType === "remote";
-  const isPastMonthSelection = correctionDate ? isDateInPastMonth(correctionDate) : false;
+  const isBlockedPastDate = correctionDate ? isTimeRequestDateTooFarInPast(correctionDate) : false;
   const requiresMinutesInput = !isMissingLeaveRequest && !isRemoteRequest;
   const parsedMinutesPreview = parseIntegerInput(minutesInput);
   const requestedHoursPreview = parseIntegerInput(requestedHoursInput);
@@ -467,8 +467,8 @@ function CreateTimeRequestPageContent() {
       setFormError("Vui lòng chọn ngày cần điều chỉnh.");
       return;
     }
-    if (isDateInPastMonth(correctionDate)) {
-      setFormError("Không thể tạo yêu cầu cho tháng trước.");
+    if (isTimeRequestDateTooFarInPast(correctionDate)) {
+      setFormError(TIME_REQUEST_DATE_WINDOW_MESSAGE);
       return;
     }
     if (isRemoteRequest) {
@@ -636,10 +636,10 @@ function CreateTimeRequestPageContent() {
                     {submitSuccess}
                   </div>
                 ) : null}
-                {isPastMonthSelection ? (
+                {isBlockedPastDate ? (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                    Không thể tạo yêu cầu cho tháng trước. Vui lòng chọn ngày trong tháng hiện tại
-                    hoặc tháng tương lai.
+                    Chỉ có thể tạo yêu cầu lùi tối đa {TIME_REQUEST_BACKDATE_LIMIT_DAYS} ngày.
+                    Nếu ngày thuộc tháng trước nhưng vẫn nằm trong khoảng này thì vẫn được phép tạo.
                   </div>
                 ) : null}
                 <div className="space-y-2">
@@ -683,7 +683,11 @@ function CreateTimeRequestPageContent() {
                           mode="single"
                           selected={correctionDate}
                           onSelect={setCorrectionDate}
-                          disabled={{ before: currentMonthStart }}
+                          disabled={
+                            earliestAllowedCorrectionDate
+                              ? { before: earliestAllowedCorrectionDate }
+                              : undefined
+                          }
                           locale={vi}
                           initialFocus
                         />
@@ -711,7 +715,7 @@ function CreateTimeRequestPageContent() {
                     <p className="text-sm font-medium text-rose-700">{leaveBalanceError}</p>
                   ) : leaveBalance ? (
                     <p className="text-sm font-medium text-amber-700">
-                      Quỹ phép tháng hiện tại còn lại: {formatHoursLabel(remainingLeaveHours)}.
+                      Quỹ phép của tháng đã chọn còn lại: {formatHoursLabel(remainingLeaveHours)}.
                     </p>
                   ) : null
                 ) : null}

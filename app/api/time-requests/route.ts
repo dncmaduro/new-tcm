@@ -10,7 +10,9 @@ import {
 import { createServerSupabaseAuthClient, createServerSupabaseServiceRoleClient } from "@/lib/supabase-server";
 import {
   canCreateTimeRequest,
+  isTimeRequestDateTooFarInPast,
   TIMEKEEPING_DISABLED_MESSAGE,
+  TIME_REQUEST_DATE_WINDOW_MESSAGE,
 } from "@/lib/timekeeping-access";
 import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
 
@@ -372,6 +374,10 @@ export async function POST(request: Request) {
 
   if (!requestType || !correctionDate || !/^\d{4}-\d{2}-\d{2}$/.test(correctionDate)) {
     return NextResponse.json({ error: "Dữ liệu yêu cầu không hợp lệ." }, { status: 400 });
+  }
+
+  if (isTimeRequestDateTooFarInPast(correctionDate)) {
+    return NextResponse.json({ error: TIME_REQUEST_DATE_WINDOW_MESSAGE }, { status: 400 });
   }
 
   if (!normalizedReason) {
