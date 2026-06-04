@@ -31,7 +31,10 @@ import {
 import { formatDateDdMmYyyy } from "@/lib/date-format";
 import { buildHolidayMap, fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
-import { canReadTimekeepingData as canReadTimekeepingProfileData } from "@/lib/timekeeping-access";
+import {
+  canReadTimekeepingData as canReadTimekeepingProfileData,
+  getEarliestAllowedTimeRequestDateIso,
+} from "@/lib/timekeeping-access";
 import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
 
 export type CalendarDay = {
@@ -775,10 +778,7 @@ export function TimesheetOverview({
 
   const calendarYear = selectedMonth.getFullYear();
   const calendarMonth = selectedMonth.getMonth() + 1;
-  const selectedMonthKey = selectedMonth.getFullYear() * 12 + selectedMonth.getMonth();
   const now = new Date();
-  const currentMonthKey = now.getFullYear() * 12 + now.getMonth();
-  const isSelectedPastMonth = selectedMonthKey < currentMonthKey;
   const firstWeekdayIndex = new Date(calendarYear, calendarMonth - 1, 1).getDay();
   const totalDays = new Date(calendarYear, calendarMonth, 0).getDate();
   const cellCount = Math.ceil((firstWeekdayIndex + totalDays) / 7) * 7;
@@ -993,6 +993,8 @@ export function TimesheetOverview({
     return { day, meta: dayMap[day] };
   });
   const todayDateIso = toIsoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
+  const earliestAllowedRequestDateIso =
+    getEarliestAllowedTimeRequestDateIso(now) ?? todayDateIso;
 
   const activeRequests = openedFormDateIso
     ? correctionRequests.filter((item) => item.correctionDateISO === openedFormDateIso)
@@ -1393,7 +1395,7 @@ export function TimesheetOverview({
                   {createRequestHref &&
                   hasMissingHours &&
                   !isSundayColumn &&
-                  !isSelectedPastMonth ? (
+                  dateIso >= earliestAllowedRequestDateIso ? (
                     <Tooltip
                       label={`Tạo yêu cầu điều chỉnh cho ngày ${formatDateVi(dateIso)}`}
                       withArrow
