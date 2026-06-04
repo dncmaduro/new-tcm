@@ -873,7 +873,7 @@ function CreateTimeRequestPageContent() {
                   <button
                     type="submit"
                     disabled={
-                      isPastMonthSelection ||
+                      isBlockedPastDate ||
                       isSubmitting ||
                       (isApprovedLeaveRequest && isLoadingLeaveBalance) ||
                       !canCreateTimeRequest(currentProfileAccess)
