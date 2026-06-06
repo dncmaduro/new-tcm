@@ -466,12 +466,7 @@ export async function POST(request: Request) {
         request_schema_version: 2,
         leave_subtype: isMissingTimeRequestType(requestType) ? payload.leaveSubtype ?? null : null,
         leave_session: payload.leaveSession ?? null,
-        requested_hours:
-          isMissingTimeRequestType(requestType) &&
-          payload.leaveSubtype === "early_leave" &&
-          typeof normalizedMinutes === "number"
-            ? normalizedMinutes / 60
-            : null,
+        requested_hours: null,
         remote_check_in: requestType === "remote" ? remoteCheckIn : null,
         remote_check_out: requestType === "remote" ? remoteCheckOut : null,
       })

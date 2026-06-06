@@ -20,7 +20,6 @@ import {
 } from "@/components/ui/select";
 import {
   EARLY_LEAVE_FIXED_CHECKOUT_TIME,
-  getEarlyLeaveHoursFromMinutes,
   getEarlyLeaveMinutesFromTimeValue,
   LEAVE_REQUEST_SUBTYPES,
   getLeaveRequestDurationMinutes,
@@ -117,6 +116,10 @@ const sanitizeReturnPath = (value: string | null) => {
 
   return value;
 };
+
+const CREATE_TIME_REQUEST_TYPE_OPTIONS = TIME_REQUEST_TYPES.filter(
+  (option) => option.value !== "approved_leave",
+);
 
 const combineDateAndTimeToIso = (date: Date, timeValue: string) => {
   if (!timeValue || !isValid24HourTimeValue(timeValue)) {
@@ -251,7 +254,6 @@ function CreateTimeRequestPageContent() {
   const isBlockedPastDate = correctionDate ? isTimeRequestDateTooFarInPast(correctionDate) : false;
   const requiresMinutesInput = !isMissingLeaveRequest && !isRemoteRequest;
   const parsedMinutesPreview = parseIntegerInput(minutesInput);
-  const normalizedLeaveSubtype = isMissingLeaveRequest ? leaveSubtype || null : null;
   const normalizedLeaveSession =
     isMissingLeaveRequest && leaveSubtype === "half_day"
       ? ("morning" as LeaveRequestSession)
@@ -260,14 +262,6 @@ function CreateTimeRequestPageContent() {
     isMissingLeaveRequest && leaveSubtype === "early_leave"
       ? getEarlyLeaveMinutesFromTimeValue(earlyLeaveTimeInput)
       : null;
-  const requestedLeaveMinutesPreview = isMissingLeaveRequest
-    ? leaveSubtype === "early_leave"
-      ? (normalizedEarlyLeaveMinutesPreview ?? 0)
-      : getLeaveRequestDurationMinutes(normalizedLeaveSubtype, null)
-    : 0;
-  const requestedLeaveHoursPreview = isMissingLeaveRequest
-    ? getEarlyLeaveHoursFromMinutes(requestedLeaveMinutesPreview)
-    : 0;
   const totalLeaveHours =
     typeof leaveBalance?.total_hours === "number" ? Math.max(0, leaveBalance.total_hours) : 0;
   const usedLeaveHours =
@@ -335,6 +329,12 @@ function CreateTimeRequestPageContent() {
 
     setCorrectionDate(parsedQueryDate);
   }, [queryCorrectionDate]);
+
+  useEffect(() => {
+    if (requestType === "approved_leave") {
+      setRequestType("");
+    }
+  }, [requestType]);
 
   useEffect(() => {
     if (isRemoteRequest) {
@@ -596,12 +596,7 @@ function CreateTimeRequestPageContent() {
           requestType,
           leaveSubtype: isMissingLeaveRequest ? leaveSubtype || null : null,
           leaveSession: normalizedLeaveSession,
-          requestedHours:
-            isMissingLeaveRequest &&
-            leaveSubtype === "early_leave" &&
-            typeof normalizedMinutes === "number"
-              ? normalizedMinutes / 60
-              : null,
+          requestedHours: null,
           earlyLeaveTime:
             isMissingLeaveRequest && leaveSubtype === "early_leave" ? earlyLeaveTimeInput : null,
           minutes: normalizedMinutes,
@@ -672,7 +667,7 @@ function CreateTimeRequestPageContent() {
                       <SelectValue placeholder="Chọn loại yêu cầu" />
                     </SelectTrigger>
                     <SelectContent>
-                      {TIME_REQUEST_TYPES.map((option) => (
+                      {CREATE_TIME_REQUEST_TYPE_OPTIONS.map((option) => (
                         <SelectItem key={option.value} value={option.value}>
                           {option.label}
                         </SelectItem>
