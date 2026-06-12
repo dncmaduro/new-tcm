@@ -140,10 +140,9 @@ export const formatTimelinePeriodLabel = (date: Date, scale: TimelineScale) => {
   }
 
   if (scale === "week") {
-    const end = endOfScale(date, scale);
     return {
-      label: `Tuần ${formatDateDdMmYyyy(toLocalDateIso(date), "--", "--")}`,
-      subLabel: formatDateDdMmYyyy(toLocalDateIso(end), "--", "--"),
+      label: "Tuần",
+      subLabel: formatDateDdMmYyyy(toLocalDateIso(date), "--", "--"),
     };
   }
 

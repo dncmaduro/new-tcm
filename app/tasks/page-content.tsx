@@ -233,6 +233,22 @@ const toShortName = (name: string) => {
   return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
 };
 
+const truncateTaskName = (value: string, maxLength = 20) => {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+};
+
+const truncateLabel = (value: string, maxLength = 20) => {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+};
+
 const clampProgress = (value: number | null | undefined) => {
   const safe = Number.isFinite(value) ? Number(value) : 0;
   return Math.min(100, Math.max(0, Math.round(safe)));
@@ -1049,6 +1065,7 @@ function TasksPageContent() {
   const timelineViewportFrameRef = useRef<number | null>(null);
   const pendingViewportRatioRef = useRef<number | null>(null);
   const lastAutoFocusSignatureRef = useRef<string | null>(null);
+  const hasInitializedDefaultAssigneeFilterRef = useRef(false);
   const [timelineViewport, setTimelineViewport] = useState({ scrollLeft: 0, clientWidth: 0 });
 
   const showPermissionDebug = searchParams.get("debugPermission") === "1";
@@ -2084,6 +2101,26 @@ function TasksPageContent() {
   );
 
   useEffect(() => {
+    if (hasInitializedDefaultAssigneeFilterRef.current) {
+      return;
+    }
+
+    if (!workspaceAccess.profileId || assigneeFilters.length === 0) {
+      return;
+    }
+
+    const hasCurrentProfileOption = assigneeFilters.some(
+      (assignee) => assignee.id === workspaceAccess.profileId,
+    );
+
+    hasInitializedDefaultAssigneeFilterRef.current = true;
+
+    if (hasCurrentProfileOption) {
+      setAssigneeFilter(workspaceAccess.profileId);
+    }
+  }, [assigneeFilters, workspaceAccess.profileId]);
+
+  useEffect(() => {
     if (goalFilter !== "all" && !isGoalFilterValid(goalFilter)) {
       setGoalFilter("all");
     }
@@ -2546,23 +2583,21 @@ function TasksPageContent() {
                               }}
                             >
                               <div
-                                className={`sticky left-0 z-20 border-r border-slate-200 bg-white px-5 py-4 ${STICKY_PANEL_SHADOW}`}
+                                className={`sticky left-0 z-20 border-r border-slate-200 bg-white px-5 py-3 ${STICKY_PANEL_SHADOW}`}
                               >
-                                <div className="space-y-1.5">
-                                  <div className="flex items-center justify-between gap-3">
-                                    <p className="truncate text-base font-semibold text-slate-900">
-                                      {goal.name}
-                                    </p>
-                                    <span className="inline-flex shrink-0 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700">
-                                      {goal.progress}%
-                                    </span>
-                                  </div>
-                                  <p className="truncate text-xs text-slate-600">
-                                    Quý: {formatGoalQuarterLabel(goal.quarter, goal.year)}
+                                <div className="flex items-center justify-between gap-3">
+                                  <p
+                                    className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900"
+                                    title={`${goal.name} (${formatGoalQuarterLabel(goal.quarter, goal.year)})`}
+                                  >
+                                    {truncateLabel(goal.name)} ({formatGoalQuarterLabel(goal.quarter, goal.year)})
                                   </p>
+                                  <span className="shrink-0 text-xs font-semibold text-slate-600">
+                                    {goal.progress}%
+                                  </span>
                                 </div>
                               </div>
-                              <div className="relative min-h-[86px] bg-white">
+                              <div className="relative min-h-[64px] bg-white">
                                 <TimelinePeriodBackground
                                   rowKey={goal.id}
                                   periods={visibleTimelineWindow.periods}
@@ -2642,23 +2677,26 @@ function TasksPageContent() {
                               }}
                             >
                               <div
-                                className={`sticky left-0 z-20 border-r border-slate-200 bg-white px-5 py-4 ${STICKY_PANEL_SHADOW}`}
+                                className={`sticky left-0 z-20 border-r border-slate-200 bg-white px-5 py-3 ${STICKY_PANEL_SHADOW}`}
                               >
-                                <div className="space-y-1.5">
-                                  <div className="flex items-center justify-between gap-3">
-                                    <p className="truncate text-sm font-semibold text-slate-900">
-                                      {keyResult.name}
-                                    </p>
-                                    <span className="inline-flex shrink-0 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700">
+                                <div className="flex items-center justify-between gap-3">
+                                  <p
+                                    className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900"
+                                    title={`${keyResult.name} (${keyResult.goalName})`}
+                                  >
+                                    {truncateLabel(keyResult.name)} ({keyResult.goalName})
+                                  </p>
+                                  <div className="flex shrink-0 items-center gap-2">
+                                    <span className="text-xs font-semibold text-slate-600">
+                                      {keyResult.progress}%
+                                    </span>
+                                    <span className="inline-flex rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700">
                                       {keyResult.progress}%
                                     </span>
                                   </div>
-                                  <p className="truncate text-xs text-slate-600">
-                                    {keyResult.goalName} • {keyResult.metric}
-                                  </p>
                                 </div>
                               </div>
-                              <div className="relative min-h-[86px] bg-white">
+                              <div className="relative min-h-[64px] bg-white">
                                 <TimelinePeriodBackground
                                   rowKey={keyResult.id}
                                   periods={visibleTimelineWindow.periods}
@@ -2739,29 +2777,24 @@ function TasksPageContent() {
                               }}
                             >
                               <div
-                                className={`sticky left-0 z-10 border-r border-slate-200 bg-white px-5 py-4 ${STICKY_PANEL_SHADOW}`}
+                                className={`sticky left-0 z-10 border-r border-slate-200 bg-white px-5 py-3 ${STICKY_PANEL_SHADOW}`}
                               >
-                                <div className="space-y-1.5">
-                                  <div className="flex items-center justify-between gap-3">
-                                    <Link
-                                      href={`/tasks/${task.id}`}
-                                      className="group block min-w-0 flex-1 truncate text-base font-bold text-slate-900 transition hover:text-blue-700"
-                                      title={tooltip}
-                                    >
-                                      {task.name}
-                                    </Link>
+                                <div className="flex items-center justify-between gap-3">
+                                  <Link
+                                    href={`/tasks/${task.id}`}
+                                    className="group block min-w-0 flex-1 truncate text-sm font-semibold text-slate-900 transition hover:text-blue-700"
+                                    title={`${task.name} (${task.assigneeName})`}
+                                  >
+                                    {truncateTaskName(task.name)} ({task.assigneeName})
+                                  </Link>
+                                  <div className="flex shrink-0 items-center gap-2">
                                     <span
-                                      className={`inline-flex shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold ${getTaskPriorityBadgeClassName(task.priority)}`}
+                                      className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${getTaskPriorityBadgeClassName(task.priority)}`}
                                     >
                                       {getTaskPriorityLabel(task.priority)}
                                     </span>
-                                  </div>
-                                  <div className="flex items-center justify-between gap-3">
-                                    <p className="truncate text-xs text-slate-600">
-                                      Người phụ trách: {task.assigneeName}
-                                    </p>
                                     <span
-                                      className={`inline-flex shrink-0 rounded-md px-2 py-1 text-[10px] font-semibold ${taskStatusColors.badgeBg} ${taskStatusColors.badgeText}`}
+                                      className={`inline-flex rounded-md px-2 py-1 text-[10px] font-semibold ${taskStatusColors.badgeBg} ${taskStatusColors.badgeText}`}
                                     >
                                       {task.progress}%
                                     </span>
@@ -2769,7 +2802,7 @@ function TasksPageContent() {
                                 </div>
                               </div>
 
-                              <div className="relative min-h-[92px] bg-white">
+                              <div className="relative min-h-[64px] bg-white">
                                 <TimelinePeriodBackground
                                   rowKey={task.id}
                                   periods={visibleTimelineWindow.periods}

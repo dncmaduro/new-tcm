@@ -32,6 +32,7 @@ type TaskOverviewCardProps = {
   isEditing: boolean;
   isEditingProgress: boolean;
   canManage: boolean;
+  canUpdateProgress: boolean;
   isSavingTaskInfo: boolean;
   isSavingTaskProgress: boolean;
   isDeletingTask: boolean;
@@ -65,6 +66,7 @@ export function TaskOverviewCard({
   isEditing,
   isEditingProgress,
   canManage,
+  canUpdateProgress,
   isSavingTaskInfo,
   isSavingTaskProgress,
   isDeletingTask,
@@ -112,7 +114,7 @@ export function TaskOverviewCard({
         </div>
         {!isEditing && !isEditingProgress ? (
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {canManage ? (
+            {canUpdateProgress ? (
               <button
                 type="button"
                 onClick={onStartProgressEdit}
@@ -168,7 +170,7 @@ export function TaskOverviewCard({
             </button>
           </div>
         ) : null}
-        {isEditingProgress && canManage ? (
+        {isEditingProgress && canUpdateProgress ? (
           <div className="flex flex-wrap items-center justify-end gap-2">
             <button
               type="button"

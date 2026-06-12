@@ -399,6 +399,9 @@ export default function TaskDetailPage() {
       })
     : "Chưa đặt thời gian thực thi";
   const effectiveAssigneeId = task?.assignee_id ?? task?.profile_id ?? null;
+  const canUpdateTaskProgress =
+    Boolean(workspaceAccess.profileId) &&
+    (workspaceAccess.profileId === effectiveAssigneeId || canManageTask);
   const canCreateTaskEvidence =
     Boolean(workspaceAccess.profileId) &&
     (workspaceAccess.profileId === effectiveAssigneeId || workspaceAccess.hasRootLeaderAccess);
@@ -668,6 +671,7 @@ export default function TaskDetailPage() {
                     isEditing={isEditingTaskInfo}
                     isEditingProgress={isEditingTaskProgress}
                     canManage={canManageTask}
+                    canUpdateProgress={canUpdateTaskProgress}
                     isSavingTaskInfo={isSavingTaskInfo}
                     isSavingTaskProgress={isSavingTaskProgress}
                     isDeletingTask={isDeletingTask}
