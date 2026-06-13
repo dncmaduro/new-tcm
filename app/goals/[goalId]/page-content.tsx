@@ -1709,7 +1709,7 @@ function GoalDetailPageContent() {
                         <span className="text-sm font-medium text-slate-700">Chỉ tiêu</span>
                         <FormattedNumberInput
                           value={keyResultScaleForm.target}
-                          disabled
+                          disabled={keyResultScaleForm.type === "okr"}
                           onValueChange={(value) =>
                             setKeyResultScaleForm((prev) =>
                               prev

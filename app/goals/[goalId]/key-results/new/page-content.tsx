@@ -1414,7 +1414,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                       </label>
                       <FormattedNumberInput
                         value={targetInputValue}
-                        disabled={isEditMode || isOkrType}
+                        disabled={isOkrType}
                         onValueChange={(value) => {
                           setTargetInputValue(value);
                           setForm((prev) => ({
@@ -1423,7 +1423,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                           }));
                         }}
                         className={`h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
-                          isEditMode || isOkrType
+                          isOkrType
                             ? "cursor-not-allowed bg-slate-50 text-slate-400"
                             : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         }`}
