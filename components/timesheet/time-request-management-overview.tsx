@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Eye, Link2 } from "lucide-react";
+import { Eye, Link2, Trash2 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -16,6 +16,14 @@ import {
   type TimeRequestType,
 } from "@/lib/constants/time-requests";
 import { TimeRequestDetailDialog } from "@/components/timesheet/time-request-detail-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { formatDateDdMmYyyy } from "@/lib/date-format";
 import { supabase } from "@/lib/supabase";
 import { buildTimeRequestSharePath } from "@/lib/time-request-access";
@@ -166,7 +174,11 @@ export function TimeRequestManagementOverview({
   const [isLoadingRequests, setIsLoadingRequests] = useState<boolean>(false);
   const [requestsError, setRequestsError] = useState<string>("");
   const [openRequestError, setOpenRequestError] = useState<string>("");
+  const [requestActionSuccess, setRequestActionSuccess] = useState<string>("");
+  const [requestActionError, setRequestActionError] = useState<string>("");
   const [copiedRequestId, setCopiedRequestId] = useState<string | null>(null);
+  const [deletingRequestId, setDeletingRequestId] = useState<string | null>(null);
+  const [pendingDeleteRequest, setPendingDeleteRequest] = useState<CorrectionRequest | null>(null);
   const openedRequestId = searchParams.get("request")?.trim() || null;
 
   const updateRequestQuery = (requestId: string | null) => {
@@ -195,6 +207,64 @@ export function TimeRequestManagementOverview({
     } catch {
       setOpenRequestError("Không thể sao chép link. Trình duyệt hiện tại không hỗ trợ thao tác này.");
     }
+  };
+
+  const handleDeleteRequest = async (request: CorrectionRequest) => {
+    if (request.status !== "pending") {
+      setRequestActionSuccess("");
+      setRequestActionError("Chỉ có thể xóa yêu cầu đang ở trạng thái chờ duyệt.");
+      return;
+    }
+
+    setDeletingRequestId(request.id);
+    setRequestActionSuccess("");
+    setRequestActionError("");
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token ?? null;
+      if (!accessToken) {
+        throw new Error("Phiên đăng nhập không hợp lệ.");
+      }
+
+      const response = await fetch(`/api/time-requests?id=${encodeURIComponent(request.id)}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      const responseBody = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) {
+        throw new Error(responseBody?.error || "Không thể xóa yêu cầu thời gian.");
+      }
+
+      setCorrectionRequests((current) => current.filter((item) => item.id !== request.id));
+      setCopiedRequestId((current) => (current === request.id ? null : current));
+      setOpenRequestError("");
+      setRequestActionSuccess("Đã xóa yêu cầu chờ duyệt.");
+      setPendingDeleteRequest((current) => (current?.id === request.id ? null : current));
+
+      if (openedRequestId === request.id) {
+        updateRequestQuery(null);
+      }
+    } catch (error) {
+      setRequestActionError(
+        error instanceof Error ? error.message : "Không thể xóa yêu cầu thời gian.",
+      );
+    } finally {
+      setDeletingRequestId(null);
+    }
+  };
+
+  const openDeleteConfirm = (request: CorrectionRequest) => {
+    if (request.status !== "pending") {
+      setRequestActionSuccess("");
+      setRequestActionError("Chỉ có thể xóa yêu cầu đang ở trạng thái chờ duyệt.");
+      return;
+    }
+
+    setPendingDeleteRequest(request);
   };
 
   useEffect(() => {
@@ -511,6 +581,16 @@ export function TimeRequestManagementOverview({
       {openRequestError ? (
         <div className="border-b border-rose-100 bg-rose-50 px-5 py-3 text-sm text-rose-700">{openRequestError}</div>
       ) : null}
+      {requestActionSuccess ? (
+        <div className="border-b border-emerald-100 bg-emerald-50 px-5 py-3 text-sm text-emerald-700">
+          {requestActionSuccess}
+        </div>
+      ) : null}
+      {requestActionError ? (
+        <div className="border-b border-rose-100 bg-rose-50 px-5 py-3 text-sm text-rose-700">
+          {requestActionError}
+        </div>
+      ) : null}
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[920px] text-left">
@@ -592,6 +672,18 @@ export function TimeRequestManagementOverview({
                       >
                         <Link2 className="h-4 w-4" />
                       </button>
+                      {item.status === "pending" ? (
+                        <button
+                          type="button"
+                          disabled={deletingRequestId === item.id}
+                          onClick={() => openDeleteConfirm(item)}
+                          title="Xóa yêu cầu"
+                          aria-label="Xóa yêu cầu"
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      ) : null}
                     </div>
                   </td>
                 </tr>
@@ -639,7 +731,87 @@ export function TimeRequestManagementOverview({
         onCopyLink={
           openedRequestDetail ? () => void handleCopyLink(openedRequestDetail.id) : undefined
         }
+        footerActions={
+          openedRequest?.status === "pending" ? (
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm text-slate-500">Bạn có thể xóa yêu cầu này khi vẫn đang chờ duyệt.</p>
+              <button
+                type="button"
+                disabled={deletingRequestId === openedRequest.id}
+                onClick={() => openDeleteConfirm(openedRequest)}
+                className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {deletingRequestId === openedRequest.id ? "Đang xóa..." : "Xóa yêu cầu"}
+              </button>
+            </div>
+          ) : null
+        }
       />
+
+      <Dialog
+        open={Boolean(pendingDeleteRequest)}
+        onOpenChange={(open) => {
+          if (!open && deletingRequestId !== pendingDeleteRequest?.id) {
+            setPendingDeleteRequest(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Xác nhận xóa yêu cầu</DialogTitle>
+            <DialogDescription>
+              Yêu cầu này đang ở trạng thái chờ duyệt. Nếu tiếp tục, yêu cầu sẽ bị xóa vĩnh viễn và không thể khôi phục.
+            </DialogDescription>
+          </DialogHeader>
+
+          {pendingDeleteRequest ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              <p>
+                <span className="font-semibold">Loại:</span> {pendingDeleteRequest.type}
+              </p>
+              <p className="mt-1">
+                <span className="font-semibold">Ngày cần sửa:</span>{" "}
+                {formatDateVi(pendingDeleteRequest.correctionDateISO)}
+              </p>
+              <p className="mt-1 line-clamp-2">
+                <span className="font-semibold">Lý do:</span> {pendingDeleteRequest.reason}
+              </p>
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            <button
+              type="button"
+              disabled={Boolean(
+                pendingDeleteRequest && deletingRequestId === pendingDeleteRequest.id,
+              )}
+              onClick={() => setPendingDeleteRequest(null)}
+              className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Hủy
+            </button>
+            <button
+              type="button"
+              disabled={
+                !pendingDeleteRequest ||
+                deletingRequestId === pendingDeleteRequest.id
+              }
+              onClick={() => {
+                if (!pendingDeleteRequest) {
+                  return;
+                }
+
+                void handleDeleteRequest(pendingDeleteRequest);
+              }}
+              className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {pendingDeleteRequest && deletingRequestId === pendingDeleteRequest.id
+                ? "Đang xóa..."
+                : "Xác nhận xóa"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

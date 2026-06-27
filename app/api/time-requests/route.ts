@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   getEarlyLeaveMinutesFromTimeValue,
   getLeaveRequestDurationMinutes,
+  getTimeRequestReviewStatus,
   isMissingTimeRequestType,
   type LeaveRequestSession,
   type LeaveRequestSubtype,
@@ -52,6 +53,10 @@ type ProfileAccessRow = {
   is_timekeeping_enabled: boolean | null;
 };
 
+type TimeRequestReviewerStatusRow = {
+  is_approved: boolean | null;
+};
+
 function normalizeText(value: string | null | undefined) {
   return (value ?? "")
     .normalize("NFD")
@@ -68,6 +73,11 @@ function getBearerToken(request: Request) {
 
   const token = authorization.slice(7).trim();
   return token || null;
+}
+
+function getRequestIdFromUrl(request: Request) {
+  const url = new URL(request.url);
+  return url.searchParams.get("id")?.trim() ?? "";
 }
 
 function toMonthStartIso(isoDate: string) {
@@ -495,6 +505,95 @@ export async function POST(request: Request) {
     return NextResponse.json({ id: String(createdRequest.id) }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Không thể tạo yêu cầu thời gian.";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  const accessToken = getBearerToken(request);
+  if (!accessToken) {
+    return NextResponse.json({ error: "Thiếu access token." }, { status: 401 });
+  }
+
+  const requestId = getRequestIdFromUrl(request);
+  if (!requestId) {
+    return NextResponse.json({ error: "Thiếu mã yêu cầu cần xóa." }, { status: 400 });
+  }
+
+  try {
+    const authClient = createServerSupabaseAuthClient();
+    const { data: authData, error: authError } = await authClient.auth.getUser(accessToken);
+
+    if (authError || !authData.user?.id) {
+      return NextResponse.json({ error: "Phiên đăng nhập không hợp lệ." }, { status: 401 });
+    }
+
+    const serviceRoleClient = createServerSupabaseServiceRoleClient();
+    const { data: requesterProfile, error: requesterProfileError } = await serviceRoleClient
+      .from("profiles")
+      .select("id")
+      .eq("user_id", authData.user.id)
+      .maybeSingle();
+
+    if (requesterProfileError || !requesterProfile?.id) {
+      return NextResponse.json(
+        { error: requesterProfileError?.message ?? "Không tìm thấy hồ sơ người dùng." },
+        { status: 400 },
+      );
+    }
+
+    const { data: timeRequest, error: timeRequestError } = await serviceRoleClient
+      .from("time_requests")
+      .select("id,profile_id,time_request_reviewers(is_approved)")
+      .eq("id", requestId)
+      .maybeSingle();
+
+    if (timeRequestError) {
+      throw new Error(timeRequestError.message || "Không thể tải yêu cầu thời gian.");
+    }
+
+    if (!timeRequest?.id) {
+      return NextResponse.json({ error: "Không tìm thấy yêu cầu thời gian." }, { status: 404 });
+    }
+
+    if (!timeRequest.profile_id || String(timeRequest.profile_id) !== String(requesterProfile.id)) {
+      return NextResponse.json(
+        { error: "Bạn không có quyền xóa yêu cầu này." },
+        { status: 403 },
+      );
+    }
+
+    const requestStatus = getTimeRequestReviewStatus(
+      (timeRequest.time_request_reviewers ?? []) as TimeRequestReviewerStatusRow[],
+    );
+    if (requestStatus !== "pending") {
+      return NextResponse.json(
+        { error: "Chỉ có thể xóa yêu cầu đang ở trạng thái chờ duyệt." },
+        { status: 409 },
+      );
+    }
+
+    const { error: deleteReviewersError } = await serviceRoleClient
+      .from("time_request_reviewers")
+      .delete()
+      .eq("time_request_id", requestId);
+
+    if (deleteReviewersError) {
+      throw new Error(deleteReviewersError.message || "Không thể xóa danh sách người duyệt.");
+    }
+
+    const { error: deleteRequestError } = await serviceRoleClient
+      .from("time_requests")
+      .delete()
+      .eq("id", requestId);
+
+    if (deleteRequestError) {
+      throw new Error(deleteRequestError.message || "Không thể xóa yêu cầu thời gian.");
+    }
+
+    return NextResponse.json({ id: requestId }, { status: 200 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Không thể xóa yêu cầu thời gian.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
