@@ -345,7 +345,39 @@ async function resolveReviewerProfileIds(
     throw new Error("Không tìm thấy người duyệt phù hợp theo cấu hình phòng ban hiện tại.");
   }
 
-  return reviewerProfileIds;
+  const { data: activeReviewerRows, error: activeReviewerError } = await serviceRoleClient
+    .from("profiles")
+    .select("id")
+    .in("id", reviewerProfileIds)
+    .eq("is_active", true);
+
+  if (activeReviewerError) {
+    throw new Error(
+      activeReviewerError.message || "Không thể kiểm tra trạng thái hoạt động của người duyệt.",
+    );
+  }
+
+  const activeReviewerProfileIds = [
+    ...new Set(
+      (activeReviewerRows ?? [])
+        .map((row) => row.id)
+        .filter(Boolean)
+        .map((item) => String(item))
+        .filter((item) => item !== requesterProfileId),
+    ),
+  ];
+
+  if ((requesterScope === "member" || requesterScope === "leader") && activeReviewerProfileIds.length === 0) {
+    if (requesterScope === "leader") {
+      throw new Error(
+        "Không tìm thấy người duyệt đang hoạt động cho Leader. Cần có Leader phòng ban cha hoặc Giám đốc với profile đang hoạt động.",
+      );
+    }
+
+    throw new Error("Không tìm thấy người duyệt đang hoạt động phù hợp theo cấu hình phòng ban hiện tại.");
+  }
+
+  return activeReviewerProfileIds;
 }
 
 export async function POST(request: Request) {
