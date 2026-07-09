@@ -26,7 +26,6 @@ import {
   formatRelativeTimeVi,
   formatTimeVi,
   getDashboardTaskProgress,
-  getDateDiffFromToday,
   getWorkedMinutes,
   normalizeDashboardTaskStatus,
   sortPriorityTasks,
@@ -488,23 +487,22 @@ const buildTaskRelationLabel = (task: NormalizedTask) => {
 
 const buildSummaryCards = ({
   timeTracker,
-  todayTasks,
+  weeklyTasks,
   overdueTasks,
-  dueSoonTasks,
   averageGoalProgress,
 }: {
   timeTracker: DashboardTimeTrackerData;
-  todayTasks: NormalizedTask[];
+  weeklyTasks: NormalizedTask[];
   overdueTasks: NormalizedTask[];
-  dueSoonTasks: NormalizedTask[];
   averageGoalProgress: number | null;
 }): DashboardSummaryCard[] => {
-  const todayCompleted = todayTasks.filter((task) => task.status === "completed").length;
-  const todayRemaining = Math.max(0, todayTasks.length - todayCompleted);
+  const weeklyCompleted = weeklyTasks.filter((task) => task.status === "completed").length;
+  const weeklyProgress =
+    weeklyTasks.length > 0 ? Math.round((weeklyCompleted / weeklyTasks.length) * 100) : 0;
 
   return [
     {
-      title: "Trạng thái hôm nay",
+      title: "Chấm công hôm nay",
       value: timeTracker.statusLabel,
       note:
         timeTracker.checkInAt && timeTracker.checkOutAt
@@ -519,32 +517,34 @@ const buildSummaryCards = ({
       ctaHref: !timeTracker.checkInAt && !timeTracker.isHoliday ? "/timesheet" : null,
     },
     {
-      title: "Công việc hôm nay",
-      value: String(todayTasks.length),
+      title: "Task tuần này",
+      value: `${weeklyCompleted}/${weeklyTasks.length}`,
       note:
-        todayTasks.length === 0
-          ? "Không có dữ liệu"
-          : `${todayCompleted} hoàn thành`,
-      tone: todayRemaining > 0 ? "blue" : "slate",
+        weeklyTasks.length === 0
+          ? "Chưa có task trong tuần"
+          : `${weeklyProgress}% hoàn thành`,
+      tone: weeklyTasks.length > 0 && weeklyProgress < 100 ? "blue" : "slate",
+      ctaLabel: weeklyTasks.length > 0 ? "Xem task" : null,
+      ctaHref: weeklyTasks.length > 0 ? "/tasks" : null,
     },
     {
-      title: "Việc sắp quá hạn",
-      value: String(overdueTasks.length + dueSoonTasks.length),
-      note:
-        overdueTasks.length > 0
-          ? `${overdueTasks.length} quá hạn`
-          : dueSoonTasks.length > 0
-            ? `${dueSoonTasks.length} sắp đến hạn`
-            : "Không có dữ liệu",
+      title: "Task quá hạn",
+      value: String(overdueTasks.length),
+      note: overdueTasks.length > 0 ? "Cần xử lý sớm" : "Không có task quá hạn",
       tone: overdueTasks.length > 0 ? "amber" : "slate",
-      ctaLabel: overdueTasks.length + dueSoonTasks.length > 0 ? "Xem công việc" : null,
-      ctaHref: overdueTasks.length + dueSoonTasks.length > 0 ? "/tasks" : null,
+      ctaLabel: overdueTasks.length > 0 ? "Xem task" : null,
+      ctaHref: overdueTasks.length > 0 ? "/tasks" : null,
     },
     {
-      title: "Tiến độ mục tiêu",
+      title: "Tiến độ KR của tôi",
       value: averageGoalProgress === null ? "--" : `${averageGoalProgress}%`,
-      note: averageGoalProgress === null ? "Chưa có dữ liệu" : "Trung bình",
-      tone: averageGoalProgress !== null && averageGoalProgress >= 70 ? "emerald" : "blue",
+      note: averageGoalProgress === null ? "Chưa có KR theo dõi" : "Tiến độ trung bình",
+      tone:
+        averageGoalProgress === null
+          ? "slate"
+          : averageGoalProgress >= 70
+            ? "emerald"
+            : "blue",
       ctaLabel: averageGoalProgress !== null ? "Xem mục tiêu" : null,
       ctaHref: averageGoalProgress !== null ? "/goals" : null,
     },
@@ -997,20 +997,7 @@ export function useDashboardData() {
         });
 
         const activeMyTasks = normalizedMyTasks.filter((task) => task.status !== "completed");
-        const todayTasks = normalizedMyTasks.filter((task) => getDateDiffFromToday(task.executionEndAt, today) === 0);
         const overdueTasks = activeMyTasks.filter((task) => task.status === "overdue");
-        const dueSoonTasks = activeMyTasks.filter((task) => {
-          const diff = getDateDiffFromToday(task.executionEndAt, today);
-          return diff !== null && diff > 0 && diff <= 3;
-        });
-
-        const summaryCards = buildSummaryCards({
-          timeTracker,
-          todayTasks,
-          overdueTasks,
-          dueSoonTasks,
-          averageGoalProgress,
-        });
 
         const prioritizedActiveTasks = sortPriorityTasks(
           activeMyTasks.map((task) => ({
@@ -1156,6 +1143,13 @@ export function useDashboardData() {
         const completedWeeklyTasks = weeklyTasks.filter((task) => task.status === "completed");
         const weeklyProgress =
           weeklyTasks.length > 0 ? Math.round((completedWeeklyTasks.length / weeklyTasks.length) * 100) : 0;
+
+        const summaryCards = buildSummaryCards({
+          timeTracker,
+          weeklyTasks,
+          overdueTasks,
+          averageGoalProgress,
+        });
 
         const weeklyPerformance: DashboardWeeklyPerformance = {
           title: "Công việc tuần này",

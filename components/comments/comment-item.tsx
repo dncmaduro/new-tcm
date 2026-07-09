@@ -6,10 +6,7 @@ import { Button } from "@/components/ui/button";
 import { formatDateTimeDdMmYyyy } from "@/lib/date-format";
 import { cn } from "@/lib/utils";
 import { CommentRenderer } from "./comment-renderer";
-import {
-  RichCommentEditor,
-  type RichCommentEditorHandle,
-} from "./rich-comment-editor";
+import { RichCommentEditor, type RichCommentEditorHandle } from "./rich-comment-editor";
 import type {
   CommentItem as CommentItemData,
   MentionedProfile,
@@ -87,9 +84,7 @@ export function CommentItem({
       editorRef.current?.resetPendingMedia();
       setIsEditing(false);
     } catch (saveError) {
-      setError(
-        saveError instanceof Error ? saveError.message : "Không thể cập nhật bình luận.",
-      );
+      setError(saveError instanceof Error ? saveError.message : "Không thể cập nhật bình luận.");
     }
   };
 
@@ -102,9 +97,7 @@ export function CommentItem({
     try {
       await onDelete(comment.id);
     } catch (deleteError) {
-      setError(
-        deleteError instanceof Error ? deleteError.message : "Không thể xóa bình luận.",
-      );
+      setError(deleteError instanceof Error ? deleteError.message : "Không thể xóa bình luận.");
     }
   };
 
@@ -167,7 +160,7 @@ export function CommentItem({
                   disabled={isDeleting}
                   aria-label="Xóa bình luận"
                   title="Xóa"
-                  className="h-8 w-8 text-slate-500"
+                  className="h-8 w-8 text-red-500"
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>

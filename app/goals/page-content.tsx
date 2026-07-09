@@ -141,6 +141,13 @@ type CanvasBounds = {
   maxY: number;
 };
 
+type CanvasViewportInsets = {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+};
+
 type CanvasEdgeFrame = {
   x: number;
   y: number;
@@ -233,20 +240,23 @@ type GoalCreatePermissionDebug = {
   error: string | null;
 };
 
-const CARD_WIDTH = 320;
-const CARD_HEIGHT = 286;
-const KR_CARD_WIDTH = 216;
-const KR_CARD_HEIGHT = 112;
-const KR_CARD_GAP = 36;
-const GOAL_TO_KR_GAP = 128;
-const KR_ROW_GAP = 28;
-const WORLD_WIDTH = 3200;
-const WORLD_HEIGHT = 2200;
-const WORLD_INITIAL_SCALE = 0.86;
+const CARD_WIDTH = 356;
+const CARD_HEIGHT = 314;
+const KR_CARD_WIDTH = 236;
+const KR_CARD_HEIGHT = 124;
+const KR_CARD_GAP = 42;
+const GOAL_TO_KR_GAP = 112;
+const KR_ROW_GAP = 24;
+const WORLD_WIDTH = 4200;
+const WORLD_HEIGHT = 2800;
+const WORLD_INITIAL_SCALE = 1;
 const WORLD_MIN_SCALE = 0.2;
-const WORLD_MAX_SCALE = 1.4;
+const WORLD_MAX_SCALE = 1.8;
 const CANVAS_DRAG_THRESHOLD = 5;
 const CANVAS_FOCUS_ANIMATION_MS = 240;
+const CANVAS_SHELL_PADDING = 24;
+const CANVAS_SHELL_BOTTOM_PADDING = 40;
+const CANVAS_FIT_PADDING = 96;
 
 const statusLabelMap = GOAL_STATUSES.reduce<Record<string, string>>((acc, item) => {
   acc[item.value] = item.label;
@@ -420,10 +430,10 @@ const buildGoalGraph = (
     });
 
   const sortedRows = sortRows(rows);
-  const topPadding = 140;
-  const sidePadding = 96;
-  const horizontalGap = 144;
-  const verticalGap = 136;
+  const topPadding = 160;
+  const sidePadding = 140;
+  const horizontalGap = 176;
+  const verticalGap = 124;
 
   const positionedNodes: GoalNode[] = [];
   const layoutItems = sortedRows.map((row) => {
@@ -904,7 +914,7 @@ function GoalsPageContent() {
   const selectedId =
     selectedIdParam && validGoalIds.has(selectedIdParam)
       ? selectedIdParam
-      : (displayedNodes[0]?.id ?? null);
+      : null;
   const isDetailOpen = searchParams.get("detail") !== "closed" && Boolean(selectedId);
 
   const selectedGoal = useMemo(
@@ -922,6 +932,11 @@ function GoalsPageContent() {
           return detail;
         })()
       : null;
+  const selectedCanvasKeyResultNodeId =
+    selectedGoal && selectedKeyResult
+      ? `kr:${selectedGoal.id}:${selectedKeyResult.id}`
+      : null;
+  const shouldShowDetailDrawer = isDetailOpen && Boolean(selectedGoal);
   const selectedKeyResultCreateTaskHref = useMemo(() => {
     if (!selectedGoal || !selectedKeyResult) {
       return "/tasks/new";
@@ -1711,38 +1726,70 @@ function GoalsPageContent() {
   );
 
   const clampViewportToBounds = useCallback(
-    (nextViewport: { x: number; y: number }, scale: number, rect?: DOMRect) => {
+    (
+      nextViewport: { x: number; y: number },
+      scale: number,
+      rect?: DOMRect,
+      insets?: CanvasViewportInsets,
+    ) => {
       const viewportRect = rect ?? canvasRef.current?.getBoundingClientRect();
       if (!viewportRect) {
         return nextViewport;
       }
 
+      const resolvedInsets = insets ?? {
+        top: CANVAS_SHELL_PADDING,
+        right: CANVAS_SHELL_PADDING,
+        bottom: CANVAS_SHELL_PADDING,
+        left: CANVAS_SHELL_PADDING,
+      };
+      const availableWidth = Math.max(
+        1,
+        viewportRect.width - resolvedInsets.left - resolvedInsets.right,
+      );
+      const availableHeight = Math.max(
+        1,
+        viewportRect.height - resolvedInsets.top - resolvedInsets.bottom,
+      );
+
       const worldPixelWidth = WORLD_WIDTH * scale;
       const worldPixelHeight = WORLD_HEIGHT * scale;
 
-      if (worldPixelWidth <= viewportRect.width && worldPixelHeight <= viewportRect.height) {
+      if (worldPixelWidth <= availableWidth && worldPixelHeight <= availableHeight) {
         return {
-          x: (viewportRect.width - worldPixelWidth) / 2,
-          y: (viewportRect.height - worldPixelHeight) / 2,
+          x: resolvedInsets.left + (availableWidth - worldPixelWidth) / 2,
+          y: resolvedInsets.top + (availableHeight - worldPixelHeight) / 2,
         };
       }
 
-      const minX = Math.min(0, viewportRect.width - worldPixelWidth);
-      const minY = Math.min(0, viewportRect.height - worldPixelHeight);
+      const minX = viewportRect.width - resolvedInsets.right - worldPixelWidth;
+      const minY = viewportRect.height - resolvedInsets.bottom - worldPixelHeight;
+      const maxX = resolvedInsets.left;
+      const maxY = resolvedInsets.top;
       const centeredX =
-        worldPixelWidth <= viewportRect.width
-          ? (viewportRect.width - worldPixelWidth) / 2
-          : Math.min(0, Math.max(minX, nextViewport.x));
+        worldPixelWidth <= availableWidth
+          ? resolvedInsets.left + (availableWidth - worldPixelWidth) / 2
+          : Math.min(maxX, Math.max(minX, nextViewport.x));
       const centeredY =
-        worldPixelHeight <= viewportRect.height
-          ? (viewportRect.height - worldPixelHeight) / 2
-          : Math.min(0, Math.max(minY, nextViewport.y));
+        worldPixelHeight <= availableHeight
+          ? resolvedInsets.top + (availableHeight - worldPixelHeight) / 2
+          : Math.min(maxY, Math.max(minY, nextViewport.y));
 
       return {
         x: centeredX,
         y: centeredY,
       };
     },
+    [],
+  );
+
+  const getCanvasViewportInsets = useCallback(
+    (): CanvasViewportInsets => ({
+      top: CANVAS_SHELL_PADDING,
+      right: CANVAS_SHELL_PADDING,
+      bottom: CANVAS_SHELL_BOTTOM_PADDING,
+      left: CANVAS_SHELL_PADDING,
+    }),
     [],
   );
 
@@ -1753,25 +1800,41 @@ function GoalsPageContent() {
       }
 
       const rect = canvasRef.current.getBoundingClientRect();
-      const padding = options?.padding ?? 96;
+      const viewportInsets = getCanvasViewportInsets();
+      const padding = options?.padding ?? 72;
       const contentWidth = Math.max(1, bounds.maxX - bounds.minX);
       const contentHeight = Math.max(1, bounds.maxY - bounds.minY);
+      const availableWidth = Math.max(
+        1,
+        rect.width - viewportInsets.left - viewportInsets.right,
+      );
+      const availableHeight = Math.max(
+        1,
+        rect.height - viewportInsets.top - viewportInsets.bottom,
+      );
 
-      const scaleByWidth = (rect.width - padding * 2) / contentWidth;
-      const scaleByHeight = (rect.height - padding * 2) / contentHeight;
+      const scaleByWidth = Math.max(0.1, (availableWidth - padding * 2) / contentWidth);
+      const scaleByHeight = Math.max(0.1, (availableHeight - padding * 2) / contentHeight);
       const targetScale = clampScale(Math.min(scaleByWidth, scaleByHeight, WORLD_MAX_SCALE));
 
       const contentCenterX = bounds.minX + contentWidth / 2;
       const contentCenterY = bounds.minY + contentHeight / 2;
+      const safeCenterX = viewportInsets.left + availableWidth / 2;
+      const safeCenterY = viewportInsets.top + availableHeight / 2;
       const targetViewport = {
-        x: rect.width / 2 - contentCenterX * targetScale,
-        y: rect.height / 2 - contentCenterY * targetScale,
+        x: safeCenterX - contentCenterX * targetScale,
+        y: safeCenterY - contentCenterY * targetScale,
       };
 
-      const nextViewportOffset = clampViewportToBounds(targetViewport, targetScale, rect);
+      const nextViewportOffset = clampViewportToBounds(
+        targetViewport,
+        targetScale,
+        rect,
+        viewportInsets,
+      );
       animateCanvasView(targetScale, nextViewportOffset);
     },
-    [animateCanvasView, clampScale, clampViewportToBounds],
+    [animateCanvasView, clampScale, clampViewportToBounds, getCanvasViewportInsets],
   );
 
   const fitCanvasToNodes = useCallback(() => {
@@ -1779,7 +1842,7 @@ function GoalsPageContent() {
       return;
     }
 
-    focusCanvasBounds(canvasBounds, { padding: 96 });
+    focusCanvasBounds(canvasBounds, { padding: CANVAS_FIT_PADDING });
   }, [canvasBounds, displayedNodes.length, focusCanvasBounds]);
 
   const focusCanvasCluster = useCallback(
@@ -1823,7 +1886,7 @@ function GoalsPageContent() {
           },
         );
 
-        focusCanvasBounds(clusterBounds, { padding: childNodes.length > 0 ? 88 : 72 });
+        focusCanvasBounds(clusterBounds, { padding: childNodes.length > 0 ? 64 : 56 });
         return;
       }
 
@@ -1839,7 +1902,7 @@ function GoalsPageContent() {
           maxX: keyResultNode.x + KR_CARD_WIDTH,
           maxY: keyResultNode.y + KR_CARD_HEIGHT,
         },
-        { padding: 84 },
+        { padding: 60 },
       );
     },
     [canvasKeyResultNodeMap, canvasKeyResultNodesByGoalId, focusCanvasBounds, goalNodeMap, mode],
@@ -1865,7 +1928,12 @@ function GoalsPageContent() {
       y: anchorY - worldY * nextScale,
     };
 
-    const clampedViewportOffset = clampViewportToBounds(nextViewport, nextScale, rect);
+    const clampedViewportOffset = clampViewportToBounds(
+      nextViewport,
+      nextScale,
+      rect,
+      getCanvasViewportInsets(),
+    );
     commitCanvasView(nextScale, clampedViewportOffset);
   };
 
@@ -2094,10 +2162,12 @@ function GoalsPageContent() {
     const deltaY = event.clientY - panStartRef.current.pointerY;
     const tentativeX = panStartRef.current.originX + deltaX;
     const tentativeY = panStartRef.current.originY + deltaY;
+    const viewportInsets = getCanvasViewportInsets();
     pendingViewportOffsetRef.current = clampViewportToBounds(
       { x: tentativeX, y: tentativeY },
       canvasScaleRef.current,
       rect,
+      viewportInsets,
     );
     scheduleCanvasInteractionFlush();
   };
@@ -2157,6 +2227,120 @@ function GoalsPageContent() {
       cancelAnimationFrame(frameId);
     };
   }, [displayedNodes.length, fitCanvasToNodes, isLoadingGoals, mode, nodeIdentityKey]);
+
+  useEffect(() => {
+    if (mode !== "canvas" || isLoadingGoals || displayedNodes.length === 0) {
+      return;
+    }
+
+    const frameId = requestAnimationFrame(() => {
+      if (selectedGoal?.id) {
+        if (selectedKeyResult?.id) {
+          focusCanvasCluster({
+            type: "key_result",
+            goalId: selectedGoal.id,
+            keyResultId: selectedKeyResult.id,
+          });
+          return;
+        }
+
+        focusCanvasCluster({ type: "goal", goalId: selectedGoal.id });
+        return;
+      }
+
+      fitCanvasToNodes();
+    });
+
+    return () => {
+      cancelAnimationFrame(frameId);
+    };
+  }, [
+    displayedNodes.length,
+    fitCanvasToNodes,
+    focusCanvasCluster,
+    isLoadingGoals,
+    mode,
+    selectedGoal?.id,
+    selectedKeyResult?.id,
+    shouldShowDetailDrawer,
+  ]);
+
+  useEffect(() => {
+    if (
+      typeof ResizeObserver === "undefined" ||
+      mode !== "canvas" ||
+      isLoadingGoals ||
+      filteredNodes.length === 0 ||
+      !canvasRef.current
+    ) {
+      return;
+    }
+
+    const canvasElement = canvasRef.current;
+    let frameId: number | null = null;
+    let lastWidth = Math.round(canvasElement.getBoundingClientRect().width);
+    let lastHeight = Math.round(canvasElement.getBoundingClientRect().height);
+
+    const scheduleRefit = () => {
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId);
+      }
+
+      frameId = requestAnimationFrame(() => {
+        frameId = null;
+
+        if (selectedGoal?.id) {
+          if (selectedKeyResult?.id) {
+            focusCanvasCluster({
+              type: "key_result",
+              goalId: selectedGoal.id,
+              keyResultId: selectedKeyResult.id,
+            });
+            return;
+          }
+
+          focusCanvasCluster({ type: "goal", goalId: selectedGoal.id });
+          return;
+        }
+
+        fitCanvasToNodes();
+      });
+    };
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) {
+        return;
+      }
+
+      const nextWidth = Math.round(entry.contentRect.width);
+      const nextHeight = Math.round(entry.contentRect.height);
+      if (nextWidth === lastWidth && nextHeight === lastHeight) {
+        return;
+      }
+
+      lastWidth = nextWidth;
+      lastHeight = nextHeight;
+      scheduleRefit();
+    });
+
+    resizeObserver.observe(canvasElement);
+
+    return () => {
+      resizeObserver.disconnect();
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId);
+      }
+    };
+  }, [
+    filteredNodes.length,
+    fitCanvasToNodes,
+    focusCanvasCluster,
+    isLoadingGoals,
+    mode,
+    selectedGoal?.id,
+    selectedKeyResult?.id,
+  ]);
 
   const handleSelectGoal = (goalId: string) => {
     updateUrlState({ nextGoalId: goalId, nextKeyResultId: null, nextDetailOpen: true });
@@ -2329,22 +2513,280 @@ function GoalsPageContent() {
     }
   };
 
+  const renderDetailPanelContent = () => {
+    if (!shouldShowDetailDrawer || !selectedGoal) {
+      return null;
+    }
+
+    return (
+      <>
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-4">
+          <h2 className="text-lg font-semibold tracking-[-0.02em] text-slate-900">
+            {selectedKeyResult ? "Chi tiết KR" : "Chi tiết mục tiêu"}
+          </h2>
+          <button
+            type="button"
+            onClick={() => updateUrlState({ nextDetailOpen: false })}
+            aria-label="Đóng sidebar chi tiết"
+            className="flex h-9 w-9 items-center justify-center rounded-xl text-2xl leading-none text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+          <div className="space-y-5">
+            {selectedKeyResult ? (
+              <>
+                <div>
+                  <p className="text-[11px] font-semibold tracking-[0.08em] text-blue-600 uppercase">
+                    {selectedKeyResult.contributionType === "support"
+                      ? "KR hỗ trợ"
+                      : "Key Result"}
+                  </p>
+                  <h3 className="mt-2 text-xl font-semibold leading-tight tracking-[-0.03em] text-slate-900">
+                    {selectedKeyResult.name}
+                  </h3>
+                  <p className="mt-2 text-sm text-slate-500">
+                    Thuộc mục tiêu: {selectedGoal.tieuDe}
+                  </p>
+                </div>
+
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-sm text-slate-400">Tiến độ</p>
+                    <p className="text-2xl font-bold text-slate-900">
+                      {selectedKeyResult.progress}%
+                    </p>
+                  </div>
+                  <ProgressBar value={selectedKeyResult.progress} />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-slate-400">Bắt đầu</p>
+                    <p className="mt-2 text-base font-medium text-slate-800">
+                      {formatKeyResultMetric(selectedKeyResult.startValue, selectedKeyResult.unit)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-slate-400">Hiện tại</p>
+                    <p className="mt-2 text-base font-medium text-slate-800">
+                      {formatKeyResultMetric(selectedKeyResult.current, selectedKeyResult.unit)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-slate-400">Chỉ tiêu</p>
+                    <p className="mt-2 text-base font-medium text-slate-800">
+                      {formatKeyResultMetric(selectedKeyResult.target, selectedKeyResult.unit)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-slate-400">Đơn vị đo</p>
+                    <p className="mt-2 text-base font-medium text-slate-800">
+                      {formatKeyResultUnit(selectedKeyResult.unit)}
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-sm text-slate-400">Phòng ban phụ trách</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {selectedGoal.teamNames.length > 0 ? (
+                      selectedGoal.teamNames.map((teamName, index) => (
+                        <span
+                          key={`${selectedKeyResult.id}-${teamName}`}
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                            index === 0
+                              ? "bg-blue-50 text-blue-700"
+                              : "bg-slate-100 text-slate-700"
+                          }`}
+                        >
+                          {teamName}
+                          {index === 0 ? " · chính" : ""}
+                        </span>
+                      ))
+                    ) : (
+                      <p className="text-sm font-medium text-slate-800">
+                        {selectedGoal.phongBan || "Chưa có phòng ban phụ trách"}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-sm text-slate-400">Khung thời gian</p>
+                  <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-sm font-medium text-slate-800">
+                      {formatTimelineRangeVi(selectedKeyResult.startDate, selectedKeyResult.endDate, {
+                        fallback: "Chưa đặt khung thời gian",
+                      })}
+                    </p>
+                    {selectedKeyResult.contributionType === "support" ? (
+                      <p className="mt-2 text-sm text-amber-700">
+                        Hỗ trợ cho: {selectedKeyResult.supportTargetSummary ?? "Chưa xác định"}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <p className="text-[11px] font-semibold tracking-[0.08em] text-blue-600 uppercase">
+                    Mục tiêu
+                  </p>
+                  <h3 className="mt-2 text-xl font-semibold leading-tight tracking-[-0.03em] text-slate-900">
+                    {selectedGoal.tieuDe}
+                  </h3>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-slate-400">Quý</p>
+                    <p className="mt-2 text-base font-medium text-slate-800">
+                      {selectedGoal.quy}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-slate-400">Chỉ tiêu</p>
+                    <p className="mt-2 text-base font-medium text-slate-800">
+                      {selectedGoal.target !== null || selectedGoal.unit
+                        ? `${formatKeyResultMetric(selectedGoal.target, selectedGoal.unit)}`
+                        : "Chưa đặt"}
+                    </p>
+                  </div>
+                </div>
+
+                {selectedGoal.keyResultCount > 0 ? (
+                  <div>
+                    <div className="mb-2 flex items-center justify-between">
+                      <p className="text-sm text-slate-400">Tiến độ</p>
+                      <p className="text-2xl font-bold text-slate-900">{selectedGoal.progress}%</p>
+                    </div>
+                    <ProgressBar value={selectedGoal.progress} />
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-blue-200 bg-blue-50/60 p-4">
+                    <p className="text-sm font-medium text-slate-700">
+                      Chưa có Key Result. Hãy thêm KR để bắt đầu theo dõi mục tiêu.
+                    </p>
+                    <Link
+                      href={`/goals/${selectedGoal.id}/key-results/new`}
+                      className="mt-3 inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white"
+                    >
+                      + Thêm Key Result
+                    </Link>
+                  </div>
+                )}
+
+                <div>
+                  <p className="text-sm text-slate-400">Mô tả</p>
+                  <p className="mt-2 text-sm leading-relaxed text-slate-700">
+                    {selectedGoal.moTa}
+                  </p>
+                </div>
+
+                {selectedGoal.teamNames.length > 0 ? (
+                  <div>
+                    <p className="text-sm text-slate-400">Danh sách phòng ban tham gia</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {selectedGoal.teamNames.map((teamName, index) => (
+                        <span
+                          key={`${selectedGoal.id}-${teamName}`}
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                            index === 0
+                              ? "bg-blue-50 text-blue-700"
+                              : "bg-slate-100 text-slate-700"
+                          }`}
+                        >
+                          {teamName}
+                          {index === 0 ? " · chính" : ""}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-8px_24px_-20px_rgba(15,23,42,0.35)] backdrop-blur">
+          <div className="flex gap-3">
+            {selectedKeyResult ? (
+              <>
+                <Link
+                  href={selectedKeyResultCreateTaskHref}
+                  className="flex h-10 flex-1 items-center justify-center rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  Thêm công việc
+                </Link>
+                <Link
+                  href={`/goals/${selectedGoal.id}/key-results/${selectedKeyResult.id}`}
+                  className="flex h-10 flex-1 items-center justify-center rounded-xl bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-700"
+                >
+                  Mở KR
+                </Link>
+              </>
+            ) : (
+              <>
+                <Link
+                  href={`/goals/${selectedGoal.id}/key-results/new`}
+                  className="flex h-10 flex-1 items-center justify-center rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  Thêm KR
+                </Link>
+                <Link
+                  href={`/goals/${selectedGoal.id}`}
+                  className="flex h-10 flex-1 items-center justify-center rounded-xl bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-700"
+                >
+                  Mở trang chi tiết
+                </Link>
+              </>
+            )}
+          </div>
+        </div>
+      </>
+    );
+  };
+
+  const listFilterTriggerClassName =
+    "h-9 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-none transition hover:border-slate-300 focus-visible:border-blue-400 focus-visible:ring-2 focus-visible:ring-blue-100 sm:w-[160px] lg:w-[152px]";
+
   return (
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
       <div className="flex h-screen w-full overflow-hidden">
         <WorkspaceSidebar active="goals" />
 
-        <div className="flex h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <main
-            className={`grid h-screen w-full overflow-hidden ${
-              isDetailOpen ? "xl:grid-cols-[minmax(0,1fr)_390px]" : "xl:grid-cols-1"
-            }`}
-          >
-            <section className="flex min-h-0 flex-col overflow-hidden border-r border-slate-200">
-              <WorkspacePageHeader title="Mục tiêu" items={[{ label: "Mục tiêu" }]} />
+        <div className="flex h-screen w-full min-w-0 flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
+          <main className="relative flex h-screen w-full min-w-0 overflow-hidden">
+            <section className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <WorkspacePageHeader
+                title="Mục tiêu"
+                items={[{ label: "Mục tiêu" }]}
+                compact
+                actions={
+                  !isCheckingCreatePermission && canCreateGoal ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const defaultDepartmentId = rootDepartments[0]?.id;
+                        const next = defaultDepartmentId
+                          ? `/goals/new?departmentId=${defaultDepartmentId}`
+                          : "/goals/new";
+                        router.push(next);
+                      }}
+                      className="h-9 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700"
+                    >
+                      Thêm mục tiêu
+                    </button>
+                  ) : null
+                }
+              />
 
-              <div className="border-b border-slate-200 bg-[#f3f5fa] px-4 lg:px-7">
-                <div className="flex flex-wrap items-center justify-between gap-3 py-4">
+              <div className="border-b border-slate-200 bg-[#f3f5fa] px-4 lg:px-6">
+                <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 py-2.5">
                   <div className="inline-flex h-10 items-center rounded-xl bg-slate-100 p-1">
                     <button
                       type="button"
@@ -2370,28 +2812,10 @@ function GoalsPageContent() {
                     </button>
                   </div>
 
-                  {!isCheckingCreatePermission && canCreateGoal ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const defaultDepartmentId = rootDepartments[0]?.id;
-                        const next = defaultDepartmentId
-                          ? `/goals/new?departmentId=${defaultDepartmentId}`
-                          : "/goals/new";
-                        router.push(next);
-                      }}
-                      className="h-10 cursor-pointer rounded-xl bg-blue-600 px-5 text-sm font-medium text-white transition hover:bg-blue-700"
-                    >
-                      Thêm mục tiêu
-                    </button>
-                  ) : null}
-                </div>
-
-                {mode === "canvas" ? (
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/80 py-3">
-                    <div className="flex flex-1 flex-wrap items-center gap-3">
+                  {mode === "canvas" ? (
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
                       <Select value={quarterFilter} onValueChange={setQuarterFilter}>
-                        <SelectTrigger className="h-10 w-full sm:w-[180px] lg:w-[170px] border-slate-200 bg-white text-sm text-slate-700 shadow-none hover:border-slate-300 focus-visible:border-blue-400 focus-visible:ring-2 focus-visible:ring-blue-100">
+                        <SelectTrigger className="h-9 w-[132px] border-slate-200 bg-white text-sm text-slate-700 shadow-none hover:border-slate-300 focus-visible:border-blue-400 focus-visible:ring-2 focus-visible:ring-blue-100">
                           <SelectValue placeholder="Tất cả quý" />
                         </SelectTrigger>
                         <SelectContent>
@@ -2404,7 +2828,7 @@ function GoalsPageContent() {
                       </Select>
 
                       <Select value={yearFilter} onValueChange={setYearFilter}>
-                        <SelectTrigger className="h-10 w-full sm:w-[180px] lg:w-[170px] border-slate-200 bg-white text-sm text-slate-700 shadow-none hover:border-slate-300 focus-visible:border-blue-400 focus-visible:ring-2 focus-visible:ring-blue-100">
+                        <SelectTrigger className="h-9 w-[132px] border-slate-200 bg-white text-sm text-slate-700 shadow-none hover:border-slate-300 focus-visible:border-blue-400 focus-visible:ring-2 focus-visible:ring-blue-100">
                           <SelectValue placeholder="Tất cả năm" />
                         </SelectTrigger>
                         <SelectContent>
@@ -2416,39 +2840,52 @@ function GoalsPageContent() {
                           ))}
                         </SelectContent>
                       </Select>
-                    </div>
 
-                    <div className="inline-flex h-10 items-center overflow-hidden rounded-xl border border-slate-200 bg-white">
-                      <button
-                        type="button"
-                        onClick={() => applyCanvasZoom(canvasScaleRef.current - 0.08)}
-                        className="inline-flex h-full w-10 items-center justify-center text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-800"
-                      >
-                        -
-                      </button>
-                      <div className="flex h-full items-center gap-2 border-x border-slate-200 px-3">
+                      <div className="inline-flex h-9 items-center overflow-hidden rounded-xl border border-slate-200 bg-white">
                         <button
                           type="button"
-                          onClick={fitCanvasToNodes}
-                          disabled={filteredNodes.length === 0}
-                          className="text-sm font-medium text-slate-600 transition hover:text-slate-800 disabled:cursor-not-allowed disabled:text-slate-400"
+                          onClick={() => applyCanvasZoom(canvasScaleRef.current - 0.08)}
+                          className="inline-flex h-full w-9 items-center justify-center text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-800"
                         >
-                          Vừa khung
+                          -
                         </button>
-                        <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-500">
-                          Thu phóng {Math.round(canvasScale * 100)}%
-                        </span>
+                        <div className="flex h-full items-center gap-2 border-x border-slate-200 px-2.5">
+                          <button
+                            type="button"
+                            onClick={fitCanvasToNodes}
+                            disabled={filteredNodes.length === 0}
+                            className="text-xs font-semibold text-slate-600 transition hover:text-slate-800 disabled:cursor-not-allowed disabled:text-slate-400"
+                          >
+                            Vừa khung
+                          </button>
+                          <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-500">
+                            {Math.round(canvasScale * 100)}%
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => applyCanvasZoom(canvasScaleRef.current + 0.08)}
+                          className="inline-flex h-full w-9 items-center justify-center text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-800"
+                        >
+                          +
+                        </button>
                       </div>
+
                       <button
                         type="button"
-                        onClick={() => applyCanvasZoom(canvasScaleRef.current + 0.08)}
-                        className="inline-flex h-full w-10 items-center justify-center text-sm font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-800"
+                        onClick={() =>
+                          selectedGoal
+                            ? updateUrlState({ nextDetailOpen: !shouldShowDetailDrawer })
+                            : undefined
+                        }
+                        disabled={!selectedGoal}
+                        className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-slate-800 disabled:cursor-not-allowed disabled:text-slate-400"
                       >
-                        +
+                        {shouldShowDetailDrawer ? "Ẩn chi tiết" : "Mở chi tiết"}
                       </button>
                     </div>
-                  </div>
-                ) : null}
+                  ) : null}
+                </div>
               </div>
 
               {showPermissionDebug && permissionDebug ? (
@@ -2462,29 +2899,29 @@ function GoalsPageContent() {
                 </div>
               ) : null}
 
-              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+              <div className="relative min-h-0 flex-1 overflow-hidden bg-[#eef3fb]">
                 {isLoadingGoals ? (
-                  <div className="p-4 lg:p-7">
+                  <div className="p-4 lg:p-6">
                     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 text-sm text-slate-600">
                       Đang tải dữ liệu mục tiêu...
                     </div>
                   </div>
                 ) : goalsError ? (
-                  <div className="p-4 lg:p-7">
+                  <div className="p-4 lg:p-6">
                     <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-6 text-sm text-rose-700">
                       {goalsError}
                     </div>
                   </div>
                 ) : nodes.length === 0 ? (
-                  <div className="p-4 lg:p-7">
+                  <div className="p-4 lg:p-6">
                     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 text-sm text-slate-600">
                       Chưa có mục tiêu nào trong hệ thống.
                     </div>
                   </div>
                 ) : mode === "canvas" ? (
-                  <div className="space-y-4 p-4 lg:p-7">
+                  <div className="h-full min-h-0 p-5 pb-8 lg:p-6 lg:pb-10">
                     {filteredNodes.length === 0 ? (
-                      <div className="flex h-[700px] items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-600">
+                      <div className="flex h-full min-h-0 items-center justify-center rounded-[28px] border border-slate-200 bg-white/70 px-4 text-sm text-slate-600">
                         Không có mục tiêu phù hợp với bộ lọc hiện tại.
                       </div>
                     ) : (
@@ -2495,13 +2932,19 @@ function GoalsPageContent() {
                         onPointerUp={onPointerUpCanvas}
                         onPointerCancel={onPointerUpCanvas}
                         onWheel={onWheelCanvas}
-                        className={`relative h-[700px] overflow-hidden overscroll-contain rounded-2xl border border-slate-200 bg-[#fbfcff] select-none ${
+                        className={`relative h-full min-h-0 w-full overflow-hidden rounded-[30px] border border-slate-200/80 bg-white/55 shadow-[0_20px_44px_-34px_rgba(15,23,42,0.18)] overscroll-contain select-none ${
                           isPanning || draggingTarget ? "cursor-grabbing" : "cursor-grab"
                         }`}
                         style={{
                           touchAction: "none",
-                          backgroundImage: "radial-gradient(#dbe4f3 1.1px, transparent 1.1px)",
-                          backgroundSize: "36px 36px",
+                          paddingTop: CANVAS_SHELL_PADDING,
+                          paddingRight: CANVAS_SHELL_PADDING,
+                          paddingBottom: CANVAS_SHELL_BOTTOM_PADDING,
+                          paddingLeft: CANVAS_SHELL_PADDING,
+                          backgroundColor: "#f7faff",
+                          backgroundImage:
+                            "radial-gradient(circle at 1px 1px, rgba(148,163,184,0.18) 1px, transparent 0)",
+                          backgroundSize: "24px 24px",
                         }}
                       >
                         <Popover>
@@ -2511,7 +2954,7 @@ function GoalsPageContent() {
                               aria-label="Hướng dẫn thao tác sơ đồ"
                               onPointerDown={(event) => event.stopPropagation()}
                               onWheel={(event) => event.stopPropagation()}
-                              className="absolute left-4 top-4 z-20 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white/90 text-slate-600 shadow-sm backdrop-blur transition hover:bg-white hover:text-slate-800"
+                              className="absolute left-3 top-3 z-20 inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/90 text-slate-600 shadow-sm backdrop-blur transition hover:bg-white hover:text-slate-800"
                             >
                               <Info className="h-4 w-4" />
                             </button>
@@ -2577,8 +3020,36 @@ function GoalsPageContent() {
                                   <path
                                     key={`${edge.from}-${edge.to}`}
                                     d={connectorPath}
-                                    stroke="#8ea8d2"
-                                    strokeWidth="2.8"
+                                    stroke={
+                                      selectedGoal?.id &&
+                                      (
+                                        edge.from === selectedGoal.id ||
+                                        fromKeyResultNode?.goalId === selectedGoal.id ||
+                                        toNode.goalId === selectedGoal.id
+                                      )
+                                        ? "#5b8def"
+                                        : "#9eb3d6"
+                                    }
+                                    strokeWidth={
+                                      selectedGoal?.id &&
+                                      (
+                                        edge.from === selectedGoal.id ||
+                                        fromKeyResultNode?.goalId === selectedGoal.id ||
+                                        toNode.goalId === selectedGoal.id
+                                      )
+                                        ? "3.6"
+                                        : "2.6"
+                                    }
+                                    opacity={
+                                      selectedGoal?.id &&
+                                      !(
+                                        edge.from === selectedGoal.id ||
+                                        fromKeyResultNode?.goalId === selectedGoal.id ||
+                                        toNode.goalId === selectedGoal.id
+                                      )
+                                        ? 0.48
+                                        : 0.8
+                                    }
                                     strokeLinecap="round"
                                     strokeLinejoin="round"
                                     fill="none"
@@ -2644,7 +3115,15 @@ function GoalsPageContent() {
                                     });
                                   }
                                 }}
-                                className="absolute cursor-grab rounded-2xl border border-slate-200 bg-white/96 p-3 text-left shadow-[0_12px_26px_-24px_rgba(15,23,42,0.9)] outline-none transition hover:border-blue-300 hover:bg-white focus-visible:ring-2 focus-visible:ring-blue-100"
+                                className={`absolute cursor-grab rounded-[22px] border bg-white/97 p-3.5 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-blue-100 ${
+                                  selectedCanvasKeyResultNodeId === keyResultNode.id
+                                    ? "z-10 border-blue-500 shadow-[0_20px_50px_-28px_rgba(37,99,235,0.55)] ring-2 ring-blue-100"
+                                    : selectedGoal?.id === keyResultNode.goalId
+                                      ? "border-blue-200 shadow-[0_18px_42px_-30px_rgba(59,130,246,0.32)]"
+                                      : selectedGoal?.id
+                                        ? "border-slate-200 opacity-75 shadow-[0_12px_26px_-24px_rgba(15,23,42,0.7)]"
+                                        : "border-slate-200 shadow-[0_12px_26px_-24px_rgba(15,23,42,0.7)] hover:border-blue-300 hover:bg-white"
+                                }`}
                               >
                                 <div>
                                   <div className="flex items-start justify-between gap-2">
@@ -2654,7 +3133,7 @@ function GoalsPageContent() {
                                           ? "KR hỗ trợ"
                                           : "KR"}
                                       </p>
-                                      <p className="mt-1 line-clamp-2 text-sm font-semibold text-slate-900">
+                                      <p className="mt-1 line-clamp-2 text-[15px] font-semibold leading-snug text-slate-900">
                                         {keyResultNode.name}
                                       </p>
                                       {keyResultNode.contributionType === "support" ? (
@@ -2668,7 +3147,7 @@ function GoalsPageContent() {
                                       {keyResultNode.progress}%
                                     </span>
                                   </div>
-                                  <div className="mt-3">
+                                  <div className="mt-3.5">
                                     <ProgressBar value={keyResultNode.progress} />
                                   </div>
                                 </div>
@@ -2688,10 +3167,12 @@ function GoalsPageContent() {
                             {canvasGoalNodes.map((goal) => (
                               <div
                                 key={goal.id}
-                                className={`group absolute rounded-2xl border bg-white shadow-[0_14px_34px_-26px_rgba(15,23,42,0.6)] transition ${
+                                className={`group absolute rounded-[26px] border bg-white transition ${
                                   selectedId === goal.id
-                                    ? "border-blue-600 ring-2 ring-blue-100"
-                                    : "border-slate-200 hover:border-blue-300"
+                                    ? "z-10 border-blue-600 shadow-[0_28px_70px_-34px_rgba(37,99,235,0.4)] ring-2 ring-blue-100"
+                                    : selectedGoal?.id
+                                      ? "border-slate-200 opacity-80 shadow-[0_18px_44px_-30px_rgba(15,23,42,0.35)]"
+                                      : "border-slate-200 shadow-[0_18px_44px_-30px_rgba(15,23,42,0.35)] hover:border-blue-300"
                                 }`}
                                 style={{
                                   left: goal.x,
@@ -2780,7 +3261,7 @@ function GoalsPageContent() {
                                   <div className="flex items-start justify-between gap-3 pr-12">
                                     <div className="flex flex-wrap items-center gap-2">
                                       <span
-                                        className={`inline-flex max-w-[150px] truncate rounded-lg px-2.5 py-1 text-[11px] font-semibold ${badgeMap[goal.mau]}`}
+                                        className={`inline-flex max-w-[168px] truncate rounded-lg px-2.5 py-1 text-[11px] font-semibold ${badgeMap[goal.mau]}`}
                                         title={goal.teamNames.join(", ")}
                                       >
                                         {goal.teamSummary}
@@ -2798,7 +3279,7 @@ function GoalsPageContent() {
                                     </div>
                                   </div>
 
-                                  <p className="mt-4 line-clamp-2 text-[22px] font-semibold leading-tight tracking-[-0.02em] text-slate-900">
+                                  <p className="mt-4 line-clamp-2 text-[24px] font-semibold leading-tight tracking-[-0.02em] text-slate-900">
                                     {goal.tieuDe}
                                   </p>
                                   <p className="mt-2 line-clamp-1 text-xs font-medium text-slate-500">
@@ -2861,31 +3342,51 @@ function GoalsPageContent() {
                             ))}
                           </div>
                         </div>
+                        {!shouldShowDetailDrawer ? (
+                          <div className="pointer-events-none absolute bottom-4 right-4 z-20">
+                            <div className="pointer-events-auto rounded-2xl border border-slate-200 bg-white/92 px-3 py-2 text-xs text-slate-600 shadow-lg backdrop-blur">
+                              {selectedGoal ? (
+                                <button
+                                  type="button"
+                                  onClick={() => updateUrlState({ nextDetailOpen: true })}
+                                  className="font-semibold text-blue-600 hover:text-blue-700"
+                                >
+                                  Mở chi tiết cho: {selectedGoal.tieuDe}
+                                </button>
+                              ) : (
+                                <p>Chọn một mục tiêu hoặc KR để xem chi tiết.</p>
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     )}
                   </div>
                 ) : (
-                  <div className="space-y-4 p-4 lg:p-7">
-                    <article className="rounded-2xl border border-slate-200 bg-white">
-                      <div className="space-y-3 border-b border-slate-100 px-5 py-4">
+                  <div className="h-full min-h-0 p-4 lg:p-6">
+                    <article className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                      <div className="space-y-3 border-b border-slate-100 px-4 py-4 lg:px-5">
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <h2 className="text-2xl font-semibold tracking-[-0.02em] text-slate-900">
-                            Danh sách mục tiêu
-                          </h2>
-                          <p className="text-sm text-slate-500">
-                            Hiển thị {filteredNodes.length}/{nodes.length} mục tiêu
-                          </p>
+                          <div>
+                            <h2 className="text-xl font-semibold tracking-[-0.02em] text-slate-900">
+                              Danh sách mục tiêu
+                            </h2>
+                            <p className="mt-1 text-sm text-slate-500">
+                              Hiển thị {filteredNodes.length}/{nodes.length} mục tiêu
+                            </p>
+                          </div>
                         </div>
-                        <div className="flex flex-wrap items-center gap-3">
+
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
                           <input
                             value={keywordFilter}
                             onChange={(event) => setKeywordFilter(event.target.value)}
                             placeholder="Tìm theo tên/mô tả..."
-                            className="h-10 w-full grow rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 placeholder:text-slate-400 outline-none shadow-none transition hover:border-slate-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 md:w-[260px] lg:w-[280px]"
+                            className="h-9 min-w-[220px] flex-1 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 placeholder:text-slate-400 outline-none shadow-none transition hover:border-slate-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
                           />
 
                           <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
-                            <SelectTrigger className="h-10 min-w-[200px] rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-none hover:border-slate-300 focus-visible:border-blue-400 focus-visible:ring-2 focus-visible:ring-blue-100 sm:w-[180px] lg:w-[170px]">
+                            <SelectTrigger className={listFilterTriggerClassName}>
                               <SelectValue placeholder="Tất cả phòng ban" />
                             </SelectTrigger>
                             <SelectContent>
@@ -2899,7 +3400,7 @@ function GoalsPageContent() {
                           </Select>
 
                           <Select value={typeFilter} onValueChange={setTypeFilter}>
-                            <SelectTrigger className="h-10 min-w-[200px] rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-none hover:border-slate-300 focus-visible:border-blue-400 focus-visible:ring-2 focus-visible:ring-blue-100 sm:w-[180px] lg:w-[170px]">
+                            <SelectTrigger className={listFilterTriggerClassName}>
                               <SelectValue placeholder="Tất cả loại" />
                             </SelectTrigger>
                             <SelectContent>
@@ -2913,7 +3414,7 @@ function GoalsPageContent() {
                           </Select>
 
                           <Select value={quarterFilter} onValueChange={setQuarterFilter}>
-                            <SelectTrigger className="h-10 min-w-[200px] rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-none hover:border-slate-300 focus-visible:border-blue-400 focus-visible:ring-2 focus-visible:ring-blue-100 sm:w-[180px] lg:w-[170px]">
+                            <SelectTrigger className={listFilterTriggerClassName}>
                               <SelectValue placeholder="Tất cả quý" />
                             </SelectTrigger>
                             <SelectContent>
@@ -2926,7 +3427,7 @@ function GoalsPageContent() {
                           </Select>
 
                           <Select value={yearFilter} onValueChange={setYearFilter}>
-                            <SelectTrigger className="h-10 min-w-[200px] rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 shadow-none hover:border-slate-300 focus-visible:border-blue-400 focus-visible:ring-2 focus-visible:ring-blue-100 sm:w-[180px] lg:w-[170px]">
+                            <SelectTrigger className={listFilterTriggerClassName}>
                               <SelectValue placeholder="Tất cả năm" />
                             </SelectTrigger>
                             <SelectContent>
@@ -2943,7 +3444,7 @@ function GoalsPageContent() {
                             <button
                               type="button"
                               onClick={clearAllFilters}
-                              className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
+                              className="h-9 shrink-0 rounded-xl border border-slate-200 bg-white px-3.5 text-sm text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
                             >
                               Xóa bộ lọc
                             </button>
@@ -2969,7 +3470,7 @@ function GoalsPageContent() {
                                     setYearFilter("all");
                                   }
                                 }}
-                                className="inline-flex h-8 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-100"
+                                className="inline-flex h-7 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 text-[11px] font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-100"
                               >
                                 {chip.label}: {chip.value}
                                 <span aria-hidden>×</span>
@@ -2978,86 +3479,118 @@ function GoalsPageContent() {
                           </div>
                         ) : null}
                       </div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full min-w-[1220px] text-left">
-                          <thead>
-                            <tr className="text-[11px] tracking-[0.08em] text-slate-400 uppercase">
-                              <th className="sticky left-0 z-20 w-[320px] min-w-[320px] bg-white px-5 py-3 font-semibold shadow-[1px_0_0_0_#e2e8f0]">
-                                Mục tiêu
-                              </th>
-                              <th className="px-5 py-3 font-semibold">Phòng ban</th>
-                              <th className="px-5 py-3 font-semibold">Loại</th>
-                              <th className="px-5 py-3 font-semibold">Kỳ</th>
-                              <th className="px-5 py-3 font-semibold">Tiến độ</th>
-                              <th className="px-5 py-3 font-semibold">Tạo lúc</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {filteredNodes.length > 0 ? (
-                              paginatedFilteredNodes.map((goal) => (
-                                <tr
-                                  key={goal.id}
-                                  className={`group cursor-pointer border-t border-slate-100 transition ${
-                                    selectedId === goal.id ? "bg-blue-50/40" : "hover:bg-slate-50"
-                                  }`}
-                                  onClick={() => handleSelectGoal(goal.id)}
-                                >
-                                  <td
-                                    className={`sticky left-0 z-10 w-[320px] min-w-[320px] px-5 py-4 shadow-[1px_0_0_0_#e2e8f0] ${
-                                      selectedId === goal.id
-                                        ? "bg-blue-50/40"
-                                        : "bg-white group-hover:bg-slate-50"
-                                    }`}
-                                  >
-                                    <p className="line-clamp-2 text-sm font-semibold text-slate-700">
-                                      {goal.tieuDe}
-                                    </p>
-                                    <p className="mt-1 line-clamp-1 text-xs text-slate-500">
-                                      {goal.moTa}
-                                    </p>
-                                  </td>
-                                  <td
-                                    className="px-5 py-4 text-sm text-slate-600"
-                                    title={goal.teamNames.join(", ")}
-                                  >
-                                    {goal.teamSummary}
-                                  </td>
-                                  <td className="px-5 py-4 text-sm text-slate-600">{goal.nhom}</td>
-                                  <td className="px-5 py-4 text-sm text-slate-600">{goal.quy}</td>
-                                  <td className="px-5 py-4">
-                                    {goal.keyResultCount > 0 ? (
-                                      <div className="w-32 space-y-1">
-                                        <ProgressBar value={goal.progress} />
-                                        <p className="text-right text-xs font-semibold text-slate-500">
-                                          {goal.progress}%
+
+                      <div className="min-h-0 flex-1">
+                        <div className="scrollbar-subtle h-full overflow-auto overscroll-x-contain scroll-smooth [scrollbar-gutter:stable]">
+                          <table className="w-full min-w-[1180px] table-fixed text-left">
+                            <thead>
+                              <tr className="text-[11px] tracking-[0.08em] text-slate-500 uppercase">
+                                <th className="sticky top-0 left-0 z-30 w-[360px] min-w-[360px] border-b border-r border-slate-200 bg-slate-50 px-5 py-3 font-semibold shadow-[12px_0_22px_-22px_rgba(15,23,42,0.4)]">
+                                  Mục tiêu
+                                </th>
+                                <th className="sticky top-0 z-20 w-[220px] border-b border-slate-200 bg-slate-50 px-4 py-3 font-semibold">
+                                  Phòng ban
+                                </th>
+                                <th className="sticky top-0 z-20 w-[150px] border-b border-slate-200 bg-slate-50 px-4 py-3 font-semibold">
+                                  Loại
+                                </th>
+                                <th className="sticky top-0 z-20 w-[160px] border-b border-slate-200 bg-slate-50 px-4 py-3 font-semibold">
+                                  Kỳ
+                                </th>
+                                <th className="sticky top-0 z-20 w-[190px] border-b border-slate-200 bg-slate-50 px-4 py-3 font-semibold">
+                                  Tiến độ
+                                </th>
+                                <th className="sticky top-0 z-20 w-[180px] border-b border-slate-200 bg-slate-50 px-4 py-3 font-semibold">
+                                  Tạo lúc
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {filteredNodes.length > 0 ? (
+                                paginatedFilteredNodes.map((goal) => {
+                                  const isSelectedRow = selectedId === goal.id;
+                                  const rowToneClass = isSelectedRow
+                                    ? "bg-blue-50/70"
+                                    : "bg-white group-hover:bg-slate-50";
+                                  const rowTextToneClass = isSelectedRow
+                                    ? "text-blue-950"
+                                    : "text-slate-600";
+
+                                  return (
+                                    <tr
+                                      key={goal.id}
+                                      className={`group cursor-pointer border-t border-slate-100 transition-colors ${
+                                        isSelectedRow ? "bg-blue-50/70" : "hover:bg-slate-50"
+                                      }`}
+                                      onClick={() => handleSelectGoal(goal.id)}
+                                    >
+                                      <td
+                                        className={`sticky left-0 z-20 w-[360px] min-w-[360px] border-r border-slate-200 px-5 py-4 align-top shadow-[12px_0_22px_-22px_rgba(15,23,42,0.4)] transition-colors ${rowToneClass}`}
+                                      >
+                                        <p className="line-clamp-2 text-sm font-semibold text-slate-800">
+                                          {goal.tieuDe}
                                         </p>
-                                      </div>
-                                    ) : (
-                                      <p className="text-xs font-medium text-slate-500">
-                                        Chưa có KR
-                                      </p>
-                                    )}
-                                  </td>
-                                  <td className="whitespace-nowrap px-5 py-4 text-sm text-slate-500">
-                                    {formatDateTimeVi(goal.createdAt)}
+                                        <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-slate-500">
+                                          {goal.moTa}
+                                        </p>
+                                      </td>
+                                      <td
+                                        className={`px-4 py-4 text-sm transition-colors ${rowToneClass} ${rowTextToneClass}`}
+                                        title={goal.teamNames.join(", ")}
+                                      >
+                                        <div className="line-clamp-2 leading-6">{goal.teamSummary}</div>
+                                      </td>
+                                      <td
+                                        className={`px-4 py-4 text-sm transition-colors ${rowToneClass} ${rowTextToneClass}`}
+                                      >
+                                        {goal.nhom}
+                                      </td>
+                                      <td
+                                        className={`px-4 py-4 text-sm transition-colors ${rowToneClass} ${rowTextToneClass}`}
+                                      >
+                                        {goal.quy}
+                                      </td>
+                                      <td className={`px-4 py-4 transition-colors ${rowToneClass}`}>
+                                        {goal.keyResultCount > 0 ? (
+                                          <div className="flex w-[170px] items-center gap-3">
+                                            <div className="min-w-0 flex-1">
+                                              <ProgressBar value={goal.progress} />
+                                            </div>
+                                            <span className="w-11 text-right text-xs font-semibold text-slate-600">
+                                              {goal.progress}%
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          <p className="text-xs font-medium text-slate-500">
+                                            Chưa có KR
+                                          </p>
+                                        )}
+                                      </td>
+                                      <td
+                                        className={`whitespace-nowrap px-4 py-4 text-sm transition-colors ${rowToneClass} ${rowTextToneClass}`}
+                                      >
+                                        {formatDateTimeVi(goal.createdAt)}
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                              ) : (
+                                <tr>
+                                  <td
+                                    colSpan={6}
+                                    className="bg-white px-5 py-10 text-center text-sm text-slate-500"
+                                  >
+                                    Không có mục tiêu phù hợp với bộ lọc hiện tại.
                                   </td>
                                 </tr>
-                              ))
-                            ) : (
-                              <tr>
-                                <td
-                                  colSpan={6}
-                                  className="px-5 py-8 text-center text-sm text-slate-500"
-                                >
-                                  Không có mục tiêu phù hợp với bộ lọc hiện tại.
-                                </td>
-                              </tr>
-                            )}
-                          </tbody>
-                        </table>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
+
                       {filteredNodes.length > 0 ? (
-                        <div className="flex items-center justify-between border-t border-slate-100 px-5 py-3 text-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-sm lg:px-5">
                           <p className="text-slate-500">
                             Trang {safeGoalsListPage}/{totalGoalPages} · {filteredNodes.length} mục
                             tiêu
@@ -3067,7 +3600,7 @@ function GoalsPageContent() {
                               type="button"
                               onClick={() => setGoalsListPage((prev) => Math.max(1, prev - 1))}
                               disabled={safeGoalsListPage <= 1}
-                              className="h-9 rounded-lg border border-slate-200 bg-white px-3 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              className="h-9 rounded-lg border border-slate-200 bg-white px-3 font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               Trước
                             </button>
@@ -3077,7 +3610,7 @@ function GoalsPageContent() {
                                 setGoalsListPage((prev) => Math.min(totalGoalPages, prev + 1))
                               }
                               disabled={safeGoalsListPage >= totalGoalPages}
-                              className="h-9 rounded-lg border border-slate-200 bg-white px-3 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              className="h-9 rounded-lg border border-slate-200 bg-white px-3 font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               Sau
                             </button>
@@ -3090,253 +3623,26 @@ function GoalsPageContent() {
               </div>
             </section>
 
-            {isDetailOpen && selectedGoal ? (
-              <aside className="flex h-full min-h-0 flex-col overflow-hidden border-t border-slate-200 bg-white xl:border-l xl:border-t-0">
-                <div className="flex items-center justify-between border-b border-slate-100 px-5 py-5 xl:px-6">
-                  <h2 className="text-2xl font-semibold tracking-[-0.02em] text-slate-900">
-                    {selectedKeyResult ? "Chi tiết KR" : "Chi tiết mục tiêu"}
-                  </h2>
-                  <button
-                    type="button"
-                    onClick={() => updateUrlState({ nextDetailOpen: false })}
-                    aria-label="Đóng sidebar chi tiết"
-                    className="flex h-11 w-11 items-center justify-center rounded-xl text-3xl leading-none text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-                  >
-                    ×
-                  </button>
-                </div>
-
-                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 xl:px-6 xl:py-6">
-                  <div className="space-y-6">
-                    {selectedKeyResult ? (
-                      <>
-                        <div>
-                          <p className="text-[11px] font-semibold tracking-[0.08em] text-blue-600 uppercase">
-                            {selectedKeyResult.contributionType === "support"
-                              ? "KR hỗ trợ"
-                              : "Key Result"}
-                          </p>
-                          <h3 className="mt-2 text-2xl font-semibold leading-tight tracking-[-0.03em] text-slate-900">
-                            {selectedKeyResult.name}
-                          </h3>
-                          <p className="mt-2 text-sm text-slate-500">
-                            Thuộc mục tiêu: {selectedGoal.tieuDe}
-                          </p>
-                        </div>
-
-                        <div>
-                          <div className="mb-2 flex items-center justify-between">
-                            <p className="text-sm text-slate-400">Tiến độ</p>
-                            <p className="text-3xl font-bold text-slate-900">
-                              {selectedKeyResult.progress}%
-                            </p>
-                          </div>
-                          <ProgressBar value={selectedKeyResult.progress} />
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-6">
-                          <div>
-                            <p className="text-sm text-slate-400">Bắt đầu</p>
-                            <p className="mt-2 text-base font-medium text-slate-800">
-                              {formatKeyResultMetric(
-                                selectedKeyResult.startValue,
-                                selectedKeyResult.unit,
-                              )}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-sm text-slate-400">Hiện tại</p>
-                            <p className="mt-2 text-base font-medium text-slate-800">
-                              {formatKeyResultMetric(
-                                selectedKeyResult.current,
-                                selectedKeyResult.unit,
-                              )}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-sm text-slate-400">Chỉ tiêu</p>
-                            <p className="mt-2 text-base font-medium text-slate-800">
-                              {formatKeyResultMetric(
-                                selectedKeyResult.target,
-                                selectedKeyResult.unit,
-                              )}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-sm text-slate-400">Đơn vị đo</p>
-                            <p className="mt-2 text-base font-medium text-slate-800">
-                              {formatKeyResultUnit(selectedKeyResult.unit)}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div>
-                          <p className="text-sm text-slate-400">Phòng ban phụ trách</p>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {selectedGoal.teamNames.length > 0 ? (
-                              selectedGoal.teamNames.map((teamName, index) => (
-                                <span
-                                  key={`${selectedKeyResult.id}-${teamName}`}
-                                  className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                                    index === 0
-                                      ? "bg-blue-50 text-blue-700"
-                                      : "bg-slate-100 text-slate-700"
-                                  }`}
-                                >
-                                  {teamName}
-                                  {index === 0 ? " · chính" : ""}
-                                </span>
-                              ))
-                            ) : (
-                              <p className="text-sm font-medium text-slate-800">
-                                {selectedGoal.phongBan || "Chưa có phòng ban phụ trách"}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-
-                        <div>
-                          <p className="text-sm text-slate-400">Khung thời gian</p>
-                          <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                            <p className="text-sm font-medium text-slate-800">
-                              {formatTimelineRangeVi(
-                                selectedKeyResult.startDate,
-                                selectedKeyResult.endDate,
-                                {
-                                  fallback: "Chưa đặt khung thời gian",
-                                },
-                              )}
-                            </p>
-                            {selectedKeyResult.contributionType === "support" ? (
-                              <p className="mt-2 text-sm text-amber-700">
-                                Hỗ trợ cho:{" "}
-                                {selectedKeyResult.supportTargetSummary ?? "Chưa xác định"}
-                              </p>
-                            ) : null}
-                          </div>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <div>
-                          <p className="text-[11px] font-semibold tracking-[0.08em] text-blue-600 uppercase">
-                            Mục tiêu
-                          </p>
-                          <h3 className="mt-2 text-2xl font-semibold leading-tight tracking-[-0.03em] text-slate-900">
-                            {selectedGoal.tieuDe}
-                          </h3>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-6">
-                          <div>
-                            <p className="text-sm text-slate-400">Quý</p>
-                            <p className="mt-2 text-base font-medium text-slate-800">
-                              {selectedGoal.quy}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-sm text-slate-400">Chỉ tiêu</p>
-                            <p className="mt-2 text-base font-medium text-slate-800">
-                              {selectedGoal.target !== null || selectedGoal.unit
-                                ? `${formatKeyResultMetric(selectedGoal.target, selectedGoal.unit)}`
-                                : "Chưa đặt"}
-                            </p>
-                          </div>
-                        </div>
-
-                        {selectedGoal.keyResultCount > 0 ? (
-                          <div>
-                            <div className="mb-2 flex items-center justify-between">
-                              <p className="text-sm text-slate-400">Tiến độ</p>
-                              <p className="text-3xl font-bold text-slate-900">
-                                {selectedGoal.progress}%
-                              </p>
-                            </div>
-                            <ProgressBar value={selectedGoal.progress} />
-                          </div>
-                        ) : (
-                          <div className="rounded-2xl border border-dashed border-blue-200 bg-blue-50/60 p-4">
-                            <p className="text-sm font-medium text-slate-700">
-                              Chưa có Key Result. Hãy thêm KR để bắt đầu theo dõi mục tiêu.
-                            </p>
-                            <Link
-                              href={`/goals/${selectedGoal.id}/key-results/new`}
-                              className="mt-3 inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white"
-                            >
-                              + Thêm Key Result
-                            </Link>
-                          </div>
-                        )}
-
-                        <div>
-                          <p className="text-sm text-slate-400">Mô tả</p>
-                          <p className="mt-2 text-sm leading-relaxed text-slate-700">
-                            {selectedGoal.moTa}
-                          </p>
-                        </div>
-
-                        {selectedGoal.teamNames.length > 0 ? (
-                          <div>
-                            <p className="text-sm text-slate-400">Danh sách phòng ban tham gia</p>
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {selectedGoal.teamNames.map((teamName, index) => (
-                                <span
-                                  key={`${selectedGoal.id}-${teamName}`}
-                                  className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                                    index === 0
-                                      ? "bg-blue-50 text-blue-700"
-                                      : "bg-slate-100 text-slate-700"
-                                  }`}
-                                >
-                                  {teamName}
-                                  {index === 0 ? " · chính" : ""}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        ) : null}
-                      </>
-                    )}
-                  </div>
-                </div>
-                <div className="border-t border-slate-200 bg-white/95 px-5 py-4 shadow-[0_-8px_24px_-20px_rgba(15,23,42,0.35)] backdrop-blur xl:px-6">
-                  <div className="flex gap-3">
-                    {selectedKeyResult ? (
-                      <>
-                        <Link
-                          href={selectedKeyResultCreateTaskHref}
-                          className="flex h-11 flex-1 items-center justify-center rounded-xl border border-slate-200 bg-white text-base font-semibold text-slate-700 transition hover:bg-slate-50"
-                        >
-                          Thêm công việc
-                        </Link>
-                        <Link
-                          href={`/goals/${selectedGoal.id}/key-results/${selectedKeyResult.id}`}
-                          className="flex h-11 flex-1 items-center justify-center rounded-xl bg-blue-600 text-base font-semibold text-white transition hover:bg-blue-700"
-                        >
-                          Mở KR
-                        </Link>
-                      </>
-                    ) : (
-                      <>
-                        <Link
-                          href={`/goals/${selectedGoal.id}/key-results/new`}
-                          className="flex h-11 flex-1 items-center justify-center rounded-xl border border-slate-200 bg-white text-base font-semibold text-slate-700 transition hover:bg-slate-50"
-                        >
-                          Thêm KR
-                        </Link>
-                        <Link
-                          href={`/goals/${selectedGoal.id}`}
-                          className="flex h-11 flex-1 items-center justify-center rounded-xl bg-blue-600 text-base font-semibold text-white transition hover:bg-blue-700"
-                        >
-                          Mở trang chi tiết
-                        </Link>
-                      </>
-                    )}
-                  </div>
-                </div>
+            {shouldShowDetailDrawer && selectedGoal ? (
+              <aside className="hidden w-[340px] shrink-0 border-l border-slate-200 bg-white lg:flex lg:min-h-0 lg:flex-col">
+                {renderDetailPanelContent()}
               </aside>
             ) : null}
           </main>
+
+          {shouldShowDetailDrawer && selectedGoal ? (
+            <>
+              <button
+                type="button"
+                aria-label="Đóng panel chi tiết"
+                onClick={() => updateUrlState({ nextDetailOpen: false })}
+                className="fixed inset-0 z-30 bg-slate-900/25 backdrop-blur-[1px] lg:hidden"
+              />
+              <aside className="fixed inset-y-0 right-0 z-40 flex h-full w-full max-w-[340px] min-h-0 flex-col overflow-hidden border-l border-slate-200 bg-white shadow-2xl lg:hidden">
+                {renderDetailPanelContent()}
+              </aside>
+            </>
+          ) : null}
 
           {isGoalLogsOpen && selectedGoal ? (
             <div

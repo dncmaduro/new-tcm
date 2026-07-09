@@ -2,11 +2,11 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { EmptyStateCompact, DetailPageHeader, SectionCard } from "@/components/detail-ui";
 import { TaskMetaSidebar } from "@/components/tasks/task-detail/task-meta-sidebar";
 import { TaskEvidenceSection } from "@/components/tasks/task-detail/task-evidence-section";
 import { TaskOverviewCard } from "@/components/tasks/task-detail/task-overview-card";
 import { CommentSection } from "@/components/comments/comment-section";
-import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import type {
   GoalLiteRow,
   KeyResultLiteRow,
@@ -157,7 +157,6 @@ export default function TaskDetailPage() {
   const router = useRouter();
   const workspaceAccess = useWorkspaceAccess();
   const taskId = typeof params.taskId === "string" ? params.taskId : "";
-  const canViewTaskPoints = workspaceAccess.canViewTaskPoints;
   const canManageTask = workspaceAccess.canManage && !workspaceAccess.error;
 
   const [task, setTask] = useState<TaskRow | null>(null);
@@ -628,12 +627,12 @@ export default function TaskDetailPage() {
         <WorkspaceSidebar active="tasks" />
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <WorkspacePageHeader
-            title={task?.name ?? "Chi tiết công việc"}
+          <DetailPageHeader
+            title="Chi tiết công việc"
             items={breadcrumbs.map((item) => ({ label: item.label, href: item.href }))}
           />
 
-          <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 pt-5 lg:px-7">
+          <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 lg:px-6">
             {isLoading ? (
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm text-slate-600">
                 Đang tải chi tiết công việc...
@@ -659,11 +658,13 @@ export default function TaskDetailPage() {
             ) : null}
 
             {!isLoading && !loadError && task ? (
-              <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-                <div className="space-y-6">
+              <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_300px] 2xl:grid-cols-[minmax(0,1fr)_312px]">
+                <div className="space-y-4">
                   <TaskOverviewCard
                     taskId={task.id}
                     progress={form.progress}
+                    assigneeName={assigneeName}
+                    timelineLabel={taskTimelineLabel}
                     keyResultName={keyResult?.name ?? null}
                     keyResultHref={keyResultHref}
                     form={form}
@@ -760,24 +761,23 @@ export default function TaskDetailPage() {
                     }
                   />
 
-                  <article className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_12px_30px_-24px_rgba(15,23,42,0.35)]">
-                    <h2 className="text-base font-semibold text-slate-900">Mô tả</h2>
+                  <SectionCard title="Mô tả" bodyClassName="space-y-3">
                     {isEditingTaskInfo ? (
                       <textarea
-                        rows={5}
+                        rows={4}
                         value={form.description}
                         onChange={(event) =>
                           setForm((current) => ({ ...current, description: event.target.value }))
                         }
-                        className="mt-4 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         placeholder="Mô tả ngắn những gì cần làm"
                       />
+                    ) : form.description.trim() ? (
+                      <p className="text-sm leading-6 text-slate-700">{form.description.trim()}</p>
                     ) : (
-                      <p className="mt-3 text-sm leading-relaxed text-slate-700">
-                        {form.description.trim() || "Chưa có mô tả."}
-                      </p>
+                      <EmptyStateCompact>Chưa có mô tả.</EmptyStateCompact>
                     )}
-                  </article>
+                  </SectionCard>
 
                   <TaskEvidenceSection
                     taskId={task.id}
@@ -789,19 +789,15 @@ export default function TaskDetailPage() {
                     entityType="task"
                     entityId={task.id}
                     currentProfileId={workspaceAccess.profileId}
+                    compact
                   />
                 </div>
 
                 <TaskMetaSidebar
                   progress={form.progress}
                   priority={form.priority}
-                  showTaskPoints={canViewTaskPoints}
                   assigneeName={assigneeName}
                   timelineLabel={taskTimelineLabel}
-                  goalName={goalName}
-                  goalHref={goalHref}
-                  keyResultName={keyResult?.name ?? null}
-                  keyResultHref={keyResultHref}
                   creatorName={creatorName}
                   createdAtLabel={formatDateTime(task.created_at)}
                   updatedAtLabel={formatDateTime(task.updated_at)}

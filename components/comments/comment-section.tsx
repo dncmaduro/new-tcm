@@ -1,12 +1,10 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { EmptyStateCompact, SectionCard } from "@/components/detail-ui";
 import { Button } from "@/components/ui/button";
 import { CommentItem } from "./comment-item";
-import {
-  RichCommentEditor,
-  type RichCommentEditorHandle,
-} from "./rich-comment-editor";
+import { RichCommentEditor, type RichCommentEditorHandle } from "./rich-comment-editor";
 import { useComments } from "./use-comments";
 import type { CommentEntityType, RichCommentSnapshot } from "./types";
 
@@ -14,12 +12,14 @@ type CommentSectionProps = {
   entityType: CommentEntityType;
   entityId: string;
   currentProfileId: string | null;
+  compact?: boolean;
 };
 
 export function CommentSection({
   entityType,
   entityId,
   currentProfileId,
+  compact = false,
 }: CommentSectionProps) {
   const editorRef = useRef<RichCommentEditorHandle | null>(null);
   const {
@@ -56,27 +56,23 @@ export function CommentSection({
       editorRef.current?.clear();
     } catch (submitError) {
       await editorRef.current?.cleanupAllPendingMedia();
-      setFormError(
-        submitError instanceof Error ? submitError.message : "Không thể gửi bình luận.",
-      );
+      setFormError(submitError instanceof Error ? submitError.message : "Không thể gửi bình luận.");
     }
   };
 
   return (
-    <article className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_12px_30px_-24px_rgba(15,23,42,0.35)]">
-      <h2 className="text-base font-semibold text-slate-900">Bình luận</h2>
-
+    <SectionCard title="Bình luận">
       {error ? (
-        <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {error}
         </div>
       ) : null}
 
-      <div className="mt-5">
+      <div>
         {isLoading ? (
           <p className="text-sm text-slate-600">Đang tải...</p>
         ) : comments.length === 0 ? (
-          <p className="text-sm text-slate-600">Chưa có bình luận.</p>
+          <EmptyStateCompact>Chưa có bình luận.</EmptyStateCompact>
         ) : (
           <div className="space-y-3">
             {comments.map((comment) => (
@@ -95,7 +91,7 @@ export function CommentSection({
         )}
       </div>
 
-      <div className="mt-5 border-t border-slate-200 pt-4 space-y-3">
+      <div className="space-y-3 border-slate-200 pt-4">
         <RichCommentEditor
           ref={editorRef}
           entityType={entityType}
@@ -104,6 +100,7 @@ export function CommentSection({
           profiles={profiles}
           placeholder="Nhập bình luận..."
           disabled={isSubmitting}
+          compact={compact}
           onChange={(snapshot) => {
             setDraftSnapshot(snapshot);
             if (formError && snapshot.hasContent) {
@@ -125,11 +122,12 @@ export function CommentSection({
             type="button"
             onClick={() => void handleSubmit()}
             disabled={isSubmitting || isUploading}
+            className={compact ? "h-8 rounded-lg px-3 text-xs" : ""}
           >
             {isSubmitting ? "Đang gửi..." : "Gửi"}
           </Button>
         </div>
       </div>
-    </article>
+    </SectionCard>
   );
 }

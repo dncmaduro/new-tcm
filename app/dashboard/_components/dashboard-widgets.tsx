@@ -1,13 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode } from "react";
 import {
   formatDateShortVi,
-  formatDurationClock,
-  formatHoursShort,
   formatTimeVi,
-  getWorkedMinutes,
   type DashboardActivityItem,
   type DashboardDeadlineItem,
   type DashboardGoalItem,
@@ -31,9 +28,9 @@ function CardShell({
 }) {
   return (
     <article className="rounded-2xl border border-slate-200 bg-white shadow-[0_8px_26px_-20px_rgba(15,23,42,0.45)]">
-      <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+      <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-4 py-3">
         <div>
-          <h2 className="text-xl font-semibold tracking-[-0.02em] text-slate-900">{title}</h2>
+          <h2 className="text-base font-semibold tracking-[-0.02em] text-slate-900">{title}</h2>
         </div>
         {action}
       </div>
@@ -52,28 +49,41 @@ function CardState({
   error,
   empty,
   emptyText,
+  ctaHref,
+  ctaLabel,
 }: {
   loading?: boolean;
   error?: string | null;
   empty?: boolean;
   emptyText: string;
+  ctaHref?: string;
+  ctaLabel?: string;
 }) {
   if (loading) {
     return (
-      <div className="space-y-3 px-5 py-5">
-        <LoadingBlock className="h-5 w-2/3" />
-        <LoadingBlock className="h-4 w-full" />
-        <LoadingBlock className="h-4 w-5/6" />
+      <div className="space-y-2 px-4 py-4">
+        <LoadingBlock className="h-4 w-2/3" />
+        <LoadingBlock className="h-3.5 w-full" />
+        <LoadingBlock className="h-3.5 w-5/6" />
       </div>
     );
   }
 
   if (error) {
-    return <div className="px-5 py-10 text-sm text-slate-500">Không có data</div>;
+    return <div className="px-4 py-4 text-sm text-slate-500">Không tải được dữ liệu lúc này.</div>;
   }
 
   if (empty) {
-    return <div className="px-5 py-10 text-sm text-slate-500">Không có data</div>;
+    return (
+      <div className="px-4 py-4 text-sm text-slate-500">
+        <p>{emptyText}</p>
+        {ctaHref && ctaLabel ? (
+          <Link href={ctaHref} className="mt-2 inline-flex font-semibold text-blue-600 hover:text-blue-700">
+            {ctaLabel}
+          </Link>
+        ) : null}
+      </div>
+    );
   }
 
   return null;
@@ -116,18 +126,17 @@ export function DashboardSummaryCards({
   const placeholders = Array.from({ length: 4 }, (_, index) => index);
 
   return (
-    <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
       {(loading ? placeholders : cards).map((item, index) => {
         if (loading) {
           return (
             <article
               key={`summary-loading-${index}`}
-              className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_26px_-20px_rgba(15,23,42,0.45)]"
+              className="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-[0_8px_26px_-20px_rgba(15,23,42,0.45)]"
             >
-              <LoadingBlock className="h-8 w-8 rounded-xl" />
-              <LoadingBlock className="mt-5 h-8 w-2/3" />
-              <LoadingBlock className="mt-3 h-4 w-1/2" />
-              <LoadingBlock className="mt-5 h-4 w-full" />
+              <LoadingBlock className="h-6 w-24 rounded-full" />
+              <LoadingBlock className="mt-4 h-7 w-2/3" />
+              <LoadingBlock className="mt-2 h-3.5 w-3/4" />
             </article>
           );
         }
@@ -138,7 +147,7 @@ export function DashboardSummaryCards({
         return (
           <article
             key={card.title}
-            className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_26px_-20px_rgba(15,23,42,0.45)]"
+            className="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-[0_8px_26px_-20px_rgba(15,23,42,0.45)]"
           >
             <div className="flex items-start justify-between gap-3">
               <span
@@ -157,13 +166,13 @@ export function DashboardSummaryCards({
             </div>
 
             <p
-              className={`mt-5 font-semibold tracking-[-0.03em] text-slate-950 ${
-                isCompactValue ? "text-2xl leading-tight" : "text-5xl leading-none"
+              className={`mt-4 font-semibold tracking-[-0.03em] text-slate-950 ${
+                isCompactValue ? "text-xl leading-tight" : "text-3xl leading-none"
               }`}
             >
               {card.value}
             </p>
-            <p className="mt-3 text-sm text-slate-600">{card.note}</p>
+            <p className="mt-2 text-xs text-slate-600">{card.note}</p>
           </article>
         );
       })}
@@ -246,44 +255,56 @@ export function DashboardGoalProgress({
   error: string | null;
 }) {
   return (
-	    <CardShell
-	      title={title}
-	      action={
-	        <Link href={actionHref} className="text-sm font-semibold text-blue-600 hover:text-blue-700">
-	          {actionLabel}
-	        </Link>
-	      }
-	    >
+    <CardShell
+      title={title}
+      action={
+        <Link href={actionHref} className="text-sm font-semibold text-blue-600 hover:text-blue-700">
+          {actionLabel}
+        </Link>
+      }
+    >
       {loading || error || items.length === 0 ? (
         <CardState
           loading={loading}
           error={error}
           empty={items.length === 0}
-          emptyText="Không có data"
+          emptyText="Chưa có KR nổi bật. Vào mục tiêu để cập nhật tiến độ hoặc nhận KR mới."
+          ctaHref={actionHref}
+          ctaLabel={actionLabel}
         />
-	      ) : (
-	        <div className="space-y-5 px-5 py-5">
-	          {items.map((item) => (
-	            <div key={item.id} className="space-y-3">
-	              <div className="flex items-center justify-between gap-3">
-	                <p className="min-w-0 truncate text-sm font-semibold text-slate-900">
-	                  {item.label}
-	                </p>
-	                <span className="shrink-0 text-sm font-semibold text-slate-900">
-	                  {item.progress}%
-	                </span>
-	              </div>
-	              <ProgressBar
-	                value={item.progress}
-	                tone={item.progress >= 80 ? "emerald" : item.progress >= 50 ? "blue" : "amber"}
-	              />
-	            </div>
-	          ))}
-	        </div>
-	      )}
-	    </CardShell>
-	  );
-	}
+      ) : (
+        <div className="divide-y divide-slate-100">
+          {items.slice(0, 5).map((item) => (
+            <div key={item.id} className="space-y-2 px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  {item.href ? (
+                    <Link
+                      href={item.href}
+                      className="block truncate text-sm font-semibold text-slate-900 hover:text-blue-700"
+                    >
+                      {item.label}
+                    </Link>
+                  ) : (
+                    <p className="truncate text-sm font-semibold text-slate-900">{item.label}</p>
+                  )}
+                  <p className="mt-0.5 truncate text-xs text-slate-500">
+                    {item.endDateAt ? `Hạn ${formatDateShortVi(item.endDateAt)}` : "Chưa đặt hạn"}
+                  </p>
+                </div>
+                <span className="shrink-0 text-sm font-semibold text-slate-900">{item.progress}%</span>
+              </div>
+              <ProgressBar
+                value={item.progress}
+                tone={item.progress >= 80 ? "emerald" : item.progress >= 50 ? "blue" : "amber"}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </CardShell>
+  );
+}
 
 export function DashboardCompletedTrend({
   points,
@@ -345,21 +366,6 @@ export function DashboardAttendanceToday({
   loading: boolean;
   error: string | null;
 }) {
-  const [now, setNow] = useState(() => new Date());
-
-  useEffect(() => {
-    if (!data.isRunning) {
-      return;
-    }
-
-    const timer = window.setInterval(() => setNow(new Date()), 60000);
-    return () => window.clearInterval(timer);
-  }, [data.isRunning]);
-
-  const workedMinutes = data.isRunning
-    ? getWorkedMinutes(data.checkInAt, data.checkOutAt, now)
-    : data.workedMinutes;
-
   return (
     <CardShell title="Chấm công hôm nay">
       {loading || error || (data.empty && !data.isHoliday) ? (
@@ -367,10 +373,12 @@ export function DashboardAttendanceToday({
           loading={loading}
           error={error}
           empty={data.empty && !data.isHoliday}
-          emptyText="Không có data"
+          emptyText="Chưa có bản ghi chấm công hôm nay. Mở chấm công để bắt đầu."
+          ctaHref="/timesheet"
+          ctaLabel="Mở chấm công"
         />
       ) : (
-        <div className="space-y-4 px-5 py-5">
+        <div className="space-y-3 px-4 py-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-xl bg-slate-50 p-3">
               <p className="text-xs text-slate-400">Giờ vào</p>
@@ -414,22 +422,39 @@ export function DashboardUpcomingDeadlines({
           loading={loading}
           error={error}
           empty={items.length === 0}
-          emptyText="Không có data"
+          emptyText="Chưa có task ưu tiên. Vào danh sách task để cập nhật việc cần làm tiếp theo."
+          ctaHref="/tasks"
+          ctaLabel="Xem task"
         />
       ) : (
-        <div className="space-y-5 px-5 py-5">
+        <div className="divide-y divide-slate-100">
           {items.map((item) => (
-            <div key={item.id} className="space-y-3">
-              <Link href={`/tasks/${item.id}`} className="text-sm font-semibold text-slate-900 hover:text-blue-700">
-                {item.name}
-              </Link>
-              <div className="flex items-center justify-between gap-3 text-sm">
-                <span className="font-semibold text-slate-900">{item.progress}%</span>
+            <div key={item.id} className="space-y-2 px-4 py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <Link
+                    href={`/tasks/${item.id}`}
+                    className="block truncate text-sm font-semibold text-slate-900 hover:text-blue-700"
+                  >
+                    {item.name}
+                  </Link>
+                  <div className="mt-1 flex flex-wrap gap-2 text-xs">
+                    <span className={`rounded-full px-2 py-0.5 font-semibold ${item.statusClassName}`}>
+                      {item.statusLabel}
+                    </span>
+                    <span className={`rounded-full px-2 py-0.5 font-semibold ${item.dueClassName}`}>
+                      {item.dueDateAt ? formatDateShortVi(item.dueDateAt) : item.dueLabel}
+                    </span>
+                  </div>
+                </div>
+                <span className="shrink-0 text-sm font-semibold text-slate-900">{item.progress}%</span>
               </div>
-              <ProgressBar
-                value={item.progress}
-                tone={item.progress >= 80 ? "emerald" : item.progress >= 50 ? "blue" : "amber"}
-              />
+              {item.progress > 0 ? (
+                <ProgressBar
+                  value={item.progress}
+                  tone={item.progress >= 80 ? "emerald" : item.progress >= 50 ? "blue" : "amber"}
+                />
+              ) : null}
             </div>
           ))}
         </div>
@@ -454,12 +479,12 @@ export function DashboardRecentActivities({
           loading={loading}
           error={error}
           empty={items.length === 0}
-          emptyText="Không có data"
+          emptyText="Chưa có hoạt động mới. Khi có cập nhật task hoặc mục tiêu, phần này sẽ hiện ở đây."
         />
       ) : (
         <div className="divide-y divide-slate-100">
-          {items.map((item) => (
-            <div key={item.id} className="space-y-1.5 px-5 py-4">
+          {items.slice(0, 4).map((item) => (
+            <div key={item.id} className="space-y-1 px-4 py-3">
               <p className="text-sm text-slate-700">{item.message}</p>
               <p className="text-xs text-slate-400">{item.when}</p>
             </div>
@@ -494,11 +519,11 @@ export function DashboardWeeklyPerformance({
       {loading || error ? (
         <CardState loading={loading} error={error} empty={false} emptyText="" />
       ) : (
-        <div className="space-y-4 px-5 py-5">
-          <div className="rounded-xl bg-slate-50 p-4">
+        <div className="space-y-3 px-4 py-4">
+          <div className="rounded-xl bg-slate-50 p-3">
             <div className="flex items-center justify-between gap-3 text-sm">
               <span className="text-slate-500">Hoàn thành</span>
-              <span className="text-2xl font-semibold tracking-[-0.03em] text-slate-900">
+              <span className="text-xl font-semibold tracking-[-0.03em] text-slate-900">
                 {data.completedTasks} / {data.totalTasks}
               </span>
             </div>

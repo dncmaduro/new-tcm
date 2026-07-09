@@ -1,11 +1,20 @@
 "use client";
 
+import { InfoCircledIcon } from "@radix-ui/react-icons";
+import { Check } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
-import { WorkspacePageHeader } from "@/components/workspace-page-header";
-import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { FormEvent, Suspense, type ReactNode, useEffect, useMemo, useState } from "react";
+import {
+  CreateFormPage,
+  CreateFormShell,
+  FormContextBar,
+  FormFieldGrid,
+  FormFooterActions,
+  FormSection,
+} from "@/components/create-form";
 import { ClearableNumberInput } from "@/components/ui/clearable-number-input";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useLeaveFormConfirm } from "@/components/use-leave-form-confirm";
 import {
   GOAL_STATUSES,
@@ -23,6 +32,7 @@ import {
 import { syncGoalOwners } from "@/lib/goal-owners";
 import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
+import { cn } from "@/lib/utils";
 import {
   Select,
   SelectContent,
@@ -50,11 +60,6 @@ type DepartmentParticipationFormState = {
   role: GoalDepartmentRole;
   goalWeight: number;
   krWeight: number;
-};
-
-type DepartmentTreeNode = DepartmentOption & {
-  depth: number;
-  children: DepartmentTreeNode[];
 };
 
 type GoalCreatePermissionDebug = {
@@ -136,6 +141,12 @@ const defaultForm: GoalFormState = {
   target: "",
   unit: KEY_RESULT_UNITS[0].value,
 };
+
+const inputClassName =
+  "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500";
+
+const textareaClassName =
+  "w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500";
 
 const isSameGoalTargetValue = (left: number | null, right: number | null) => {
   if (left === null && right === null) {
@@ -242,43 +253,6 @@ const findMarketingDepartmentId = (rows: DepartmentOption[]) => {
   );
 };
 
-const buildDepartmentTree = (rows: DepartmentOption[]): DepartmentTreeNode[] => {
-  if (!rows.length) {
-    return [];
-  }
-
-  const departmentIds = new Set(rows.map((department) => department.id));
-  const childrenByParent = rows.reduce<Record<string, DepartmentOption[]>>((acc, department) => {
-    if (!department.parentDepartmentId || !departmentIds.has(department.parentDepartmentId)) {
-      return acc;
-    }
-
-    if (!acc[department.parentDepartmentId]) {
-      acc[department.parentDepartmentId] = [];
-    }
-
-    acc[department.parentDepartmentId].push(department);
-    return acc;
-  }, {});
-
-  const buildNode = (department: DepartmentOption, depth: number): DepartmentTreeNode => ({
-    ...department,
-    depth,
-    children: sortDepartmentsByName(childrenByParent[department.id] ?? []).map((child) =>
-      buildNode(child, depth + 1),
-    ),
-  });
-
-  const rootDepartments = sortDepartmentsByName(
-    rows.filter(
-      (department) =>
-        !department.parentDepartmentId || !departmentIds.has(department.parentDepartmentId),
-    ),
-  );
-
-  return rootDepartments.map((department) => buildNode(department, 0));
-};
-
 const buildDepartmentMap = (rows: DepartmentOption[]) =>
   rows.reduce<Record<string, DepartmentOption>>((acc, department) => {
     acc[department.id] = department;
@@ -377,95 +351,36 @@ const resolvePrimaryDepartmentId = ({
   );
 };
 
-function DepartmentTreeItem({
-  node,
-  collapsedDepartmentIds,
-  onToggleBranch,
-  onToggleDepartment,
-  primaryDepartmentId,
-  selectedDepartmentIds,
+function FieldLabel({
+  htmlFor,
+  children,
 }: {
-  node: DepartmentTreeNode;
-  collapsedDepartmentIds: Record<string, boolean>;
-  onToggleBranch: (departmentId: string) => void;
-  onToggleDepartment: (departmentId: string) => void;
-  primaryDepartmentId: string;
-  selectedDepartmentIds: Set<string>;
+  htmlFor?: string;
+  children: ReactNode;
 }) {
-  const hasChildren = node.children.length > 0;
-  const isCollapsed = collapsedDepartmentIds[node.id] ?? false;
-  const isPrimary = node.id === primaryDepartmentId;
-  const isSelected = isPrimary || selectedDepartmentIds.has(node.id);
-
   return (
-    <div className="space-y-2">
-      <div
-        className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 transition ${
-          isSelected
-            ? "border-blue-200 bg-blue-50"
-            : "border-slate-200 bg-white hover:border-slate-300"
-        }`}
-        style={{ marginLeft: `${node.depth * 18}px` }}
-      >
+    <label htmlFor={htmlFor} className="text-sm font-semibold text-slate-700">
+      {children}
+    </label>
+  );
+}
+
+function QuarterDateInfo() {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
         <button
           type="button"
-          onClick={() => {
-            if (!isPrimary) {
-              onToggleDepartment(node.id);
-            }
-          }}
-          className={`flex min-w-0 flex-1 items-center justify-between gap-3 text-left ${
-            isPrimary ? "cursor-default" : ""
-          }`}
+          aria-label="Giải thích cách tính ngày theo quý"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-white hover:text-slate-600"
         >
-          <span className="flex min-w-0 items-center gap-3">
-            <span
-              className={`grid h-5 w-5 shrink-0 place-items-center rounded-md border text-[10px] font-bold ${
-                isSelected
-                  ? "border-blue-600 bg-blue-600 text-white"
-                  : "border-slate-300 bg-white text-transparent"
-              }`}
-            >
-              ✓
-            </span>
-            <span className="truncate text-sm font-medium text-slate-700">{node.name}</span>
-          </span>
-
-          <span className="flex shrink-0 items-center gap-2">
-            {hasChildren ? (
-              <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-500">
-                {node.children.length} nhánh con
-              </span>
-            ) : null}
-            {isPrimary ? (
-              <span className="rounded-full bg-blue-100 px-2 py-1 text-[11px] font-semibold text-blue-700">
-                chính
-              </span>
-            ) : isSelected ? (
-              <span className="rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-700">
-                đã chọn
-              </span>
-            ) : null}
-          </span>
+          <InfoCircledIcon className="h-4 w-4" />
         </button>
-      </div>
-
-      {hasChildren && !isCollapsed ? (
-        <div className="space-y-2">
-          {node.children.map((child) => (
-            <DepartmentTreeItem
-              key={child.id}
-              node={child}
-              collapsedDepartmentIds={collapsedDepartmentIds}
-              onToggleBranch={onToggleBranch}
-              onToggleDepartment={onToggleDepartment}
-              primaryDepartmentId={primaryDepartmentId}
-              selectedDepartmentIds={selectedDepartmentIds}
-            />
-          ))}
-        </div>
-      ) : null}
-    </div>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-64 p-3 text-xs text-slate-600">
+        Ngày được tự động tính theo quý và năm đã chọn.
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -480,7 +395,6 @@ function NewGoalPageContent() {
   const [departmentParticipations, setDepartmentParticipations] = useState<
     DepartmentParticipationFormState[]
   >([]);
-  const [collapsedDepartmentIds, setCollapsedDepartmentIds] = useState<Record<string, boolean>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const { leaveConfirmDialog, runWithoutConfirm } = useLeaveFormConfirm({
@@ -715,7 +629,6 @@ function NewGoalPageContent() {
           : nextDepartmentId
             ? [createDepartmentParticipation(nextDepartmentId, "owner")]
             : [];
-      setCollapsedDepartmentIds({});
       setDepartmentParticipations(initialParticipations);
       setForm((prev) => ({
         ...prev,
@@ -748,26 +661,28 @@ function NewGoalPageContent() {
 
   const departmentsById = useMemo(() => buildDepartmentMap(allDepartments), [allDepartments]);
   const participantDepartments = useMemo(
-    () =>
-      form.departmentId
-        ? allDepartments.filter((department) =>
-            isDepartmentInBranch(department.id, form.departmentId, departmentsById),
-          )
-        : [],
+    () => {
+      if (!form.departmentId) {
+        return [];
+      }
+
+      return sortDepartmentsByName(
+        allDepartments.filter((department) =>
+          isDepartmentInBranch(department.id, form.departmentId, departmentsById),
+        ),
+      );
+    },
     [allDepartments, departmentsById, form.departmentId],
   );
-  const departmentTree = useMemo(
-    () => buildDepartmentTree(participantDepartments),
-    [participantDepartments],
+  const selectedDepartmentIds = useMemo(
+    () =>
+      new Set(
+        departmentParticipations
+          .filter((item) => item.departmentId !== form.departmentId)
+          .map((item) => item.departmentId),
+      ),
+    [departmentParticipations, form.departmentId],
   );
-
-  const selectedDepartmentIds = useMemo(() => {
-    const next = new Set(departmentParticipations.map((item) => item.departmentId));
-    if (form.departmentId) {
-      next.add(form.departmentId);
-    }
-    return next;
-  }, [departmentParticipations, form.departmentId]);
 
   const participantDepartmentCount = useMemo(
     () => departmentParticipations.filter((item) => item.departmentId !== form.departmentId).length,
@@ -775,24 +690,15 @@ function NewGoalPageContent() {
   );
   const isKpiGoal = form.type === "kpi";
   const isOkrGoal = form.type === "okr";
+  const defaultDepartmentName = useMemo(() => {
+    if (!queryDepartmentId) {
+      return null;
+    }
 
-  useEffect(() => {
-    setCollapsedDepartmentIds((prev) => {
-      const next: Record<string, boolean> = {};
-
-      const syncTree = (nodes: DepartmentTreeNode[]) => {
-        nodes.forEach((node) => {
-          if (node.children.length > 0 && prev[node.id]) {
-            next[node.id] = true;
-          }
-          syncTree(node.children);
-        });
-      };
-
-      syncTree(departmentTree);
-      return next;
-    });
-  }, [departmentTree]);
+    return (
+      departmentsById[queryDepartmentId]?.name ?? departmentsById[form.departmentId]?.name ?? null
+    );
+  }, [departmentsById, form.departmentId, queryDepartmentId]);
 
   useEffect(() => {
     const normalizedQuarter = Math.min(4, Math.max(1, Math.round(form.quarter || 1)));
@@ -883,13 +789,6 @@ function NewGoalPageContent() {
         form.departmentId,
       );
     });
-  };
-
-  const toggleDepartmentBranch = (departmentId: string) => {
-    setCollapsedDepartmentIds((prev) => ({
-      ...prev,
-      [departmentId]: !prev[departmentId],
-    }));
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -1155,62 +1054,62 @@ function NewGoalPageContent() {
   };
 
   return (
-    <div className="fixed inset-0 bg-[#f3f5fa] text-slate-900">
-      <div className="flex h-full w-full overflow-hidden">
-        <WorkspaceSidebar active="goals" />
+    <>
+      <CreateFormPage
+        sidebarActive="goals"
+        title={isEditMode ? "Chỉnh sửa mục tiêu" : "Tạo mục tiêu mới"}
+        items={[
+          { label: "Mục tiêu", href: "/goals" },
+          { label: isEditMode ? "Chỉnh sửa mục tiêu" : "Tạo mục tiêu mới" },
+        ]}
+        topSlot={
+          showPermissionDebug && permissionDebug ? (
+            <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-950 px-4 py-3 text-xs text-slate-100">
+              <p className="mb-2 font-semibold text-sky-300">
+                Debug quyền tạo mục tiêu (debugPermission=1)
+              </p>
+              <pre className="whitespace-pre-wrap break-words text-[11px] leading-relaxed">
+                {JSON.stringify(permissionDebug, null, 2)}
+              </pre>
+            </div>
+          ) : null
+        }
+      >
+        <CreateFormShell
+          title={isEditMode ? "Chỉnh sửa mục tiêu" : "Thêm mục tiêu mới"}
+          contextBar={
+            !isEditMode && defaultDepartmentName ? (
+              <FormContextBar>
+                Phòng ban mặc định:{" "}
+                <span className="font-semibold text-slate-800">{defaultDepartmentName}</span>
+              </FormContextBar>
+            ) : null
+          }
+        >
+          {isCheckingPermission ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              Đang kiểm tra quyền tạo mục tiêu...
+            </div>
+          ) : null}
 
-        <div className="flex h-screen w-full flex-1 flex-col overflow-hidden lg:pl-[var(--workspace-sidebar-width)]">
-          <WorkspacePageHeader
-            title={isEditMode ? "Chỉnh sửa mục tiêu" : "Tạo mục tiêu mới"}
-            items={[
-              { label: "Mục tiêu", href: "/goals" },
-              { label: isEditMode ? "Chỉnh sửa mục tiêu" : "Tạo mục tiêu mới" },
-            ]}
-          />
+          {!isCheckingPermission && permissionError ? (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {permissionError}
+            </div>
+          ) : null}
 
-          <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-7">
-            {showPermissionDebug && permissionDebug ? (
-              <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-950 px-4 py-3 text-xs text-slate-100">
-                <p className="mb-2 font-semibold text-sky-300">
-                  Debug quyền tạo mục tiêu (debugPermission=1)
-                </p>
-                <pre className="whitespace-pre-wrap break-words text-[11px] leading-relaxed">
-                  {JSON.stringify(permissionDebug, null, 2)}
-                </pre>
-              </div>
-            ) : null}
-
-            <section className="mx-auto w-full max-w-[920px] rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_24px_50px_-40px_rgba(15,23,42,0.4)] lg:p-6">
-              <div className="mb-5">
-                <h1 className="text-2xl font-semibold tracking-[-0.02em] text-slate-900">
-                  {isEditMode ? "Chỉnh sửa mục tiêu" : "Thêm mục tiêu mới"}
-                </h1>
-              </div>
-
-              {isCheckingPermission ? (
-                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                  Đang kiểm tra quyền tạo mục tiêu...
-                </div>
-              ) : null}
-
-              {!isCheckingPermission && permissionError ? (
+          {!isCheckingPermission && canCreateGoal ? (
+            <form className="space-y-5" onSubmit={handleSubmit}>
+              {submitError ? (
                 <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                  {permissionError}
+                  {submitError}
                 </div>
               ) : null}
 
-              {!isCheckingPermission && canCreateGoal ? (
-                <form className="space-y-4" onSubmit={handleSubmit}>
-                  {submitError ? (
-                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                      {submitError}
-                    </div>
-                  ) : null}
-
-                  <div className="space-y-1.5">
-                    <label htmlFor="goal-name" className="text-sm font-semibold text-slate-700">
-                      Tên mục tiêu *
-                    </label>
+              <FormSection title="Thông tin cơ bản">
+                <FormFieldGrid>
+                  <div className="space-y-1.5 md:col-span-2">
+                    <FieldLabel htmlFor="goal-name">Tên mục tiêu *</FieldLabel>
                     <input
                       id="goal-name"
                       value={form.name}
@@ -1220,287 +1119,285 @@ function NewGoalPageContent() {
                           name: event.target.value,
                         }))
                       }
-                      className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                      placeholder="Ví dụ: Tăng thị phần thêm 15% tại EU"
+                      className={inputClassName}
+                      placeholder="Nhập tên mục tiêu"
                     />
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">Loại (type)</label>
-                      <Select
-                        value={form.type}
-                        onValueChange={(value: GoalTypeValue) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            type: value,
-                          }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Chọn loại mục tiêu" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {GOAL_TYPES.map((goalType) => (
-                            <SelectItem key={goalType.value} value={goalType.value}>
-                              {goalType.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">
-                        Trạng thái (status)
-                      </label>
-                      <Select
-                        value={form.status}
-                        onValueChange={(value: GoalStatusValue) =>
-                          setForm((prev) => ({ ...prev, status: value }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Chọn trạng thái" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {GOAL_STATUSES.map((status) => (
-                            <SelectItem key={status.value} value={status.value}>
-                              {status.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">
-                        Đơn vị đo mục tiêu
-                      </label>
-                      <Select
-                        value={form.unit}
-                        disabled={isOkrGoal}
-                        onValueChange={(value: KeyResultUnitValue) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            unit: value,
-                          }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue
-                            placeholder={isOkrGoal ? "Goal OKR dùng phần trăm" : "Chọn đơn vị"}
-                          />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {getAllowedKeyResultUnitsByType(form.type).map((unit) => (
-                            <SelectItem key={unit.value} value={unit.value}>
-                              {unit.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label htmlFor="goal-target" className="text-sm font-semibold text-slate-700">
-                        Chỉ tiêu {isKpiGoal ? "*" : ""}
-                      </label>
-                      <FormattedNumberInput
-                        id="goal-target"
-                        value={form.target}
-                        onValueChange={(value) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            target: value,
-                          }))
-                        }
-                        disabled={isOkrGoal}
-                        className={`h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
-                          isOkrGoal
-                            ? "cursor-not-allowed bg-slate-50 text-slate-400"
-                            : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                        }`}
-                        placeholder={isKpiGoal ? "Ví dụ: 1.200.000.000" : "Goal OKR luôn là 100%"}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">Quý (1-4) *</label>
-                      <Select
-                        value={String(form.quarter)}
-                        onValueChange={(value) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            quarter: Number(value) || 1,
-                          }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Chọn quý" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="1">Q1</SelectItem>
-                          <SelectItem value="2">Q2</SelectItem>
-                          <SelectItem value="3">Q3</SelectItem>
-                          <SelectItem value="4">Q4</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label htmlFor="goal-year" className="text-sm font-semibold text-slate-700">
-                        Năm *
-                      </label>
-                      <ClearableNumberInput
-                        id="goal-year"
-                        min={2000}
-                        max={2100}
-                        value={form.year}
-                        onValueChange={(value) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            year: value,
-                          }))
-                        }
-                        className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label
-                        htmlFor="goal-start-date"
-                        className="text-sm font-semibold text-slate-700"
-                      >
-                        Ngày bắt đầu *
-                      </label>
-                      <input
-                        id="goal-start-date"
-                        type="date"
-                        value={form.startDate}
-                        disabled
-                        readOnly
-                        className="h-10 w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-500 outline-none"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label
-                        htmlFor="goal-end-date"
-                        className="text-sm font-semibold text-slate-700"
-                      >
-                        Ngày kết thúc *
-                      </label>
-                      <input
-                        id="goal-end-date"
-                        type="date"
-                        min={form.startDate || undefined}
-                        value={form.endDate}
-                        disabled
-                        readOnly
-                        className="h-10 w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-500 outline-none"
-                      />
-                    </div>
-                  </div>
-
-                  <p className="-mt-2 text-xs text-slate-500">
-                    Ngày bắt đầu và ngày kết thúc được tự động khóa theo quý và năm đã chọn.
-                  </p>
-
-                  {form.startDate &&
-                  form.endDate &&
-                  new Date(form.startDate).getTime() > new Date(form.endDate).getTime() ? (
-                    <p className="-mt-2 text-xs text-rose-600">
-                      Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.
-                    </p>
-                  ) : null}
-
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between gap-3">
-                        <label className="text-sm font-semibold text-slate-700">
-                          Các phòng ban tham gia
-                        </label>
-                        <span className="text-xs text-slate-500">
-                          {participantDepartmentCount} phòng ban tham gia
-                        </span>
-                      </div>
-                      {departmentTree.length > 0 ? (
-                        <div className="space-y-2">
-                          {departmentTree.map((department) => (
-                            <DepartmentTreeItem
-                              key={department.id}
-                              node={department}
-                              collapsedDepartmentIds={collapsedDepartmentIds}
-                              onToggleBranch={toggleDepartmentBranch}
-                              onToggleDepartment={toggleRelatedDepartment}
-                              primaryDepartmentId={form.departmentId}
-                              selectedDepartmentIds={selectedDepartmentIds}
-                            />
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-sm text-slate-500">
-                          Phòng ban chính hiện chưa có phòng ban con để thêm vào danh sách tham gia.
-                        </p>
-                      )}
-                    </div>
                   </div>
 
                   <div className="space-y-1.5">
-                    <label
-                      htmlFor="goal-description"
-                      className="text-sm font-semibold text-slate-700"
-                    >
-                      Mô tả
-                    </label>
-                    <textarea
-                      id="goal-description"
-                      rows={4}
-                      value={form.description}
-                      onChange={(event) =>
+                    <FieldLabel>Loại</FieldLabel>
+                    <Select
+                      value={form.type}
+                      onValueChange={(value: GoalTypeValue) =>
                         setForm((prev) => ({
                           ...prev,
-                          description: event.target.value,
+                          type: value,
                         }))
                       }
-                      className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                      placeholder="Mô tả mục tiêu"
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Chọn loại mục tiêu" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {GOAL_TYPES.map((goalType) => (
+                          <SelectItem key={goalType.value} value={goalType.value}>
+                            {goalType.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <FieldLabel>Trạng thái</FieldLabel>
+                    <Select
+                      value={form.status}
+                      onValueChange={(value: GoalStatusValue) =>
+                        setForm((prev) => ({ ...prev, status: value }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Chọn trạng thái" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {GOAL_STATUSES.map((status) => (
+                          <SelectItem key={status.value} value={status.value}>
+                            {status.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </FormFieldGrid>
+              </FormSection>
+
+              <FormSection title="Kỳ & chỉ tiêu" actions={<QuarterDateInfo />}>
+                <FormFieldGrid>
+                  <div className="space-y-1.5">
+                    <FieldLabel>Đơn vị đo mục tiêu</FieldLabel>
+                    <Select
+                      value={form.unit}
+                      disabled={isOkrGoal}
+                      onValueChange={(value: KeyResultUnitValue) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          unit: value,
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue
+                          placeholder={isOkrGoal ? "Goal OKR dùng phần trăm" : "Chọn đơn vị"}
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {getAllowedKeyResultUnitsByType(form.type).map((unit) => (
+                          <SelectItem key={unit.value} value={unit.value}>
+                            {unit.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <FieldLabel htmlFor="goal-target">Chỉ tiêu *</FieldLabel>
+                    <FormattedNumberInput
+                      id="goal-target"
+                      value={form.target}
+                      onValueChange={(value) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          target: value,
+                        }))
+                      }
+                      disabled={isOkrGoal}
+                      className={cn(
+                        inputClassName,
+                        isOkrGoal ? "cursor-not-allowed bg-slate-50 text-slate-500" : "",
+                      )}
+                      placeholder={isKpiGoal ? "Ví dụ: 1.200.000.000" : "Goal OKR luôn là 100%"}
+                    />
+                  </div>
+                </FormFieldGrid>
+
+                <FormFieldGrid columns="four">
+                  <div className="space-y-1.5">
+                    <FieldLabel>Quý *</FieldLabel>
+                    <Select
+                      value={String(form.quarter)}
+                      onValueChange={(value) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          quarter: Number(value) || 1,
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Chọn quý" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="1">Q1</SelectItem>
+                        <SelectItem value="2">Q2</SelectItem>
+                        <SelectItem value="3">Q3</SelectItem>
+                        <SelectItem value="4">Q4</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <FieldLabel htmlFor="goal-year">Năm *</FieldLabel>
+                    <ClearableNumberInput
+                      id="goal-year"
+                      min={2000}
+                      max={2100}
+                      value={form.year}
+                      onValueChange={(value) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          year: value,
+                        }))
+                      }
+                      className={inputClassName}
                     />
                   </div>
 
-                  <div className="flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
-                    <button
-                      type="button"
-                      onClick={handleCancel}
-                      className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 hover:bg-slate-50"
-                    >
-                      Hủy
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={isSubmitting || !isFormValid}
-                      className="h-10 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                    >
-                      {isSubmitting
-                        ? isEditMode
-                          ? "Đang cập nhật..."
-                          : "Đang tạo..."
-                        : isEditMode
-                          ? "Lưu thay đổi"
-                          : "Tạo mục tiêu"}
-                    </button>
+                  <div className="space-y-1.5">
+                    <FieldLabel htmlFor="goal-start-date">Ngày bắt đầu *</FieldLabel>
+                    <input
+                      id="goal-start-date"
+                      type="date"
+                      value={form.startDate}
+                      disabled
+                      readOnly
+                      className={cn(inputClassName, "cursor-not-allowed")}
+                    />
                   </div>
-                </form>
-              ) : null}
-            </section>
-          </main>
-        </div>
-      </div>
+
+                  <div className="space-y-1.5">
+                    <FieldLabel htmlFor="goal-end-date">Ngày kết thúc *</FieldLabel>
+                    <input
+                      id="goal-end-date"
+                      type="date"
+                      min={form.startDate || undefined}
+                      value={form.endDate}
+                      disabled
+                      readOnly
+                      className={cn(inputClassName, "cursor-not-allowed")}
+                    />
+                  </div>
+                </FormFieldGrid>
+
+                {form.startDate &&
+                form.endDate &&
+                new Date(form.startDate).getTime() > new Date(form.endDate).getTime() ? (
+                  <p className="-mt-1 text-xs text-rose-600">
+                    Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.
+                  </p>
+                ) : null}
+              </FormSection>
+
+              <FormSection
+                title="Phòng ban tham gia"
+                actions={
+                  <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
+                    {participantDepartmentCount} phòng ban
+                  </span>
+                }
+              >
+                {participantDepartments.length > 0 ? (
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {participantDepartments.map((department) => {
+                      const isSelected = selectedDepartmentIds.has(department.id);
+
+                      return (
+                        <label
+                          key={department.id}
+                          className={cn(
+                            "flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-3 transition",
+                            isSelected
+                              ? "border-blue-200 bg-blue-50"
+                              : "border-slate-200 bg-white hover:border-slate-300",
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleRelatedDepartment(department.id)}
+                            className="sr-only"
+                          />
+                          <span
+                            aria-hidden="true"
+                            className={cn(
+                              "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors",
+                              isSelected
+                                ? "border-blue-600 bg-blue-600 text-white"
+                                : "border-slate-300 bg-white text-transparent",
+                            )}
+                          >
+                            <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                          </span>
+                          <span className="min-w-0 text-sm font-medium text-slate-700">
+                            <span className="block truncate">{department.name}</span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-500">
+                    Phòng ban chính hiện chưa có phòng ban con để thêm vào danh sách tham gia.
+                  </p>
+                )}
+              </FormSection>
+
+              <FormSection title="Mô tả">
+                <div className="space-y-1.5">
+                  <FieldLabel htmlFor="goal-description">Mô tả</FieldLabel>
+                  <textarea
+                    id="goal-description"
+                    rows={3}
+                    value={form.description}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        description: event.target.value,
+                      }))
+                    }
+                    className={textareaClassName}
+                    placeholder="Mô tả mục tiêu"
+                  />
+                </div>
+              </FormSection>
+
+              <FormFooterActions>
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting || !isFormValid}
+                  className="h-10 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                >
+                  {isSubmitting
+                    ? isEditMode
+                      ? "Đang cập nhật..."
+                      : "Đang tạo..."
+                    : isEditMode
+                      ? "Lưu thay đổi"
+                      : "Tạo mục tiêu"}
+                </button>
+              </FormFooterActions>
+            </form>
+          ) : null}
+        </CreateFormShell>
+      </CreateFormPage>
       {leaveConfirmDialog}
-    </div>
+    </>
   );
 }
 

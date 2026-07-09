@@ -1,16 +1,19 @@
 "use client";
 
 import { InfoCircledIcon } from "@radix-ui/react-icons";
+import { ChevronDown, ChevronUp, PencilLine, Trash2 } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { KeyResultContributionInfo } from "@/components/key-result-contribution-info";
 import { useLeaveFormConfirm } from "@/components/use-leave-form-confirm";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   formatKeyResultMetric,
+  formatKeyResultUnit,
   formatMetricValue,
   getAllowedKeyResultUnitsByType,
   KEY_RESULT_CONTRIBUTION_TYPES,
@@ -34,6 +37,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { isDateRangeOrdered } from "@/lib/timeline";
+import { cn } from "@/lib/utils";
 
 type GoalDetailRow = {
   id: string;
@@ -264,6 +268,16 @@ const getSupportLinkCountLabel = (count: number) => {
   return `${count} liên kết`;
 };
 
+const getCompactNotePreview = (value: string) => {
+  const normalized = value.trim().replace(/\s+/g, " ");
+
+  if (normalized.length <= 120) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 117)}...`;
+};
+
 function SupportAllocationInfo({ unit }: { unit: KeyResultUnitValue }) {
   const usesPercentAllocation = usesPercentSupportAllocation(unit);
 
@@ -333,6 +347,9 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
   const [supportLinkDrafts, setSupportLinkDrafts] = useState<SupportLinkDraft[]>([]);
   const [initialSupportLinkIds, setInitialSupportLinkIds] = useState<string[]>([]);
   const [supportTargetOptions, setSupportTargetOptions] = useState<KeyResultLinkOption[]>([]);
+  const [expandedSupportNoteRowIds, setExpandedSupportNoteRowIds] = useState<
+    Record<string, boolean>
+  >({});
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingSupportTargets, setIsLoadingSupportTargets] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -716,6 +733,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
 
   const isSupportContribution = form.contributionType === "support";
   const isOkrType = form.type === "okr";
+  const isUnitReadOnly = isEditMode || isOkrType;
   const usesPercentAllocation = isSupportContribution && usesPercentSupportAllocation(form.unit);
   const usesValueAllocation = isSupportContribution && !usesPercentAllocation;
   const supportAllocationExpectedTotal = usesPercentAllocation ? 100 : Number(form.target) || 0;
@@ -737,6 +755,41 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
   );
   const supportAllocationDelta = supportAllocationExpectedTotal - supportAllocationTotal;
   const isSupportAllocationBalanced = Math.abs(supportAllocationDelta) < 0.0001;
+  const supportAllocationStatus = useMemo(() => {
+    const formatSupportAllocationMetric = (value: number) =>
+      usesPercentAllocation
+        ? `${formatMetricValue(value)}%`
+        : formatKeyResultMetric(value, form.unit);
+
+    const totalLabel = formatSupportAllocationMetric(supportAllocationTotal);
+    const targetLabel = formatSupportAllocationMetric(supportAllocationExpectedTotal);
+
+    if (isSupportAllocationBalanced) {
+      return {
+        label: `Đã phân bổ đủ: ${totalLabel} / ${targetLabel}`,
+        toneClassName: "border-emerald-200 bg-emerald-50 text-emerald-700",
+      };
+    }
+
+    if (supportAllocationTotal < supportAllocationExpectedTotal) {
+      return {
+        label: `Còn thiếu: ${formatSupportAllocationMetric(Math.max(supportAllocationDelta, 0))} / ${targetLabel}`,
+        toneClassName: "border-amber-200 bg-amber-50 text-amber-700",
+      };
+    }
+
+    return {
+      label: `Vượt chỉ tiêu: ${totalLabel} / ${targetLabel}`,
+      toneClassName: "border-rose-200 bg-rose-50 text-rose-700",
+    };
+  }, [
+    form.unit,
+    isSupportAllocationBalanced,
+    supportAllocationDelta,
+    supportAllocationExpectedTotal,
+    supportAllocationTotal,
+    usesPercentAllocation,
+  ]);
 
   useEffect(() => {
     if (!isSupportContribution) {
@@ -796,8 +849,20 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
     setSupportLinkDrafts((prev) => [...prev, createSupportLinkDraft()]);
   };
 
+  const setSupportNoteExpanded = (rowId: string, isExpanded: boolean) => {
+    setExpandedSupportNoteRowIds((prev) => ({
+      ...prev,
+      [rowId]: isExpanded,
+    }));
+  };
+
   const removeSupportLinkDraft = (rowId: string) => {
     setSupportLinkDrafts((prev) => prev.filter((item) => item.rowId !== rowId));
+    setExpandedSupportNoteRowIds((prev) => {
+      const next = { ...prev };
+      delete next[rowId];
+      return next;
+    });
   };
 
   const validateSupportLinkDrafts = () => {
@@ -972,7 +1037,8 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
     if ((relatedTaskCount ?? 0) > 0) {
       relatedItems.push(`${relatedTaskCount} công việc`);
     }
-    const relatedSupportLinkCount = (outboundSupportLinkCount ?? 0) + (inboundSupportLinkCount ?? 0);
+    const relatedSupportLinkCount =
+      (outboundSupportLinkCount ?? 0) + (inboundSupportLinkCount ?? 0);
     if (relatedSupportLinkCount > 0) {
       relatedItems.push(`${relatedSupportLinkCount} liên kết hỗ trợ`);
     }
@@ -1016,7 +1082,10 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
       return;
     }
 
-    const deleteTasksResult = await supabase.from("tasks").delete().eq("key_result_id", keyResultId);
+    const deleteTasksResult = await supabase
+      .from("tasks")
+      .delete()
+      .eq("key_result_id", keyResultId);
 
     if (deleteTasksResult.error) {
       setSubmitError(deleteTasksResult.error.message || "Không thể xóa công việc của KR.");
@@ -1024,10 +1093,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
       return;
     }
 
-    const deleteKeyResultResult = await supabase
-      .from("key_results")
-      .delete()
-      .eq("id", keyResultId);
+    const deleteKeyResultResult = await supabase.from("key_results").delete().eq("id", keyResultId);
 
     if (deleteKeyResultResult.error) {
       setSubmitError(deleteKeyResultResult.error.message || "Không thể xóa KR.");
@@ -1198,15 +1264,15 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
 
         <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-[#f3f5fa] lg:pl-[var(--workspace-sidebar-width)]">
           <WorkspacePageHeader
-            title={isEditMode ? "Chỉnh sửa Key Result" : "Thêm Key Result"}
+            title={isEditMode ? "Chỉnh sửa KR" : "Thêm KR"}
             items={[
               { label: "Mục tiêu", href: "/goals" },
               ...(goal ? [{ label: goal.name, href: `/goals/${goal.id}` }] : []),
-              { label: isEditMode ? "Chỉnh sửa Key Result" : "Thêm Key Result" },
+              { label: isEditMode ? "Chỉnh sửa KR" : "Thêm KR" },
             ]}
           />
 
-          <main className="min-h-0 flex-1 overflow-y-auto bg-[#f3f5fa] px-4 py-6 lg:px-7">
+          <main className="min-h-0 flex-1 overflow-y-auto bg-[#f3f5fa] px-4 py-5 lg:px-7">
             {showPermissionDebug ? (
               <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-950 px-4 py-3 text-xs text-slate-100">
                 <p className="mb-2 font-semibold text-sky-300">
@@ -1218,17 +1284,13 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
               </div>
             ) : null}
 
-            <section className="mx-auto w-full max-w-[920px] rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_24px_50px_-40px_rgba(15,23,42,0.4)] lg:p-6">
-              <div className="mb-5">
-                <h1 className="text-2xl font-semibold tracking-[-0.02em] text-slate-900">
-                  {isEditMode ? "Chỉnh sửa Key Result" : "Thêm Key Result cho mục tiêu"}
-                </h1>
-                <p className="mt-1 text-sm text-slate-500">
-                  {goal
-                    ? `${
-                        isEditMode ? "Mục tiêu đang liên kết" : "Mục tiêu đang liên kết"
-                      }: ${goal.name}`
-                    : "Xác định loại KR, vai trò đóng góp, chỉ tiêu và phòng ban phụ trách."}
+            <section className="mx-auto w-full max-w-[980px] rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_24px_50px_-40px_rgba(15,23,42,0.4)] lg:p-5">
+              <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-sm text-slate-500">
+                  Mục tiêu liên kết:{" "}
+                  <span className="font-semibold text-slate-800">
+                    {goal?.name ?? "Đang tải mục tiêu"}
+                  </span>
                 </p>
               </div>
 
@@ -1261,7 +1323,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
               hasValidGoalId &&
               goal &&
               canCreateKeyResult ? (
-                <form className="space-y-4" onSubmit={handleSubmit}>
+                <form className="space-y-5" onSubmit={handleSubmit}>
                   {submitError ? (
                     <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                       {submitError}
@@ -1274,190 +1336,190 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                     </div>
                   ) : null}
 
-                  <div className="grid gap-4 md:items-end md:grid-cols-[minmax(0,1fr)_220px_200px_200px]">
-                    <div className="flex h-full flex-col justify-end gap-1.5">
-                      <label className="inline-flex min-h-5 items-center text-sm font-semibold text-slate-700">
-                        Tên Key Result *
-                      </label>
-                      <input
-                        value={form.name}
-                        onChange={(event) =>
-                          setForm((prev) => ({ ...prev, name: event.target.value }))
-                        }
-                        className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                        placeholder={keyResultNamePlaceholder}
-                      />
-                    </div>
+                  <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                    <h2 className="text-base font-semibold text-slate-900">Thông tin cơ bản</h2>
 
-                    <div className="flex h-full flex-col justify-end gap-1.5">
-                      <label className="inline-flex min-h-5 items-center text-sm font-semibold text-slate-700">
-                        Phòng ban phụ trách *
-                      </label>
-                      <Select
-                        value={form.responsibleDepartmentId || undefined}
-                        onValueChange={(value) =>
-                          setForm((prev) => ({ ...prev, responsibleDepartmentId: value }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Chọn phòng ban phụ trách" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {goalDepartments.map((department) => (
-                            <SelectItem
-                              key={department.departmentId}
-                              value={department.departmentId}
-                            >
-                              {department.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="flex h-full flex-col justify-end gap-1.5">
-                      <label className="inline-flex min-h-5 items-center gap-1.5 text-sm font-semibold text-slate-700">
-                        <span>Loại KR</span>
-                        {requiredKeyResultTypeLabel ? (
-                          <RequiredKeyResultTypeInfo typeLabel={requiredKeyResultTypeLabel} />
-                        ) : null}
-                      </label>
-                      <Select
-                        value={form.type}
-                        onValueChange={(value: KeyResultTypeValue) => {
-                          if (requiredKeyResultType && value !== requiredKeyResultType) {
-                            return;
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <label className="flex flex-col gap-1.5">
+                        <span className="text-sm font-semibold text-slate-700">Tên KR *</span>
+                        <input
+                          value={form.name}
+                          onChange={(event) =>
+                            setForm((prev) => ({ ...prev, name: event.target.value }))
                           }
-                          setForm((prev) => ({
-                            ...prev,
-                            type: value,
-                            unit: normalizeKeyResultUnitForType(value, prev.unit),
-                            target: value === "okr" ? 100 : prev.target,
-                          }));
-                          if (value === "okr") {
-                            setTargetInputValue("100");
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          placeholder={keyResultNamePlaceholder}
+                        />
+                      </label>
+
+                      <label className="flex flex-col gap-1.5">
+                        <span className="text-sm font-semibold text-slate-700">
+                          Phòng ban phụ trách *
+                        </span>
+                        <Select
+                          value={form.responsibleDepartmentId || undefined}
+                          onValueChange={(value) =>
+                            setForm((prev) => ({ ...prev, responsibleDepartmentId: value }))
                           }
-                        }}
-                        disabled={Boolean(requiredKeyResultType)}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Chọn loại KR" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {KEY_RESULT_TYPES.filter((item) =>
-                            requiredKeyResultType ? item.value === requiredKeyResultType : true,
-                          ).map((item) => (
-                            <SelectItem key={item.value} value={item.value}>
-                              {item.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="flex h-full flex-col justify-end gap-1.5">
-                      <label className="inline-flex min-h-5 items-center gap-1.5 text-sm font-semibold text-slate-700">
-                        <span>Vai trò đóng góp</span>
-                        <KeyResultContributionInfo />
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Chọn phòng ban phụ trách" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {goalDepartments.map((department) => (
+                              <SelectItem
+                                key={department.departmentId}
+                                value={department.departmentId}
+                              >
+                                {department.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </label>
-                      <Select
-                        value={form.contributionType}
-                        onValueChange={(value: KeyResultContributionTypeValue) =>
-                          setForm((prev) => ({ ...prev, contributionType: value }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Chọn vai trò đóng góp" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {KEY_RESULT_CONTRIBUTION_TYPES.map((item) => (
-                            <SelectItem key={item.value} value={item.value}>
-                              {item.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
 
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">Đơn vị</label>
-                      <Select
-                        value={form.unit}
-                        disabled={isEditMode || isOkrType}
-                        onValueChange={(value: KeyResultUnitValue) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            unit: normalizeKeyResultUnitForType(prev.type, value),
-                          }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue
-                            placeholder={isOkrType ? "OKR dùng phần trăm" : "Chọn đơn vị"}
-                          />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {getAllowedKeyResultUnitsByType(form.type).map((unit) => (
-                            <SelectItem key={unit.value} value={unit.value}>
-                              {unit.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">
-                        Chỉ tiêu cần đạt *
+                      <label className="flex flex-col gap-1.5">
+                        <span className="inline-flex min-h-5 items-center gap-1.5 text-sm font-semibold text-slate-700">
+                          <span>Loại KR</span>
+                          {requiredKeyResultTypeLabel ? (
+                            <RequiredKeyResultTypeInfo typeLabel={requiredKeyResultTypeLabel} />
+                          ) : null}
+                        </span>
+                        <Select
+                          value={form.type}
+                          onValueChange={(value: KeyResultTypeValue) => {
+                            if (requiredKeyResultType && value !== requiredKeyResultType) {
+                              return;
+                            }
+                            setForm((prev) => ({
+                              ...prev,
+                              type: value,
+                              unit: normalizeKeyResultUnitForType(value, prev.unit),
+                              target: value === "okr" ? 100 : prev.target,
+                            }));
+                            if (value === "okr") {
+                              setTargetInputValue("100");
+                            }
+                          }}
+                          disabled={Boolean(requiredKeyResultType)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Chọn loại KR" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {KEY_RESULT_TYPES.filter((item) =>
+                              requiredKeyResultType ? item.value === requiredKeyResultType : true,
+                            ).map((item) => (
+                              <SelectItem key={item.value} value={item.value}>
+                                {item.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </label>
-                      <FormattedNumberInput
-                        value={targetInputValue}
-                        disabled={isOkrType}
-                        onValueChange={(value) => {
-                          setTargetInputValue(value);
-                          setForm((prev) => ({
-                            ...prev,
-                            target: value ? Number(value) : 0,
-                          }));
-                        }}
-                        className={`h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
-                          isOkrType
-                            ? "cursor-not-allowed bg-slate-50 text-slate-400"
-                            : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                        }`}
-                        placeholder={isOkrType ? "KR OKR luôn là 100%" : undefined}
-                      />
+
+                      <label className="flex flex-col gap-1.5">
+                        <span className="inline-flex min-h-5 items-center gap-1.5 text-sm font-semibold text-slate-700">
+                          <span>Vai trò đóng góp</span>
+                          <KeyResultContributionInfo />
+                        </span>
+                        <Select
+                          value={form.contributionType}
+                          onValueChange={(value: KeyResultContributionTypeValue) =>
+                            setForm((prev) => ({ ...prev, contributionType: value }))
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Chọn vai trò đóng góp" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {KEY_RESULT_CONTRIBUTION_TYPES.map((item) => (
+                              <SelectItem key={item.value} value={item.value}>
+                                {item.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </label>
+
+                      <div className="space-y-1.5">
+                        <label className="text-sm font-semibold text-slate-700">Đơn vị</label>
+                        {isUnitReadOnly ? (
+                          <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700">
+                            <div className="font-medium">{formatKeyResultUnit(form.unit)}</div>
+                            <p className="mt-0.5 text-xs text-slate-500">
+                              {isOkrType
+                                ? "KR kiểu OKR luôn dùng đơn vị phần trăm."
+                                : "Đơn vị được giữ nguyên khi chỉnh sửa KR."}
+                            </p>
+                          </div>
+                        ) : (
+                          <Select
+                            value={form.unit}
+                            onValueChange={(value: KeyResultUnitValue) =>
+                              setForm((prev) => ({
+                                ...prev,
+                                unit: normalizeKeyResultUnitForType(prev.type, value),
+                              }))
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Chọn đơn vị" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {getAllowedKeyResultUnitsByType(form.type).map((unit) => (
+                                <SelectItem key={unit.value} value={unit.value}>
+                                  {unit.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                      </div>
+
+                      <label className="flex flex-col gap-1.5">
+                        <span className="text-sm font-semibold text-slate-700">
+                          Chỉ tiêu cần đạt *
+                        </span>
+                        <FormattedNumberInput
+                          value={targetInputValue}
+                          disabled={isOkrType}
+                          onValueChange={(value) => {
+                            setTargetInputValue(value);
+                            setForm((prev) => ({
+                              ...prev,
+                              target: value ? Number(value) : 0,
+                            }));
+                          }}
+                          className={`h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
+                            isOkrType
+                              ? "cursor-not-allowed bg-slate-50 font-medium text-slate-600"
+                              : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          }`}
+                          placeholder={isOkrType ? "KR OKR luôn là 100%" : undefined}
+                        />
+                      </label>
                     </div>
-                  </div>
+                  </section>
 
                   {isSupportContribution ? (
-                    <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
                       <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <h2 className="text-base font-semibold text-slate-900">
-                            Phân bổ đóng góp tới KR trực tiếp
-                          </h2>
-                        </div>
+                        <h2 className="text-base font-semibold text-slate-900">
+                          Phân bổ đóng góp tới KR trực tiếp
+                        </h2>
                         <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
                           {getSupportLinkCountLabel(activeSupportLinkDrafts.length)}
                         </span>
                       </div>
 
                       <div
-                        className={`rounded-xl border px-4 py-3 text-sm ${
-                          isSupportAllocationBalanced
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                            : "border-amber-200 bg-amber-50 text-amber-700"
-                        }`}
+                        className={cn(
+                          "rounded-xl border px-4 py-3 text-sm font-semibold",
+                          supportAllocationStatus.toneClassName,
+                        )}
                       >
-                        <p className="font-semibold">
-                          Tổng phân bổ:{" "}
-                          {usesPercentAllocation
-                            ? `${formatMetricValue(supportAllocationTotal)}% / 100%`
-                            : `${formatKeyResultMetric(supportAllocationTotal, form.unit)} / ${formatKeyResultMetric(supportAllocationExpectedTotal, form.unit)}`}
-                        </p>
+                        {supportAllocationStatus.label}
                       </div>
 
                       {isLoadingSupportTargets ? (
@@ -1472,33 +1534,39 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                         </div>
                       ) : null}
 
-                      <div className="space-y-3">
+                      <div className="space-y-2.5">
                         {supportLinkDrafts.map((item, index) => {
                           const targetChoices = getSupportTargetChoices(
                             item.rowId,
                             item.targetKeyResultId,
                           );
+                          const hasNote = Boolean(item.note.trim());
+                          const isNoteExpanded = Boolean(expandedSupportNoteRowIds[item.rowId]);
+
                           return (
-                            <div
+                            <Collapsible
                               key={item.rowId}
-                              className="rounded-2xl border border-slate-200 bg-white p-4"
+                              open={isNoteExpanded}
+                              onOpenChange={(open) => setSupportNoteExpanded(item.rowId, open)}
+                              className="rounded-xl border border-slate-200 bg-white p-3"
                             >
-                              <div className="flex flex-wrap items-center justify-between gap-3">
-                                <p className="text-sm font-semibold text-slate-900">
-                                  Phân bổ #{index + 1}
-                                </p>
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                                  Liên kết {index + 1}
+                                </span>
                                 <button
                                   type="button"
                                   onClick={() => removeSupportLinkDraft(item.rowId)}
-                                  className="inline-flex h-8 items-center rounded-lg border border-rose-200 bg-white px-3 text-xs font-semibold text-rose-700 hover:bg-rose-50"
+                                  className="inline-flex h-8 items-center gap-1 rounded-lg px-2.5 text-xs font-medium text-rose-600 hover:bg-rose-50"
                                 >
-                                  Xóa phân bổ
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  Xóa
                                 </button>
                               </div>
 
-                              <div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1.25fr)_220px] md:items-end">
-                                <label className="flex h-full flex-col justify-end gap-1.5">
-                                  <span className="inline-flex min-h-5 items-center text-sm font-semibold text-slate-700">
+                              <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.45fr)_190px_auto] lg:items-end">
+                                <label className="flex flex-col gap-1.5">
+                                  <span className="text-sm font-semibold text-slate-700">
                                     KR nhận đóng góp *
                                   </span>
                                   <Select
@@ -1523,7 +1591,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                                 </label>
 
                                 {usesValueAllocation ? (
-                                  <label className="flex h-full flex-col justify-end gap-1.5">
+                                  <label className="flex flex-col gap-1.5">
                                     <span className="inline-flex min-h-5 items-center gap-1.5 text-sm font-semibold text-slate-700">
                                       <span>Giá trị phân bổ</span>
                                       <SupportAllocationInfo unit={form.unit} />
@@ -1542,7 +1610,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                                 ) : null}
 
                                 {usesPercentAllocation ? (
-                                  <label className="flex h-full flex-col justify-end gap-1.5">
+                                  <label className="flex flex-col gap-1.5">
                                     <span className="inline-flex min-h-5 items-center gap-1.5 text-sm font-semibold text-slate-700">
                                       <span>Giá trị phân bổ</span>
                                       <SupportAllocationInfo unit={form.unit} />
@@ -1559,119 +1627,161 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                                     />
                                   </label>
                                 ) : null}
+
+                                <div className="flex items-end lg:justify-end">
+                                  <CollapsibleTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                                    >
+                                      {isNoteExpanded ? (
+                                        <>
+                                          <ChevronUp className="h-4 w-4" />
+                                          Ẩn ghi chú
+                                        </>
+                                      ) : hasNote ? (
+                                        <>
+                                          <PencilLine className="h-4 w-4" />
+                                          Sửa ghi chú
+                                        </>
+                                      ) : (
+                                        <>
+                                          <ChevronDown className="h-4 w-4" />
+                                          Thêm ghi chú
+                                        </>
+                                      )}
+                                    </button>
+                                  </CollapsibleTrigger>
+                                </div>
                               </div>
 
-                              <label className="mt-4 block space-y-1.5">
-                                <span className="text-sm font-semibold text-slate-700">
-                                  Ghi chú phân bổ
-                                </span>
-                                <textarea
-                                  rows={3}
-                                  value={item.note}
-                                  onChange={(event) =>
-                                    updateSupportLinkDraft(item.rowId, { note: event.target.value })
-                                  }
-                                  className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                                />
-                              </label>
-                            </div>
+                              {hasNote && !isNoteExpanded ? (
+                                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                                  <span className="font-semibold text-slate-700">Ghi chú:</span>{" "}
+                                  {getCompactNotePreview(item.note)}
+                                </div>
+                              ) : null}
+
+                              <CollapsibleContent className="mt-3">
+                                <label className="block space-y-1.5">
+                                  <span className="text-sm font-semibold text-slate-700">
+                                    Ghi chú
+                                  </span>
+                                  <textarea
+                                    rows={2}
+                                    value={item.note}
+                                    onChange={(event) =>
+                                      updateSupportLinkDraft(item.rowId, {
+                                        note: event.target.value,
+                                      })
+                                    }
+                                    className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                    placeholder="Thêm bối cảnh ngắn cho liên kết này"
+                                  />
+                                </label>
+                              </CollapsibleContent>
+                            </Collapsible>
                           );
                         })}
                       </div>
 
-                      <div className="flex flex-wrap items-center justify-between gap-3">
+                      <button
+                        type="button"
+                        onClick={addSupportLinkDraft}
+                        className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                      >
+                        + Thêm phân bổ
+                      </button>
+                    </section>
+                  ) : null}
+
+                  <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                    <h2 className="text-base font-semibold text-slate-900">Thời gian & mô tả</h2>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <label className="flex flex-col gap-1.5">
+                        <span className="text-sm font-semibold text-slate-700">Ngày bắt đầu</span>
+                        <input
+                          type="date"
+                          value={form.startDate}
+                          onChange={(event) =>
+                            setForm((prev) => ({ ...prev, startDate: event.target.value }))
+                          }
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        />
+                      </label>
+
+                      <label className="flex flex-col gap-1.5">
+                        <span className="text-sm font-semibold text-slate-700">Ngày kết thúc</span>
+                        <input
+                          type="date"
+                          min={form.startDate || undefined}
+                          value={form.endDate}
+                          onChange={(event) =>
+                            setForm((prev) => ({ ...prev, endDate: event.target.value }))
+                          }
+                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        />
+                      </label>
+                    </div>
+
+                    {!isDateRangeOrdered(form.startDate || null, form.endDate || null) ? (
+                      <p className="-mt-1 text-xs text-rose-600">
+                        Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.
+                      </p>
+                    ) : null}
+
+                    <label className="block space-y-1.5">
+                      <span className="text-sm font-semibold text-slate-700">Mô tả</span>
+                      <textarea
+                        rows={3}
+                        value={form.description}
+                        onChange={(event) =>
+                          setForm((prev) => ({ ...prev, description: event.target.value }))
+                        }
+                        className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                        placeholder="Mô tả phạm vi và cách đo kết quả"
+                      />
+                    </label>
+                  </section>
+
+                  <div className="sticky -bottom-5 z-10 -mx-4 border-t border-slate-200 bg-white/95 px-4 pt-3 pb-10 bg-white backdrop-blur lg:-mx-5 lg:px-5">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        {isEditMode ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteKeyResult()}
+                            disabled={isDeletingKeyResult || isSubmitting}
+                            className="inline-flex h-10 items-center rounded-xl border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {isDeletingKeyResult ? "Đang xóa..." : "Xóa KR"}
+                          </button>
+                        ) : null}
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-end gap-2">
                         <button
                           type="button"
-                          onClick={addSupportLinkDraft}
-                          className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+                          onClick={handleCancel}
+                          className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 hover:bg-slate-50"
                         >
-                          + Thêm phân bổ
+                          Hủy
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={isSubmitting || isDeletingKeyResult}
+                          className="h-10 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                        >
+                          {isSubmitting
+                            ? isEditMode
+                              ? "Đang lưu..."
+                              : "Đang tạo..."
+                            : isEditMode
+                              ? "Lưu thay đổi"
+                              : "Tạo KR"}
                         </button>
                       </div>
-                    </div>
-                  ) : null}
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">Ngày bắt đầu</label>
-                      <input
-                        type="date"
-                        value={form.startDate}
-                        onChange={(event) =>
-                          setForm((prev) => ({ ...prev, startDate: event.target.value }))
-                        }
-                        className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">Ngày kết thúc</label>
-                      <input
-                        type="date"
-                        min={form.startDate || undefined}
-                        value={form.endDate}
-                        onChange={(event) =>
-                          setForm((prev) => ({ ...prev, endDate: event.target.value }))
-                        }
-                        className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                      />
-                    </div>
-                  </div>
-
-                  {!isDateRangeOrdered(form.startDate || null, form.endDate || null) ? (
-                    <p className="-mt-2 text-xs text-rose-600">
-                      Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.
-                    </p>
-                  ) : null}
-
-                  <div className="space-y-1.5">
-                    <label className="text-sm font-semibold text-slate-700">Mô tả</label>
-                    <textarea
-                      rows={4}
-                      value={form.description}
-                      onChange={(event) =>
-                        setForm((prev) => ({ ...prev, description: event.target.value }))
-                      }
-                      className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                      placeholder="Mô tả phạm vi và cách đo kết quả"
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-3">
-                    <div>
-                      {isEditMode ? (
-                        <button
-                          type="button"
-                          onClick={() => void handleDeleteKeyResult()}
-                          disabled={isDeletingKeyResult || isSubmitting}
-                          className="inline-flex h-10 items-center rounded-xl border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {isDeletingKeyResult ? "Đang xóa..." : "Xóa KR"}
-                        </button>
-                      ) : null}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleCancel}
-                      className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 hover:bg-slate-50"
-                    >
-                      Hủy
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={isSubmitting || isDeletingKeyResult}
-                      className="h-10 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                    >
-                      {isSubmitting
-                        ? isEditMode
-                          ? "Đang lưu..."
-                          : "Đang tạo..."
-                        : isEditMode
-                          ? "Lưu thay đổi KR"
-                          : "Tạo KR"}
-                    </button>
                     </div>
                   </div>
                 </form>

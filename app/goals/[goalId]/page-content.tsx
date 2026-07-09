@@ -213,6 +213,47 @@ function DepartmentStatColumn({ value, tone }: { value: number; tone: "primary" 
   );
 }
 
+function SummaryMiniCard({
+  label,
+  value,
+  hint,
+  className = "",
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  className?: string;
+}) {
+  return (
+    <div className={`rounded-xl border border-slate-200 bg-slate-50/80 p-3 ${className}`}>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+        {label}
+      </p>
+      <p className="mt-1.5 text-base font-semibold text-slate-900">{value}</p>
+      {hint ? <p className="mt-1 text-xs text-slate-500">{hint}</p> : null}
+    </div>
+  );
+}
+
+function DetailInfoRow({
+  label,
+  value,
+  valueClassName = "",
+}: {
+  label: string;
+  value: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3 text-sm">
+      <span className="text-slate-500">{label}</span>
+      <span className={`max-w-[65%] text-right font-medium text-slate-800 ${valueClassName}`}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
 function GoalDetailPageContent() {
   const params = useParams<{ goalId: string }>();
   const router = useRouter();
@@ -486,10 +527,27 @@ function GoalDetailPageContent() {
   }, [goal, keyResultProgressMap, keyResults]);
   const goalType = goal ? normalizeGoalTypeValue(goal.type) : "kpi";
   const goalTypeLabel = goal ? formatGoalTypeLabel(goal.type) : "Chưa đặt";
+  const goalStatusLabel = goal?.status ? (statusLabelMap[goal.status] ?? goal.status) : "Chưa đặt";
   const quarterLabel = goal?.quarter ? `Q${goal.quarter}` : "Chưa đặt";
   const yearLabel = goal?.year ? String(goal.year) : "Chưa đặt";
   const goalMetricTarget = goal?.target ?? null;
   const goalMetricUnit = goal?.unit ?? null;
+  const goalOwnerSummary =
+    goalOwners.length > 0 ? goalOwners.map((owner) => owner.name).join(", ") : "Chưa có phụ trách";
+  const goalDescription = goal?.description?.trim() ?? "";
+  const goalDepartmentCount =
+    goalDepartments.length > 0 ? goalDepartments.length : goal?.department_id ? 1 : 0;
+  const goalDepartmentNames =
+    goalDepartments.length > 0
+      ? goalDepartments.map((department) => department.name).join(" • ")
+      : "Chưa có phòng ban tham gia";
+  const goalTimelineLabel = formatTimelineRangeVi(
+    goal?.start_date ?? null,
+    goal?.end_date ?? null,
+    {
+      fallback: "Chưa có mốc thời gian",
+    },
+  );
   const directKeyResults = useMemo(
     () =>
       keyResults.filter(
@@ -598,6 +656,20 @@ function GoalDetailPageContent() {
       }),
     [departmentPerformanceItems],
   );
+  const topDepartmentPerformance = departmentPerformanceChartItems[0] ?? null;
+  const averageDepartmentPerformance =
+    departmentPerformanceItems.length > 0
+      ? Math.round(
+          departmentPerformanceItems.reduce((total, item) => total + item.performance, 0) /
+            departmentPerformanceItems.length,
+        )
+      : 0;
+  const isKpiInsightWarning =
+    goalType === "kpi" &&
+    ((kpiDirectSummary.safeGoalTarget !== null &&
+      kpiDirectSummary.targetGap !== null &&
+      kpiDirectSummary.targetGap > 0) ||
+      kpiDirectSummary.mismatchedUnitCount > 0);
 
   const createKeyResultHref = hasValidGoalId ? `/goals/${goalId}/key-results/new` : null;
   const isCreateKeyResultButtonDisabled =
@@ -869,14 +941,14 @@ function GoalDetailPageContent() {
 
         <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden lg:pl-[var(--workspace-sidebar-width)]">
           <WorkspacePageHeader
-            title={goal?.name ?? "Chi tiết mục tiêu"}
+            title="Chi tiết mục tiêu"
             items={[
               { label: "Mục tiêu", href: "/goals" },
               { label: goal?.name ?? "Chi tiết mục tiêu" },
             ]}
           />
 
-          <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-7">
+          <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 lg:px-6">
             {!hasValidGoalId ? (
               <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-5 text-sm text-rose-700">
                 Thiếu mã mục tiêu.
@@ -896,510 +968,318 @@ function GoalDetailPageContent() {
             ) : null}
 
             {hasValidGoalId && !isLoading && !error && goal ? (
-              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-                <section className="flex flex-col gap-5">
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-4">
-                      <div>
-                        <h1 className="text-[30px] font-semibold tracking-[-0.02em] text-slate-900">
-                          {goal.name}
-                        </h1>
-                        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                          <span className="rounded-full bg-blue-50 px-2.5 py-1 font-semibold text-blue-700">
-                            {goalTypeLabel}
-                          </span>
-                          <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-700">
-                            {formatQuarterYear(goal.quarter, goal.year)}
-                          </span>
+              <div className="w-full min-w-0">
+                <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_300px] 2xl:grid-cols-[minmax(0,1fr)_312px]">
+                  <section className="flex min-w-0 flex-col gap-4">
+                    <article className="rounded-2xl border border-slate-200 bg-white p-4 lg:p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2 text-xs">
+                            <span className="rounded-full bg-blue-50 px-2.5 py-1 font-semibold text-blue-700">
+                              {goalTypeLabel}
+                            </span>
+                            <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
+                              {formatQuarterYear(goal.quarter, goal.year)}
+                            </span>
+                            <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700">
+                              {goalStatusLabel}
+                            </span>
+                          </div>
+
+                          <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <h1 className="text-2xl font-semibold tracking-[-0.03em] text-slate-900 lg:text-[28px]">
+                                {goal.name}
+                              </h1>
+                            </div>
+
+                            <div className="flex shrink-0 flex-wrap items-center gap-2">
+                              <ActivityHistoryDialog
+                                entityType="goal"
+                                entityId={goal.id}
+                                title="Lịch sử hoạt động của mục tiêu"
+                                triggerLabel="Lịch sử"
+                                triggerClassName="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                              />
+                              {workspaceAccess.canManage &&
+                              !workspaceAccess.error &&
+                              hasValidGoalId ? (
+                                <>
+                                  <Link
+                                    href={`/goals/new?editGoalId=${goalId}`}
+                                    className="inline-flex h-8 items-center rounded-lg border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                                  >
+                                    Sửa mục tiêu
+                                  </Link>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleDeleteGoal()}
+                                    disabled={isDeletingGoal}
+                                    className="inline-flex h-8 items-center rounded-lg border border-rose-200 bg-white px-3 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    {isDeletingGoal ? "Đang xóa..." : "Xóa mục tiêu"}
+                                  </button>
+                                </>
+                              ) : null}
+                            </div>
+                          </div>
                         </div>
                       </div>
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        <ActivityHistoryDialog
-                          entityType="goal"
-                          entityId={goal.id}
-                          title="Lịch sử hoạt động của mục tiêu"
-                        />
-                        {workspaceAccess.canManage && !workspaceAccess.error && hasValidGoalId ? (
-                          <>
-                            <Link
-                              href={`/goals/new?editGoalId=${goalId}`}
-                              className="inline-flex h-9 items-center rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm font-semibold text-amber-800 hover:bg-amber-100"
-                            >
-                              Sửa mục tiêu
-                            </Link>
-                            <button
-                              type="button"
-                              onClick={() => void handleDeleteGoal()}
-                              disabled={isDeletingGoal}
-                              className="inline-flex h-9 items-center rounded-xl border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {isDeletingGoal ? "Đang xóa mục tiêu..." : "Xóa mục tiêu"}
-                            </button>
-                          </>
-                        ) : null}
-                      </div>
-                    </div>
 
-                    <div className="mt-5">
-                      {keyResults.length > 0 ? (
-                        <>
-                          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
-                            <span className="font-medium text-slate-600" title={goalProgressHelp}>
-                              Tiến độ mục tiêu ({goalProgress}%)
-                            </span>
-                            {goalType === "kpi" ? (
-                              <span className="font-semibold text-slate-900">
-                                {formatKeyResultMetric(
-                                  kpiDirectSummary.totalCurrent,
-                                  goalMetricUnit,
-                                )}
-                                {kpiDirectSummary.safeGoalTarget !== null
-                                  ? ` / ${formatKeyResultMetric(
-                                      kpiDirectSummary.safeGoalTarget,
-                                      goalMetricUnit,
-                                    )}`
-                                  : ""}
-                              </span>
-                            ) : null}
+                      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1.3fr)_repeat(3,minmax(0,0.9fr))]">
+                        <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 md:col-span-2 xl:col-span-1">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p
+                                className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500"
+                                title={goalProgressHelp}
+                              >
+                                Tiến độ
+                              </p>
+                              <p className="mt-1 text-xl font-semibold text-slate-900">
+                                {goalProgress}%
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-sm font-semibold text-slate-900">
+                                {goalProgressMetricLabel}
+                              </p>
+                            </div>
                           </div>
-                          <ProgressBar value={goalProgress} />
-                          {goalType === "kpi" ? (
-                            <div className="mt-4">
-                              <div
-                                className={`rounded-2xl border px-4 py-3 ${
-                                  kpiDirectSummary.safeGoalTarget !== null &&
-                                  kpiDirectSummary.targetGap !== null &&
-                                  kpiDirectSummary.targetGap > 0
-                                    ? "border-amber-200 bg-amber-50/70"
-                                    : "border-emerald-200 bg-emerald-50/70"
+                          <div className="mt-3">
+                            <ProgressBar value={goalProgress} />
+                          </div>
+                        </div>
+
+                        <SummaryMiniCard label="Kỳ" value={`${quarterLabel} / ${yearLabel}`} />
+                        <SummaryMiniCard
+                          label="KR"
+                          value={`${keyResults.length} KR`}
+                          hint={
+                            keyResults.length > 0
+                              ? `${directKeyResults.length} trực tiếp`
+                              : undefined
+                          }
+                        />
+                        <SummaryMiniCard label="Phòng ban" value={`${goalDepartmentCount}`} />
+                      </div>
+
+                      {goalType === "kpi" ? (
+                        <div
+                          className={`mt-3 rounded-xl border px-3.5 py-3 ${
+                            isKpiInsightWarning
+                              ? "border-amber-200 bg-amber-50/70"
+                              : "border-slate-200 bg-slate-50/80"
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p
+                                className={`text-[11px] font-semibold uppercase tracking-[0.08em] ${
+                                  isKpiInsightWarning ? "text-amber-700" : "text-slate-600"
                                 }`}
                               >
-                                <p
-                                  className={`text-xs font-semibold tracking-[0.08em] uppercase ${
-                                    kpiDirectSummary.safeGoalTarget !== null &&
-                                    kpiDirectSummary.targetGap !== null &&
-                                    kpiDirectSummary.targetGap > 0
-                                      ? "text-amber-700"
-                                      : "text-emerald-700"
-                                  }`}
-                                >
-                                  Tổng KPI KR
-                                </p>
-                                <p className="mt-2 text-2xl font-semibold text-slate-900">
-                                  {formatKeyResultMetric(
-                                    kpiDirectSummary.totalTarget,
-                                    goalMetricUnit,
-                                  )}
-                                </p>
-                                <p className="mt-1 text-sm text-slate-600">
-                                  {kpiDirectSummary.safeGoalTarget !== null
-                                    ? `${kpiDirectSummary.targetCoveragePercent}% KPI mục tiêu`
-                                    : "Chưa có chỉ tiêu mục tiêu để tính độ phủ."}
-                                </p>
-                                <p className="mt-2 text-xs text-slate-600">
-                                  {kpiDirectSummary.safeGoalTarget === null
-                                    ? "Mục tiêu KPI chưa có chỉ tiêu nên chưa biết tổng chỉ tiêu KR đã đủ hay chưa."
-                                    : kpiDirectSummary.targetGap && kpiDirectSummary.targetGap > 0
-                                      ? `Các KR trực tiếp còn thiếu ${formatKeyResultMetric(
-                                          kpiDirectSummary.targetGap,
-                                          goalMetricUnit,
-                                        )} chỉ tiêu để đạt đủ KPI của mục tiêu.`
-                                      : `Các KR trực tiếp đã đạt đủ KPI của mục tiêu${
-                                          (kpiDirectSummary.targetOver ?? 0) > 0
-                                            ? ` và dư ${formatKeyResultMetric(
-                                                kpiDirectSummary.targetOver ?? 0,
-                                                goalMetricUnit,
-                                              )}`
-                                            : ""
-                                        }.`}
-                                </p>
-                              </div>
+                                Tổng KPI KR
+                              </p>
+                              <p className="mt-1 text-sm font-semibold text-slate-900">
+                                {formatKeyResultMetric(
+                                  kpiDirectSummary.totalTarget,
+                                  goalMetricUnit,
+                                )}
+                              </p>
                             </div>
-                          ) : null}
-                          {goalType === "kpi" && kpiDirectSummary.mismatchedUnitCount > 0 ? (
-                            <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                                isKpiInsightWarning
+                                  ? "bg-amber-100 text-amber-800"
+                                  : "bg-slate-200 text-slate-700"
+                              }`}
+                            >
+                              {kpiDirectSummary.safeGoalTarget !== null
+                                ? `${kpiDirectSummary.targetCoveragePercent}% độ phủ`
+                                : "Chưa có chỉ tiêu mục tiêu"}
+                            </span>
+                          </div>
+                          <p className="mt-1.5 text-xs leading-5 text-slate-600">
+                            {kpiDirectSummary.safeGoalTarget === null
+                              ? "Mục tiêu KPI chưa có chỉ tiêu để đối chiếu tổng KPI từ các KR trực tiếp."
+                              : kpiDirectSummary.targetGap && kpiDirectSummary.targetGap > 0
+                                ? `Còn thiếu ${formatKeyResultMetric(
+                                    kpiDirectSummary.targetGap,
+                                    goalMetricUnit,
+                                  )} để phủ đủ KPI mục tiêu.`
+                                : `Các KR trực tiếp đã phủ đủ KPI của mục tiêu${
+                                    (kpiDirectSummary.targetOver ?? 0) > 0
+                                      ? ` và dư ${formatKeyResultMetric(
+                                          kpiDirectSummary.targetOver ?? 0,
+                                          goalMetricUnit,
+                                        )}`
+                                      : ""
+                                  }.`}
+                          </p>
+                          {kpiDirectSummary.mismatchedUnitCount > 0 ? (
+                            <p className="mt-2 text-xs font-medium text-amber-800">
                               Có {kpiDirectSummary.mismatchedUnitCount} KR trực tiếp khác đơn vị với
-                              mục tiêu. Số cộng dồn KPI nên được kiểm tra lại trước khi dùng để
-                              quyết định.
+                              mục tiêu, nên cần kiểm tra lại trước khi ra quyết định.
                             </p>
                           ) : null}
-                        </>
-                      ) : (
-                        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-500">
-                          Mục tiêu chưa có KR nên chưa có đủ dữ liệu để tính tiến độ.
                         </div>
-                      )}
-                    </div>
-                  </article>
+                      ) : null}
 
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <h2 className="text-base font-semibold text-slate-900">Mô tả</h2>
-                    <p className="mt-2 text-sm leading-relaxed text-slate-700">
-                      {goal.description?.trim() || "Chưa có mô tả."}
-                    </p>
-                  </article>
-
-                  <article className="order-5 rounded-2xl border border-slate-200 bg-white p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <h2 className="text-base font-semibold text-slate-900">
-                          Phòng ban tham gia & hiệu suất
-                        </h2>
-                        <p className="mt-1 text-sm text-slate-500">
-                          Hiệu suất phòng ban = tiến độ mục tiêu x tỷ trọng mục tiêu + tiến độ KR sở
-                          hữu x tỷ trọng KR.
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                          {goalDepartments.length} phòng ban
-                        </span>
-                        <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
-                          <button
-                            type="button"
-                            onClick={() => setDepartmentPerformanceView("table")}
-                            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-                              departmentPerformanceView === "table"
-                                ? "bg-slate-900 text-white"
-                                : "text-slate-600 hover:bg-slate-50"
-                            }`}
-                          >
-                            Bảng
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDepartmentPerformanceView("chart")}
-                            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
-                              departmentPerformanceView === "chart"
-                                ? "bg-slate-900 text-white"
-                                : "text-slate-600 hover:bg-slate-50"
-                            }`}
-                          >
-                            Biểu đồ
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {relatedDepartmentLoadError ? (
-                      <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                        {relatedDepartmentLoadError}
-                      </p>
-                    ) : null}
-
-                    {departmentPerformanceItems.length > 0 ? (
-                      departmentPerformanceView === "table" ? (
-                        <div className="mt-4 overflow-x-auto">
-                          <table className="w-full min-w-[760px] text-left text-sm">
-                            <thead>
-                              <tr className="border-b border-slate-200 text-[11px] uppercase tracking-[0.08em] text-slate-500">
-                                <th className="px-4 py-3 font-semibold">Phòng ban</th>
-                                <th className="px-4 py-3 font-semibold">Vai trò</th>
-                                <th className="px-4 py-3 text-right font-semibold">KR sở hữu</th>
-                                <th className="px-4 py-3 text-right font-semibold">
-                                  Tiến độ KR sở hữu
-                                </th>
-                                <th className="px-4 py-3 text-right font-semibold">Hiệu suất PB</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {departmentPerformanceItems.map((department) => (
-                                <tr
-                                  key={department.departmentId}
-                                  className="border-b border-slate-100 last:border-b-0"
-                                >
-                                  <td className="px-4 py-3">
-                                    <p className="font-semibold text-slate-900">
-                                      {department.name}
-                                    </p>
-                                  </td>
-                                  <td className="px-4 py-3 text-slate-600">
-                                    {formatGoalParticipationRoleLabel(department.role)}
-                                  </td>
-                                  <td className="px-4 py-3 text-right font-medium text-slate-900">
-                                    {department.ownedKrCount}
-                                  </td>
-                                  <td className="px-4 py-3 text-right font-medium text-slate-900">
-                                    {department.departmentKrProgress}%
-                                  </td>
-                                  <td className="px-4 py-3 text-right font-semibold text-slate-950">
-                                    {department.performance}%
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : (
-                        <div className="mt-4 space-y-4">
-                          <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">
-                            <span className="inline-flex items-center gap-2">
-                              <span className="h-2.5 w-8 rounded-full bg-slate-800" />
-                              Hiệu suất phòng ban
-                            </span>
-                            <span className="inline-flex items-center gap-2">
-                              <span className="h-2.5 w-8 rounded-full bg-slate-400" />
-                              Tiến độ KR sở hữu
-                            </span>
-                          </div>
-
-                          <div className="overflow-x-auto">
-                            <div
-                              className="rounded-xl border border-slate-200 bg-white p-4"
-                              style={{
-                                minWidth: Math.max(
-                                  760,
-                                  departmentPerformanceChartItems.length * 148,
-                                ),
-                              }}
-                            >
-                              <div className="grid grid-cols-[40px_minmax(0,1fr)] gap-4 pt-4">
-                                <div className="relative h-[280px]">
-                                  {[100, 75, 50, 25, 0].map((tick) => (
-                                    <div
-                                      key={tick}
-                                      className="absolute inset-x-0 -translate-y-1/2 text-right text-[11px] text-slate-400"
-                                      style={{ bottom: `${tick}%` }}
-                                    >
-                                      {tick}
-                                    </div>
-                                  ))}
-                                </div>
-
-                                <div className="relative">
-                                  <div className="absolute inset-0 h-[280px]">
-                                    {[100, 75, 50, 25, 0].map((tick) => (
-                                      <div
-                                        key={tick}
-                                        className="absolute inset-x-0 border-t border-slate-100"
-                                        style={{ bottom: `${tick}%` }}
-                                      />
-                                    ))}
-                                  </div>
-
-                                  <div
-                                    className="relative grid auto-cols-fr grid-flow-col gap-6 pt-2"
-                                    style={{
-                                      minWidth: Math.max(
-                                        720,
-                                        departmentPerformanceChartItems.length * 132,
-                                      ),
-                                    }}
-                                  >
-                                    {departmentPerformanceChartItems.map((department) => (
-                                      <div key={department.departmentId} className="min-w-[112px]">
-                                        <div className="flex h-[280px] items-end justify-center gap-3">
-                                          <DepartmentStatColumn
-                                            value={department.performance}
-                                            tone="primary"
-                                          />
-                                          <DepartmentStatColumn
-                                            value={department.departmentKrProgress}
-                                            tone="secondary"
-                                          />
-                                        </div>
-                                        <div className="mt-4 text-center">
-                                          <p className="text-sm font-semibold text-slate-900">
-                                            {department.name}
-                                          </p>
-                                          <p className="mt-1 text-[11px] text-slate-500">
-                                            {formatGoalParticipationRoleLabel(department.role)} ·{" "}
-                                            {department.ownedKrCount} KR
-                                          </p>
-                                          <p className="mt-1 text-[11px] text-slate-400">
-                                            Mục tiêu {department.goalWeight.toFixed(2)} · KR{" "}
-                                            {department.krWeight.toFixed(2)}
-                                          </p>
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    ) : (
-                      <p className="mt-4 text-sm text-slate-500">
-                        Chưa có cấu hình phòng ban tham gia cho mục tiêu này.
-                      </p>
-                    )}
-                  </article>
-
-                  <article className="order-4 rounded-2xl border border-slate-200 bg-white p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <h2 className="text-base font-semibold text-slate-900">KR</h2>
-                        {/* <p className="mt-1 text-sm text-slate-500">
-                          Hiển thị nhanh tiến độ, chỉ số hiện tại, mục tiêu và khung thời gian của
-                          từng KR.
-                        </p> */}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                          {keyResults.length} KR
-                        </span>
-                        {createKeyResultHref && !isCreateKeyResultButtonDisabled ? (
-                          <Link
-                            href={createKeyResultHref}
-                            className="inline-flex h-9 items-center rounded-xl border border-blue-600 bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
-                          >
-                            + Thêm KR
-                          </Link>
-                        ) : (
-                          <button
-                            type="button"
-                            disabled
-                            className="inline-flex h-9 items-center rounded-xl border border-blue-300 bg-blue-300 px-4 text-sm font-semibold text-white opacity-60"
-                          >
-                            + Thêm KR
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {keyResultNotice ? (
-                      <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                        {keyResultNotice}
-                      </div>
-                    ) : null}
-
-                    {/* {goalType === "kpi" ? (
-                      <div
-                        className={`mt-4 rounded-2xl border px-4 py-4 text-sm ${
-                          kpiDirectSummary.safeGoalTarget !== null &&
-                          kpiDirectSummary.targetGap !== null &&
-                          kpiDirectSummary.targetGap > 0
-                            ? "border-amber-200 bg-amber-50 text-amber-900"
-                            : "border-blue-200 bg-blue-50 text-blue-900"
-                        }`}
-                      >
-                        <p className="font-semibold">
-                          KPI của mục tiêu hiện đang được cộng từ {kpiDirectSummary.directCount} KR
-                          trực tiếp.
-                        </p>
-                        <p className="mt-1">
-                          Đã đạt{" "}
-                          {formatKeyResultMetric(kpiDirectSummary.totalCurrent, goalMetricUnit)}
-                          {kpiDirectSummary.safeGoalTarget !== null
-                            ? ` / ${formatKeyResultMetric(
-                                kpiDirectSummary.safeGoalTarget,
-                                goalMetricUnit,
-                              )} theo KPI của mục tiêu.`
-                            : " từ giá trị hiện tại của các KR trực tiếp."}
-                        </p>
-                        <p className="mt-1">
-                          Tổng chỉ tiêu KR trực tiếp hiện là{" "}
-                          {formatKeyResultMetric(kpiDirectSummary.totalTarget, goalMetricUnit)}
-                          {kpiDirectSummary.safeGoalTarget === null
-                            ? ", nhưng mục tiêu chưa có chỉ tiêu để đối chiếu."
-                            : kpiDirectSummary.targetGap && kpiDirectSummary.targetGap > 0
-                              ? `, còn thiếu ${formatKeyResultMetric(
-                                  kpiDirectSummary.targetGap,
-                                  goalMetricUnit,
-                                )} để đạt đủ KPI của mục tiêu.`
-                              : `, đã đạt đủ KPI của mục tiêu${
-                                  (kpiDirectSummary.targetOver ?? 0) > 0
-                                    ? ` và dư ${formatKeyResultMetric(
-                                        kpiDirectSummary.targetOver ?? 0,
-                                        goalMetricUnit,
-                                      )}`
-                                    : ""
-                                }.`}
-                        </p>
-                        {kpiDirectSummary.mismatchedUnitCount > 0 ? (
-                          <p className="mt-2 text-xs text-amber-800">
-                            Có {kpiDirectSummary.mismatchedUnitCount} KR trực tiếp đang khác đơn vị
-                            với mục tiêu, nên cần kiểm tra lại tính tương thích của số tổng hợp này.
+                      {goalDescription ? (
+                        <div className="mt-3 border-t border-slate-100 pt-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                            Mô tả
                           </p>
-                        ) : null}
-                      </div>
-                    ) : null} */}
+                          <p className="mt-1.5 text-sm leading-6 text-slate-700">
+                            {goalDescription}
+                          </p>
+                        </div>
+                      ) : null}
 
-                    {keyResultLoadError ? (
-                      <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                        {keyResultLoadError}
-                      </p>
-                    ) : null}
-                    {!keyResultLoadError && keyResults.length === 0 ? (
-                      <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center">
-                        <p className="text-lg font-semibold text-slate-900">Chưa có KR.</p>
-                        <p className="mt-2 text-sm text-slate-500">
-                          Hãy tạo KR để bắt đầu theo dõi mục tiêu.
+                      {keyResults.length === 0 ? (
+                        <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3.5 py-3 text-sm text-slate-500">
+                          Mục tiêu chưa có KR nên chưa có đủ dữ liệu để tính tiến độ chi tiết.
+                        </div>
+                      ) : null}
+                    </article>
+
+                    <article className="rounded-2xl border border-slate-200 bg-white p-4 lg:p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h2 className="text-base font-semibold text-slate-900">KR</h2>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                            {keyResults.length} KR
+                          </span>
+                          {createKeyResultHref && !isCreateKeyResultButtonDisabled ? (
+                            <Link
+                              href={createKeyResultHref}
+                              className="inline-flex h-8 items-center rounded-lg border border-blue-600 bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700"
+                            >
+                              + Thêm KR
+                            </Link>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled
+                              className="inline-flex h-8 items-center rounded-lg border border-blue-300 bg-blue-300 px-3 text-xs font-semibold text-white opacity-60"
+                            >
+                              + Thêm KR
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {keyResultNotice ? (
+                        <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm text-emerald-700">
+                          {keyResultNotice}
+                        </div>
+                      ) : null}
+
+                      {keyResultLoadError ? (
+                        <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                          {keyResultLoadError}
                         </p>
-                      </div>
-                    ) : null}
+                      ) : null}
 
-                    {!keyResultLoadError && keyResults.length > 0 ? (
-                      <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
-                        <div className="overflow-x-auto">
-                          <table className="w-full min-w-[1100px] text-left text-sm">
-                            <thead className="bg-white">
-                              <tr className="border-b border-slate-200 text-[11px] uppercase tracking-[0.08em] text-slate-500">
-                                <th className="px-4 py-3 font-semibold">KR</th>
-                                <th className="px-4 py-3 font-semibold">Phân loại</th>
-                                <th className="px-4 py-3 font-semibold">Phòng ban</th>
-                                <th className="px-4 py-3 font-semibold">Chỉ số</th>
-                                <th className="px-4 py-3 font-semibold">Thời gian</th>
-                                <th className="px-4 py-3 text-right font-semibold">Thao tác</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {keyResults.map((keyResult) => {
-                                const keyResultDetailHref = `/goals/${goal.id}/key-results/${keyResult.id}`;
-                                const keyResultProgress = keyResultProgressMap[keyResult.id] ?? 0;
-                                const responsibleDepartmentName =
-                                  goalDepartmentsById[keyResult.responsible_department_id ?? ""]
-                                    ?.name ?? "Chưa gán phòng ban";
+                      {!keyResultLoadError && keyResults.length === 0 ? (
+                        <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-7 text-center">
+                          <p className="text-base font-semibold text-slate-900">Chưa có KR.</p>
+                          <p className="mt-1.5 text-sm text-slate-500">
+                            Hãy tạo KR để bắt đầu theo dõi mục tiêu.
+                          </p>
+                        </div>
+                      ) : null}
 
-                                return (
-                                  <Fragment key={keyResult.id}>
-                                    <tr className="border-b border-slate-100 align-top bg-white">
-                                      <td className="px-4 py-4">
-                                        <Link
-                                          href={keyResultDetailHref}
-                                          className="font-semibold text-slate-900 hover:text-blue-700"
-                                        >
-                                          {keyResult.name}
-                                        </Link>
-                                        {/* <p className="mt-1 text-xs text-slate-500">
-                                          {keyResult.description?.trim() || "Chưa có mô tả."}
-                                        </p> */}
-                                      </td>
-                                      <td className="px-4 py-4">
-                                        <div className="flex flex-wrap gap-2 text-xs">
-                                          <span className="rounded-full bg-blue-50 px-2.5 py-1 font-semibold text-blue-700">
-                                            {formatKeyResultTypeLabel(keyResult.type)}
-                                          </span>
-                                          <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-700">
-                                            {formatKeyResultContributionTypeLabel(
-                                              keyResult.contribution_type,
-                                            )}
-                                          </span>
-                                        </div>
-                                      </td>
-                                      <td className="px-4 py-4 text-slate-700">
-                                        {responsibleDepartmentName}
-                                      </td>
-                                      <td className="px-4 py-4">
-                                        <p className="font-medium text-slate-900">
-                                          {formatKeyResultMetric(keyResult.current, keyResult.unit)}
-                                          {" / "}
-                                          {formatKeyResultMetric(keyResult.target, keyResult.unit)}
-                                        </p>
-                                        <div className="mt-3 w-40 space-y-2">
-                                          <p className="text-xs font-semibold text-slate-600">
-                                            Tiến độ ({keyResultProgress}%)
-                                          </p>
-                                          <ProgressBar value={keyResultProgress} />
-                                        </div>
-                                        {/* <p className="mt-1 text-xs text-slate-500">
-                                          Hiện tại / KPI · {formatKeyResultUnit(keyResult.unit)}
-                                        </p> */}
-                                      </td>
-                                      <td className="px-4 py-4">
-                                        <p className="font-medium text-slate-900">
+                      {!keyResultLoadError && keyResults.length > 0 ? (
+                        <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200">
+                          <div className="max-h-[min(58vh,720px)] overflow-auto">
+                            <table className="w-full min-w-[980px] text-left text-sm">
+                              <thead className="sticky top-0 z-10 bg-slate-50">
+                                <tr className="border-b border-slate-200 text-[11px] uppercase tracking-[0.08em] text-slate-500">
+                                  <th className="px-3 py-2.5 font-semibold">KR</th>
+                                  <th className="px-3 py-2.5 font-semibold">Phân loại</th>
+                                  <th className="px-3 py-2.5 font-semibold">Phòng ban</th>
+                                  <th className="px-3 py-2.5 font-semibold">Chỉ số</th>
+                                  <th className="px-3 py-2.5 font-semibold">Thời gian</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {keyResults.map((keyResult) => {
+                                  const keyResultDetailHref = `/goals/${goal.id}/key-results/${keyResult.id}`;
+                                  const keyResultProgress = keyResultProgressMap[keyResult.id] ?? 0;
+                                  const responsibleDepartmentName =
+                                    goalDepartmentsById[keyResult.responsible_department_id ?? ""]
+                                      ?.name ?? "Chưa gán phòng ban";
+
+                                  return (
+                                    <Fragment key={keyResult.id}>
+                                      <tr className="border-b border-slate-100 align-top bg-white">
+                                        <td className="px-3 py-2.5">
+                                          <Link
+                                            href={keyResultDetailHref}
+                                            title={keyResult.name}
+                                            className="block text-sm font-semibold text-slate-900 hover:text-blue-700"
+                                          >
+                                            {keyResult.name}
+                                          </Link>
+                                          {keyResult.description?.trim() ? (
+                                            <p
+                                              className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500"
+                                              title={keyResult.description.trim()}
+                                            >
+                                              {keyResult.description.trim()}
+                                            </p>
+                                          ) : null}
+                                          {canCreateKeyResult ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => startEditingKeyResultScale(keyResult)}
+                                              className="mt-2 inline-flex h-7 items-center rounded-lg border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                                            >
+                                              Sửa
+                                            </button>
+                                          ) : null}
+                                        </td>
+                                        <td className="px-3 py-2.5">
+                                          <div className="flex flex-wrap gap-1.5 text-[11px]">
+                                            <span className="rounded-full bg-blue-50 px-2 py-1 font-semibold text-blue-700">
+                                              {formatKeyResultTypeLabel(keyResult.type)}
+                                            </span>
+                                            <span className="rounded-full bg-amber-50 px-2 py-1 font-semibold text-amber-700">
+                                              {formatKeyResultContributionTypeLabel(
+                                                keyResult.contribution_type,
+                                              )}
+                                            </span>
+                                          </div>
+                                        </td>
+                                        <td className="px-3 py-2.5 text-slate-700">
+                                          {responsibleDepartmentName}
+                                        </td>
+                                        <td className="px-3 py-2.5">
+                                          <div className="w-[220px] space-y-1.5">
+                                            <div className="flex items-center justify-between gap-2">
+                                              <p className="font-medium text-slate-900">
+                                                {formatKeyResultMetric(
+                                                  keyResult.current,
+                                                  keyResult.unit,
+                                                )}{" "}
+                                                /{" "}
+                                                {formatKeyResultMetric(
+                                                  keyResult.target,
+                                                  keyResult.unit,
+                                                )}
+                                              </p>
+                                              <span className="text-xs font-semibold text-slate-600">
+                                                {keyResultProgress}%
+                                              </span>
+                                            </div>
+                                            <ProgressBar value={keyResultProgress} />
+                                          </div>
+                                        </td>
+                                        <td className="px-3 py-2.5 text-sm text-slate-700">
                                           {formatTimelineRangeVi(
                                             keyResult.start_date,
                                             keyResult.end_date,
@@ -1407,107 +1287,283 @@ function GoalDetailPageContent() {
                                               fallback: "KR chưa có mốc thời gian",
                                             },
                                           )}
-                                        </p>
-                                        {/* <p className="mt-1 text-xs text-slate-500">
-                                          {getTimelineMissingReason(
-                                            keyResult.start_date,
-                                            keyResult.end_date,
-                                            "KR chưa có mốc thời gian",
-                                            "Mốc thời gian KR không hợp lệ",
-                                          ) ?? "Khung thời gian kế hoạch của KR."}
-                                        </p> */}
-                                      </td>
-                                      <td className="px-4 py-4 whitespace-nowrap">
-                                        <div className="flex justify-end gap-2 whitespace-nowrap">
-                                          <Link
-                                            href={keyResultDetailHref}
-                                            className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-slate-200 bg-white px-4 text-center text-sm font-semibold text-slate-700 hover:bg-slate-100"
-                                          >
-                                            Chi tiết
-                                          </Link>
-                                          {canCreateKeyResult ? (
-                                            <button
-                                              type="button"
-                                              onClick={() => startEditingKeyResultScale(keyResult)}
-                                              className="inline-flex cursor-pointer h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border border-slate-200 bg-white px-4 text-center text-sm font-semibold text-slate-700 hover:bg-slate-100"
-                                            >
-                                              Sửa
-                                            </button>
-                                          ) : null}
-                                        </div>
-                                      </td>
-                                    </tr>
-
-                                    {savedKeyResultId === keyResult.id ? (
-                                      <tr className="border-b border-slate-100 bg-emerald-50/60">
-                                        <td
-                                          colSpan={6}
-                                          className="px-4 py-3 text-sm text-emerald-700"
-                                        >
-                                          Đã lưu KR.
                                         </td>
                                       </tr>
-                                    ) : null}
-                                  </Fragment>
-                                );
-                              })}
-                            </tbody>
-                          </table>
+
+                                      {savedKeyResultId === keyResult.id ? (
+                                        <tr className="border-b border-slate-100 bg-emerald-50/60">
+                                          <td
+                                            colSpan={5}
+                                            className="px-3 py-2.5 text-sm text-emerald-700"
+                                          >
+                                            Đã lưu KR.
+                                          </td>
+                                        </tr>
+                                      ) : null}
+                                    </Fragment>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ) : null}
+                    </article>
+
+                    <article className="rounded-2xl border border-slate-200 bg-white p-4 lg:p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h2 className="text-base font-semibold text-slate-900">
+                            Phòng ban tham gia & hiệu suất
+                          </h2>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                            {goalDepartments.length} phòng ban
+                          </span>
+                          <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+                            <button
+                              type="button"
+                              onClick={() => setDepartmentPerformanceView("table")}
+                              className={`rounded-md px-2.5 py-1 text-xs font-semibold transition ${
+                                departmentPerformanceView === "table"
+                                  ? "bg-slate-900 text-white"
+                                  : "text-slate-600 hover:bg-slate-50"
+                              }`}
+                            >
+                              Bảng
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDepartmentPerformanceView("chart")}
+                              className={`rounded-md px-2.5 py-1 text-xs font-semibold transition ${
+                                departmentPerformanceView === "chart"
+                                  ? "bg-slate-900 text-white"
+                                  : "text-slate-600 hover:bg-slate-50"
+                              }`}
+                            >
+                              Biểu đồ
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    ) : null}
-                  </article>
-                </section>
 
-                <aside className="h-fit space-y-5">
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <h2 className="text-base font-semibold text-slate-900">Thông tin chi tiết</h2>
-                    <div className="mt-4 space-y-3 text-sm">
+                      {departmentPerformanceItems.length > 0 ? (
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
+                            Hiệu suất TB {averageDepartmentPerformance}%
+                          </span>
+                          {topDepartmentPerformance ? (
+                            <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700">
+                              Dẫn đầu: {topDepartmentPerformance.name}{" "}
+                              {topDepartmentPerformance.performance}%
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {relatedDepartmentLoadError ? (
+                        <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                          {relatedDepartmentLoadError}
+                        </p>
+                      ) : null}
+
+                      {departmentPerformanceItems.length > 0 ? (
+                        departmentPerformanceView === "table" ? (
+                          <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200">
+                            <div className="max-h-[420px] overflow-auto">
+                              <table className="w-full min-w-[760px] text-left text-sm">
+                                <thead className="sticky top-0 z-10 bg-slate-50">
+                                  <tr className="border-b border-slate-200 text-[11px] uppercase tracking-[0.08em] text-slate-500">
+                                    <th className="px-3 py-2.5 font-semibold">Phòng ban</th>
+                                    <th className="px-3 py-2.5 font-semibold">Vai trò</th>
+                                    <th className="px-3 py-2.5 text-right font-semibold">
+                                      KR sở hữu
+                                    </th>
+                                    <th className="px-3 py-2.5 text-right font-semibold">
+                                      Tiến độ KR
+                                    </th>
+                                    <th className="px-3 py-2.5 text-right font-semibold">
+                                      Hiệu suất
+                                    </th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {departmentPerformanceItems.map((department) => (
+                                    <tr
+                                      key={department.departmentId}
+                                      className="border-b border-slate-100 last:border-b-0"
+                                    >
+                                      <td className="px-3 py-2.5 font-semibold text-slate-900">
+                                        {department.name}
+                                      </td>
+                                      <td className="px-3 py-2.5 text-slate-600">
+                                        {formatGoalParticipationRoleLabel(department.role)}
+                                      </td>
+                                      <td className="px-3 py-2.5 text-right font-medium text-slate-900">
+                                        {department.ownedKrCount}
+                                      </td>
+                                      <td className="px-3 py-2.5 text-right font-medium text-slate-900">
+                                        {department.departmentKrProgress}%
+                                      </td>
+                                      <td className="px-3 py-2.5 text-right font-semibold text-slate-950">
+                                        {department.performance}%
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-3 space-y-3">
+                            <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">
+                              <span className="inline-flex items-center gap-2">
+                                <span className="h-2.5 w-8 rounded-full bg-slate-800" />
+                                Hiệu suất phòng ban
+                              </span>
+                              <span className="inline-flex items-center gap-2">
+                                <span className="h-2.5 w-8 rounded-full bg-slate-400" />
+                                Tiến độ KR sở hữu
+                              </span>
+                            </div>
+
+                            <div className="overflow-x-auto">
+                              <div
+                                className="rounded-xl border border-slate-200 bg-white p-3"
+                                style={{
+                                  minWidth: Math.max(
+                                    720,
+                                    departmentPerformanceChartItems.length * 132,
+                                  ),
+                                }}
+                              >
+                                <div className="grid grid-cols-[36px_minmax(0,1fr)] gap-3 pt-2">
+                                  <div className="relative h-[220px]">
+                                    {[100, 75, 50, 25, 0].map((tick) => (
+                                      <div
+                                        key={tick}
+                                        className="absolute inset-x-0 -translate-y-1/2 text-right text-[11px] text-slate-400"
+                                        style={{ bottom: `${tick}%` }}
+                                      >
+                                        {tick}
+                                      </div>
+                                    ))}
+                                  </div>
+
+                                  <div className="relative">
+                                    <div className="absolute inset-0 h-[220px]">
+                                      {[100, 75, 50, 25, 0].map((tick) => (
+                                        <div
+                                          key={tick}
+                                          className="absolute inset-x-0 border-t border-slate-100"
+                                          style={{ bottom: `${tick}%` }}
+                                        />
+                                      ))}
+                                    </div>
+
+                                    <div
+                                      className="relative grid auto-cols-fr grid-flow-col gap-5 pt-2"
+                                      style={{
+                                        minWidth: Math.max(
+                                          660,
+                                          departmentPerformanceChartItems.length * 116,
+                                        ),
+                                      }}
+                                    >
+                                      {departmentPerformanceChartItems.map((department) => (
+                                        <div
+                                          key={department.departmentId}
+                                          className="min-w-[100px]"
+                                        >
+                                          <div className="flex h-[220px] items-end justify-center gap-2.5">
+                                            <DepartmentStatColumn
+                                              value={department.performance}
+                                              tone="primary"
+                                            />
+                                            <DepartmentStatColumn
+                                              value={department.departmentKrProgress}
+                                              tone="secondary"
+                                            />
+                                          </div>
+                                          <div className="mt-3 text-center">
+                                            <p className="text-sm font-semibold text-slate-900">
+                                              {department.name}
+                                            </p>
+                                            <p className="mt-1 text-[11px] text-slate-500">
+                                              {department.ownedKrCount} KR
+                                            </p>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      ) : (
+                        <p className="mt-3 text-sm text-slate-500">
+                          Chưa có cấu hình phòng ban tham gia cho mục tiêu này.
+                        </p>
+                      )}
+                    </article>
+                  </section>
+
+                  <aside className="xl:sticky xl:self-start">
+                    <article className="rounded-2xl border border-slate-200 bg-white px-3.5 pb-3.5 pt-4 lg:px-4 lg:pb-4 lg:pt-5 xl:max-h-[calc(100vh-7rem)] xl:overflow-auto">
                       <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Phòng ban tham gia</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {goalDepartments.length > 0 ? goalDepartments.length : 1}
-                        </span>
+                        <div>
+                          <h2 className="text-base font-semibold text-slate-900">
+                            Thông tin chi tiết
+                          </h2>
+                        </div>
                       </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Loại mục tiêu</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {goalTypeLabel}
-                        </span>
+
+                      <div className="mt-2.5 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                            Tiến độ mục tiêu
+                          </span>
+                          <span className="text-lg font-semibold text-slate-900">
+                            {goalProgress}%
+                          </span>
+                        </div>
+                        <div className="mt-2">
+                          <ProgressBar value={goalProgress} />
+                        </div>
                       </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Quý/Năm</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {quarterLabel} / {yearLabel}
-                        </span>
+
+                      <div className="mt-3 space-y-2.5">
+                        <DetailInfoRow
+                          label="Phòng ban tham gia"
+                          value={`${goalDepartmentCount}`}
+                        />
+                        <DetailInfoRow label="Người phụ trách" value={goalOwnerSummary} />
+                        <DetailInfoRow label="Loại mục tiêu" value={goalTypeLabel} />
+                        <DetailInfoRow label="Quý / Năm" value={`${quarterLabel} / ${yearLabel}`} />
+                        <DetailInfoRow label="Thời gian" value={goalTimelineLabel} />
                       </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Tiến độ (%)</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {goalProgress}%
-                        </span>
+
+                      {goalDepartmentCount > 0 ? (
+                        <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2.5">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                            Danh sách phòng ban
+                          </p>
+                          <p className="mt-1.5 text-sm leading-6 text-slate-700">
+                            {goalDepartmentNames}
+                          </p>
+                        </div>
+                      ) : null}
+
+                      <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+                        <DetailInfoRow label="Tạo lúc" value={formatDateTime(goal.created_at)} />
+                        <DetailInfoRow label="Cập nhật" value={formatDateTime(goal.updated_at)} />
                       </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Tiến độ current/target</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {goalProgressMetricLabel}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3 border-t border-slate-100 pt-3">
-                        <span className="text-slate-500">Thời gian tạo</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {formatDateTime(goal.created_at)}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Cập nhật lần cuối</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {formatDateTime(goal.updated_at)}
-                        </span>
-                      </div>
-                    </div>
-                  </article>
-                </aside>
+                    </article>
+                  </aside>
+                </div>
               </div>
             ) : null}
 

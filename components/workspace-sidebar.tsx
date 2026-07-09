@@ -25,7 +25,15 @@ import {
   UserCircle2,
   Clock3,
 } from "lucide-react";
-import { type ReactNode, type RefObject, ComponentType, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type RefObject,
+  ComponentType,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AppBrandMark } from "@/components/app-brand-mark";
@@ -527,7 +535,6 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
             {!isCollapsed ? (
               <div>
                 <p className="text-2xl font-semibold tracking-[-0.02em]">TCM</p>
-                <p className="text-sm text-slate-400">Nền tảng quản trị</p>
               </div>
             ) : null}
           </div>

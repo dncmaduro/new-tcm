@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
@@ -29,16 +29,12 @@ import { formatDateTimeDdMmYyyy } from "@/lib/date-format";
 import { TASK_TYPES } from "@/lib/constants/tasks";
 import {
   buildKeyResultProgressMap,
-  computeWeightedProgress,
   getComputedTaskProgress,
   getKeyResultComputedProgress,
 } from "@/lib/okr";
 import { useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
-import {
-  formatTimelineRangeVi,
-  getTimelineOutsideParentWarning,
-} from "@/lib/timeline";
+import { formatTimelineRangeVi, getTimelineOutsideParentWarning } from "@/lib/timeline";
 
 type GoalRow = {
   id: string;
@@ -82,10 +78,22 @@ type DepartmentRow = {
   name: string;
 };
 
+type RoleRow = {
+  id: string;
+  name: string | null;
+};
+
+type UserRoleRow = {
+  profile_id: string | null;
+  department_id: string | null;
+  role_id: string | null;
+};
+
 type ProfileRow = {
   id: string;
   name: string | null;
   email: string | null;
+  is_active?: boolean | null;
 };
 
 type TaskRow = {
@@ -127,6 +135,10 @@ type KeyResultLinkOption = {
   current: number | null;
   target: number | null;
   unit: string | null;
+  responsibleDepartmentId: string | null;
+  responsibleDepartmentName: string | null;
+  startDate: string | null;
+  endDate: string | null;
 };
 
 type SupportLinkRow = {
@@ -148,10 +160,69 @@ type InboundSupportLinkItem = SupportLinkRow & {
   supportKeyResult: KeyResultLinkOption | null;
 };
 
+const TASKS_PAGE_SIZE = 10;
+
 const taskTypeLabelMap = TASK_TYPES.reduce<Record<string, string>>((acc, type) => {
   acc[type.value] = type.label;
   return acc;
 }, {});
+
+const normalizeText = (value: string | null | undefined) =>
+  (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+
+const isLeaderRoleName = (value: string | null | undefined) => {
+  const normalizedValue = normalizeText(value);
+  return (
+    normalizedValue === "leader" ||
+    normalizedValue.includes("leader") ||
+    normalizedValue.includes("truong nhom")
+  );
+};
+
+const resolveRootDepartmentId = (
+  departmentId: string,
+  departments: Array<{ id: string; parentDepartmentId: string | null }>,
+) => {
+  const departmentsById = departments.reduce<Record<string, { parentDepartmentId: string | null }>>(
+    (acc, department) => {
+      acc[department.id] = { parentDepartmentId: department.parentDepartmentId };
+      return acc;
+    },
+    {},
+  );
+
+  let currentDepartmentId: string | null = departmentId;
+  const visitedDepartmentIds = new Set<string>();
+
+  while (currentDepartmentId) {
+    if (visitedDepartmentIds.has(currentDepartmentId)) {
+      break;
+    }
+
+    visitedDepartmentIds.add(currentDepartmentId);
+    const currentDepartment:
+      | {
+          parentDepartmentId: string | null;
+        }
+      | undefined = departmentsById[currentDepartmentId];
+
+    if (!currentDepartment) {
+      return departmentId;
+    }
+
+    if (!currentDepartment.parentDepartmentId) {
+      return currentDepartmentId;
+    }
+
+    currentDepartmentId = currentDepartment.parentDepartmentId;
+  }
+
+  return departmentId;
+};
 
 const formatDateTime = (value: string | null) => {
   return formatDateTimeDdMmYyyy(value, "Chưa có", "Không hợp lệ");
@@ -236,6 +307,12 @@ const normalizeKeyResultLinkOption = (value: Record<string, unknown>): KeyResult
           ? null
           : Number(value.target),
     unit: value.unit ? String(value.unit) : null,
+    responsibleDepartmentId: value.responsible_department_id
+      ? String(value.responsible_department_id)
+      : null,
+    responsibleDepartmentName: null,
+    startDate: value.start_date ? String(value.start_date) : null,
+    endDate: value.end_date ? String(value.end_date) : null,
   };
 };
 
@@ -279,6 +356,55 @@ function ProgressBar({ value }: { value: number }) {
   );
 }
 
+function SummaryMiniCard({
+  label,
+  value,
+  hint,
+  className = "",
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  className?: string;
+}) {
+  return (
+    <div className={`rounded-xl border border-slate-200 bg-slate-50/80 p-3 ${className}`}>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+        {label}
+      </p>
+      <p className="mt-1.5 text-base font-semibold text-slate-900">{value}</p>
+      {hint ? <p className="mt-1 text-xs text-slate-500">{hint}</p> : null}
+    </div>
+  );
+}
+
+function DetailInfoRow({
+  label,
+  value,
+  valueClassName = "",
+}: {
+  label: string;
+  value: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3 text-sm">
+      <span className="text-slate-500">{label}</span>
+      <span className={`max-w-[65%] text-right font-medium text-slate-800 ${valueClassName}`}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function SectionCard({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return (
+    <article className={`rounded-2xl border border-slate-200 bg-white p-4 lg:p-5 ${className}`}>
+      {children}
+    </article>
+  );
+}
+
 export default function KeyResultDetailPage() {
   const params = useParams<{ goalId: string; keyResultId: string }>();
   const router = useRouter();
@@ -292,8 +418,8 @@ export default function KeyResultDetailPage() {
   const [keyResult, setKeyResult] = useState<KeyResultDetailRow | null>(null);
   const [, setGoalDepartmentName] = useState<string | null>(null);
   const [responsibleDepartmentName, setResponsibleDepartmentName] = useState<string | null>(null);
+  const [responsibleLeaderNames, setResponsibleLeaderNames] = useState<string[]>([]);
   const [tasks, setTasks] = useState<KeyResultTaskItem[]>([]);
-  const [assigneeOptions, setAssigneeOptions] = useState<ProfileRow[]>([]);
   const [outboundSupportLinks, setOutboundSupportLinks] = useState<OutboundSupportLinkItem[]>([]);
   const [inboundSupportLinks, setInboundSupportLinks] = useState<InboundSupportLinkItem[]>([]);
   const [currentMetricDraft, setCurrentMetricDraft] = useState("");
@@ -303,15 +429,14 @@ export default function KeyResultDetailPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [taskLoadError, setTaskLoadError] = useState<string | null>(null);
   const [supportLinkError, setSupportLinkError] = useState<string | null>(null);
-  const [assigneeOptionError, setAssigneeOptionError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSavingCurrentMetric, setIsSavingCurrentMetric] = useState(false);
   const [isDeletingKeyResult, setIsDeletingKeyResult] = useState(false);
-  const [reassigningTaskId, setReassigningTaskId] = useState<string | null>(null);
+  const [taskSearchTerm, setTaskSearchTerm] = useState("");
+  const [taskAssigneeFilter, setTaskAssigneeFilter] = useState("all");
+  const [taskPage, setTaskPage] = useState(1);
 
-  const isCheckingCreatePermission = workspaceAccess.isLoading;
-  const canCreateTask = workspaceAccess.canManage && !workspaceAccess.error;
   const canManageTasks = workspaceAccess.canManage && !workspaceAccess.error;
   const statusNotice =
     searchParams.get("created") === "1"
@@ -348,7 +473,7 @@ export default function KeyResultDetailPage() {
       supabase
         .from("key_results")
         .select(
-          "id,goal_id,name,type,contribution_type,start_value,current,target,unit,goal:goals!key_results_goal_id_fkey(id,name),created_at",
+          "id,goal_id,name,type,contribution_type,start_value,current,target,unit,responsible_department_id,start_date,end_date,goal:goals!key_results_goal_id_fkey(id,name),created_at",
         )
         .eq("contribution_type", "direct")
         .neq("id", currentKeyResultId)
@@ -398,7 +523,7 @@ export default function KeyResultDetailPage() {
         ? await supabase
             .from("key_results")
             .select(
-              "id,goal_id,name,type,contribution_type,start_value,current,target,unit,goal:goals!key_results_goal_id_fkey(id,name)",
+              "id,goal_id,name,type,contribution_type,start_value,current,target,unit,responsible_department_id,start_date,end_date,goal:goals!key_results_goal_id_fkey(id,name)",
             )
             .in("id", missingRelatedIds)
         : { data: [], error: null };
@@ -421,12 +546,41 @@ export default function KeyResultDetailPage() {
       return acc;
     }, {});
 
+    const relatedDepartmentIds = Array.from(
+      new Set(
+        Object.values(relatedOptions)
+          .map((item) => item.responsibleDepartmentId)
+          .filter(Boolean),
+      ),
+    ) as string[];
+    const { data: linkedDepartmentsData } =
+      relatedDepartmentIds.length > 0
+        ? await supabase.from("departments").select("id,name").in("id", relatedDepartmentIds)
+        : { data: [] };
+    const linkedDepartmentNameById = ((linkedDepartmentsData ?? []) as DepartmentRow[]).reduce<
+      Record<string, string>
+    >((acc, department) => {
+      acc[String(department.id)] = String(department.name);
+      return acc;
+    }, {});
+    const enrichedRelatedOptions = Object.values(relatedOptions).reduce<
+      Record<string, KeyResultLinkOption>
+    >((acc, item) => {
+      acc[item.id] = {
+        ...item,
+        responsibleDepartmentName: item.responsibleDepartmentId
+          ? (linkedDepartmentNameById[item.responsibleDepartmentId] ?? "Chưa gán phòng ban")
+          : "Chưa gán phòng ban",
+      };
+      return acc;
+    }, {});
+
     setOutboundSupportLinks(
       ((outboundRows ?? []) as Array<Record<string, unknown>>).map((row) => {
         const normalized = normalizeSupportLinkRow(row);
         return {
           ...normalized,
-          targetKeyResult: relatedOptions[normalized.target_key_result_id] ?? null,
+          targetKeyResult: enrichedRelatedOptions[normalized.target_key_result_id] ?? null,
         };
       }),
     );
@@ -435,53 +589,12 @@ export default function KeyResultDetailPage() {
         const normalized = normalizeSupportLinkRow(row);
         return {
           ...normalized,
-          supportKeyResult: relatedOptions[normalized.support_key_result_id] ?? null,
+          supportKeyResult: enrichedRelatedOptions[normalized.support_key_result_id] ?? null,
         };
       }),
     );
     setIsLoadingSupportLinks(false);
   }, []);
-
-  useEffect(() => {
-    if (!canManageTasks) {
-      return;
-    }
-
-    let isActive = true;
-
-    const loadAssigneeOptions = async () => {
-      setAssigneeOptionError(null);
-
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id,name,email")
-        .order("name", { ascending: true });
-
-      if (!isActive) {
-        return;
-      }
-
-      if (error) {
-        setAssigneeOptions([]);
-        setAssigneeOptionError(error.message || "Không tải được danh sách người phụ trách.");
-        return;
-      }
-
-      setAssigneeOptions(
-        ((data ?? []) as ProfileRow[]).map((profile) => ({
-          id: String(profile.id),
-          name: profile.name ? String(profile.name) : null,
-          email: profile.email ? String(profile.email) : null,
-        })),
-      );
-    };
-
-    void loadAssigneeOptions();
-
-    return () => {
-      isActive = false;
-    };
-  }, [canManageTasks]);
 
   useEffect(() => {
     if (!hasValidParams) {
@@ -526,6 +639,7 @@ export default function KeyResultDetailPage() {
         setKeyResult(null);
         setGoalDepartmentName(null);
         setResponsibleDepartmentName(null);
+        setResponsibleLeaderNames([]);
         setTasks([]);
         setOutboundSupportLinks([]);
         setInboundSupportLinks([]);
@@ -539,6 +653,7 @@ export default function KeyResultDetailPage() {
         setKeyResult(null);
         setGoalDepartmentName(null);
         setResponsibleDepartmentName(null);
+        setResponsibleLeaderNames([]);
         setTasks([]);
         setOutboundSupportLinks([]);
         setInboundSupportLinks([]);
@@ -619,6 +734,72 @@ export default function KeyResultDetailPage() {
           ? (departmentNameById[typedKeyResult.responsible_department_id] ?? "Phòng ban phụ trách")
           : null,
       );
+
+      if (!typedKeyResult.responsible_department_id) {
+        setResponsibleLeaderNames([]);
+      } else {
+        const [
+          { data: responsibleRoleRows, error: responsibleRoleError },
+          { data: responsibleMembershipRows, error: responsibleMembershipError },
+        ] = await Promise.all([
+          supabase.from("roles").select("id,name"),
+          supabase
+            .from("user_role_in_department")
+            .select("profile_id,department_id,role_id")
+            .eq("department_id", typedKeyResult.responsible_department_id),
+        ]);
+
+        if (!isActive) {
+          return;
+        }
+
+        if (responsibleRoleError || responsibleMembershipError) {
+          setResponsibleLeaderNames([]);
+        } else {
+          const leaderRoleIds = ((responsibleRoleRows ?? []) as RoleRow[])
+            .filter((role) => isLeaderRoleName(role.name))
+            .map((role) => String(role.id));
+          const leaderProfileIds = [
+            ...new Set(
+              ((responsibleMembershipRows ?? []) as UserRoleRow[])
+                .filter(
+                  (membership) =>
+                    membership.profile_id &&
+                    membership.role_id &&
+                    leaderRoleIds.includes(String(membership.role_id)),
+                )
+                .map((membership) => String(membership.profile_id)),
+            ),
+          ];
+
+          if (leaderRoleIds.length === 0 || leaderProfileIds.length === 0) {
+            setResponsibleLeaderNames([]);
+          } else {
+            const { data: responsibleLeaderProfiles, error: responsibleLeaderProfilesError } =
+              await supabase
+                .from("profiles")
+                .select("id,name,email,is_active")
+                .in("id", leaderProfileIds)
+                .eq("is_active", true)
+                .order("name", { ascending: true });
+
+            if (!isActive) {
+              return;
+            }
+
+            if (responsibleLeaderProfilesError) {
+              setResponsibleLeaderNames([]);
+            } else {
+              setResponsibleLeaderNames(
+                ((responsibleLeaderProfiles ?? []) as ProfileRow[]).map((profile) =>
+                  getProfileDisplayName(profile),
+                ),
+              );
+            }
+          }
+        }
+      }
+
       if (tasksError) {
         setTasks([]);
         setTaskLoadError("Không tải được danh sách công việc của KR.");
@@ -708,16 +889,6 @@ export default function KeyResultDetailPage() {
     return keyResultProgressMap[keyResult.id] ?? 0;
   }, [keyResult, keyResultProgressMap]);
 
-  const executionAverageTaskProgress = useMemo(() => computeWeightedProgress(tasks), [tasks]);
-  const taskCompletionRate = useMemo(() => {
-    if (!tasks.length) {
-      return 0;
-    }
-
-    const doneCount = tasks.filter((task) => task.progress >= 100).length;
-    return Math.round((doneCount / tasks.length) * 100);
-  }, [tasks]);
-
   const tasksByProgressBand = useMemo(
     () => [
       {
@@ -738,6 +909,53 @@ export default function KeyResultDetailPage() {
     ],
     [tasks],
   );
+  const taskAssigneeOptions = useMemo(
+    () =>
+      tasks
+        .reduce<Array<{ id: string; name: string }>>((acc, task) => {
+          if (!task.assigneeId) {
+            return acc;
+          }
+
+          if (acc.some((item) => item.id === task.assigneeId)) {
+            return acc;
+          }
+
+          acc.push({
+            id: task.assigneeId,
+            name: task.assigneeName,
+          });
+          return acc;
+        }, [])
+        .sort((left, right) => left.name.localeCompare(right.name, "vi")),
+    [tasks],
+  );
+  const filteredTasks = useMemo(() => {
+    const normalizedSearchTerm = taskSearchTerm.trim().toLowerCase();
+
+    return tasks.filter((task) => {
+      if (taskAssigneeFilter !== "all" && task.assigneeId !== taskAssigneeFilter) {
+        return false;
+      }
+
+      if (!normalizedSearchTerm) {
+        return true;
+      }
+
+      return (
+        task.name.toLowerCase().includes(normalizedSearchTerm) ||
+        task.assigneeName.toLowerCase().includes(normalizedSearchTerm)
+      );
+    });
+  }, [taskAssigneeFilter, taskSearchTerm, tasks]);
+  const totalTaskPages = Math.max(1, Math.ceil(filteredTasks.length / TASKS_PAGE_SIZE));
+  const safeTaskPage = Math.min(taskPage, totalTaskPages);
+  const paginatedTasks = useMemo(() => {
+    const startIndex = (safeTaskPage - 1) * TASKS_PAGE_SIZE;
+    return filteredTasks.slice(startIndex, startIndex + TASKS_PAGE_SIZE);
+  }, [filteredTasks, safeTaskPage]);
+  const taskRangeStart = filteredTasks.length === 0 ? 0 : (safeTaskPage - 1) * TASKS_PAGE_SIZE + 1;
+  const taskRangeEnd = Math.min(safeTaskPage * TASKS_PAGE_SIZE, filteredTasks.length);
 
   const goalHref = goal ? `/goals/${goal.id}` : "/goals";
   const createTaskHref = useMemo(() => {
@@ -769,51 +987,92 @@ export default function KeyResultDetailPage() {
   const progressHint = keyResult ? getKeyResultProgressHint(keyResult.unit) : "";
   const isSupportKeyResult =
     normalizeKeyResultContributionTypeValue(keyResult?.contribution_type) === "support";
+  const canUpdateKeyResultProgress = useMemo(() => {
+    if (workspaceAccess.error || workspaceAccess.isLoading) {
+      return false;
+    }
 
-  const handleReassignTask = useCallback(
-    async (taskId: string, nextAssigneeId: string) => {
-      if (!canManageTasks || reassigningTaskId === taskId) {
-        return;
+    if (workspaceAccess.hasDirectorRole) {
+      return true;
+    }
+
+    const responsibleDepartmentId = keyResult?.responsible_department_id;
+    if (!responsibleDepartmentId) {
+      return false;
+    }
+
+    const leaderRoleIds = new Set(
+      workspaceAccess.roles.filter((role) => isLeaderRoleName(role.name)).map((role) => role.id),
+    );
+    if (leaderRoleIds.size === 0) {
+      return false;
+    }
+
+    const rootDepartmentId = resolveRootDepartmentId(
+      responsibleDepartmentId,
+      workspaceAccess.departments,
+    );
+
+    return workspaceAccess.memberships.some((membership) => {
+      if (!membership.departmentId || !membership.roleId || !leaderRoleIds.has(membership.roleId)) {
+        return false;
       }
 
-      const targetProfile = assigneeOptions.find((profile) => profile.id === nextAssigneeId) ?? null;
-      setActionError(null);
-      setNotice(null);
-      setReassigningTaskId(taskId);
-
-      const { error } = await supabase
-        .from("tasks")
-        .update({
-          assignee_id: nextAssigneeId,
-          profile_id: nextAssigneeId,
-        })
-        .eq("id", taskId);
-
-      if (error) {
-        setActionError(error.message || "Không thể cập nhật người phụ trách.");
-        setReassigningTaskId(null);
-        return;
-      }
-
-      setTasks((previousTasks) =>
-        previousTasks.map((task) =>
-          task.id === taskId
-            ? {
-                ...task,
-                assigneeId: nextAssigneeId,
-                assigneeName: targetProfile ? getProfileDisplayName(targetProfile) : task.assigneeName,
-              }
-            : task,
-        ),
+      return (
+        membership.departmentId === responsibleDepartmentId ||
+        membership.departmentId === rootDepartmentId
       );
-      setNotice("Đã cập nhật người phụ trách công việc.");
-      setReassigningTaskId(null);
-    },
-    [assigneeOptions, canManageTasks, reassigningTaskId],
+    });
+  }, [
+    keyResult?.responsible_department_id,
+    workspaceAccess.departments,
+    workspaceAccess.error,
+    workspaceAccess.hasDirectorRole,
+    workspaceAccess.isLoading,
+    workspaceAccess.memberships,
+    workspaceAccess.roles,
+  ]);
+  const canCreateTask = canUpdateKeyResultProgress;
+  const responsibleLeaderSummary = useMemo(() => {
+    if (!keyResult?.responsible_department_id) {
+      return "Chưa gán";
+    }
+
+    if (responsibleLeaderNames.length === 0) {
+      return "Chưa có leader đang hoạt động";
+    }
+
+    return responsibleLeaderNames.join(", ");
+  }, [keyResult?.responsible_department_id, responsibleLeaderNames]);
+  const goalTypeLabel = formatGoalTypeLabel(goal?.type);
+  const keyResultTypeLabel = formatKeyResultTypeLabel(keyResult?.type);
+  const keyResultContributionLabel = formatKeyResultContributionTypeLabel(
+    keyResult?.contribution_type,
   );
+  const keyResultTimelineLabel = keyResult
+    ? formatTimelineRangeVi(keyResult.start_date, keyResult.end_date, {
+        fallback: "Chưa có mốc thời gian",
+      })
+    : "Chưa có dữ liệu";
+  const keyResultMetricSummary = keyResult
+    ? `${formatKeyResultMetric(keyResult.current, keyResult.unit)} / ${formatKeyResultMetric(
+        keyResult.target,
+        keyResult.unit,
+      )}`
+    : "Chưa có dữ liệu";
+  const supportSectionCountLabel = isSupportKeyResult
+    ? `${outboundSupportLinks.length} KR trực tiếp`
+    : `${inboundSupportLinks.length} KR hỗ trợ`;
 
   const handleSaveCurrentMetric = async () => {
     if (!keyResult || isSavingCurrentMetric) {
+      return;
+    }
+
+    if (!canUpdateKeyResultProgress) {
+      setActionError(
+        "Bạn không có quyền cập nhật tiến độ KR này. Chỉ Director, leader phòng ban cha nhất hoặc leader phòng ban phụ trách mới được cập nhật.",
+      );
       return;
     }
 
@@ -893,7 +1152,7 @@ export default function KeyResultDetailPage() {
 
         <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden lg:pl-[var(--workspace-sidebar-width)]">
           <WorkspacePageHeader
-            title={keyResult?.name ?? "Chi tiết KR"}
+            title="Chi tiết KR"
             items={[
               { label: "Mục tiêu", href: "/goals" },
               ...(goal ? [{ label: goal.name, href: goalHref }] : []),
@@ -901,7 +1160,7 @@ export default function KeyResultDetailPage() {
             ]}
           />
 
-          <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-7">
+          <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 lg:px-6">
             {!hasValidParams ? (
               <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-5 text-sm text-rose-700">
                 Thiếu mã mục tiêu hoặc mã KR.
@@ -933,678 +1192,797 @@ export default function KeyResultDetailPage() {
             ) : null}
 
             {hasValidParams && !isLoading && !loadError && goal && keyResult ? (
-              <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-                <section className="space-y-5">
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-4">
-                      <div>
-                        <p className="text-sm text-slate-500">
-                          Thuộc mục tiêu{" "}
-                          <Link
-                            href={goalHref}
-                            className="font-medium text-blue-700 hover:text-blue-800"
-                          >
-                            {goal.name}
-                          </Link>
-                        </p>
-                        <div className="mt-2 flex flex-wrap items-end gap-3">
-                          <h1 className="text-[30px] font-semibold tracking-[-0.02em] text-slate-900">
-                            {keyResult.name}
-                          </h1>
-                        </div>
-                        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                          <span className="rounded-full bg-blue-50 px-2.5 py-1 font-semibold text-blue-700">
-                            {formatKeyResultTypeLabel(keyResult.type)}
-                          </span>
-                          <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-700">
-                            {formatKeyResultContributionTypeLabel(keyResult.contribution_type)}
-                          </span>
-                          {/* <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
-                            {responsibleDepartmentName ?? "Chưa gán phòng ban"}
-                          </span>
-                          <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
-                            {formatKeyResultUnit(keyResult.unit)}
-                          </span> */}
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        <ActivityHistoryDialog
-                          entityType="key_result"
-                          entityId={keyResult.id}
-                          title="Lịch sử hoạt động của KR"
-                        />
-                        {workspaceAccess.canManage && !workspaceAccess.error ? (
-                          <>
-                            <Link
-                              href={editKeyResultHref}
-                              className="inline-flex h-9 items-center rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm font-semibold text-amber-800 hover:bg-amber-100"
-                            >
-                              Sửa KR
-                            </Link>
-                            <button
-                              type="button"
-                              onClick={() => void handleDeleteKeyResult()}
-                              disabled={isDeletingKeyResult}
-                              className="inline-flex h-9 items-center rounded-xl border border-rose-200 bg-white px-4 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {isDeletingKeyResult ? "Đang xóa KR..." : "Xóa KR"}
-                            </button>
-                          </>
-                        ) : null}
-                      </div>
-                    </div>
+              <div className="w-full min-w-0">
+                <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_300px] 2xl:grid-cols-[minmax(0,1fr)_312px]">
+                  <section className="flex min-w-0 flex-col gap-4">
+                    <SectionCard>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2 text-xs">
+                            <span className="rounded-full bg-blue-50 px-2.5 py-1 font-semibold text-blue-700">
+                              {keyResultTypeLabel}
+                            </span>
+                            <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-700">
+                              {keyResultContributionLabel}
+                            </span>
+                            <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
+                              {responsibleDepartmentName ?? "Chưa gán phòng ban"}
+                            </span>
+                          </div>
 
-                    <div className="mt-5">
-                      <div className="mb-2 flex flex-wrap items-start justify-between gap-2 text-sm">
-                        <span className="font-semibold text-slate-700">
-                          Tiến độ KR ({keyResultProgress}%)
-                        </span>
-                        <div className="text-right font-semibold text-slate-900">
+                          <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <h1 className="text-2xl font-semibold tracking-[-0.03em] text-slate-900 lg:text-[28px]">
+                                {keyResult.name}
+                              </h1>
+                            </div>
+
+                            <div className="flex shrink-0 flex-wrap items-center gap-2">
+                              <ActivityHistoryDialog
+                                entityType="key_result"
+                                entityId={keyResult.id}
+                                title="Lịch sử hoạt động của KR"
+                                triggerLabel="Lịch sử"
+                                triggerClassName="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                              />
+                              {workspaceAccess.canManage && !workspaceAccess.error ? (
+                                <>
+                                  <Link
+                                    href={editKeyResultHref}
+                                    className="inline-flex h-8 items-center rounded-lg border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                                  >
+                                    Sửa KR
+                                  </Link>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleDeleteKeyResult()}
+                                    disabled={isDeletingKeyResult}
+                                    className="inline-flex h-8 items-center rounded-lg border border-rose-200 bg-white px-3 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    {isDeletingKeyResult ? "Đang xóa..." : "Xóa KR"}
+                                  </button>
+                                </>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(220px,0.72fr)_minmax(220px,0.72fr)]">
+                        <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 md:col-span-2 xl:col-span-1">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                                Tiến độ
+                              </p>
+                              <p className="mt-1 text-xl font-semibold text-slate-900">
+                                {keyResultProgress}%
+                              </p>
+                              <p className="mt-1 text-sm font-semibold text-slate-900">
+                                {isEditingCurrentMetric
+                                  ? "Đang cập nhật chỉ số hiện tại"
+                                  : keyResultMetricSummary}
+                              </p>
+                            </div>
+                            <div className="shrink-0">
+                              {isEditingCurrentMetric ? (
+                                <div className="flex flex-wrap items-center justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setCurrentMetricDraft(toNumericInput(keyResult.current));
+                                      setIsEditingCurrentMetric(false);
+                                    }}
+                                    disabled={isSavingCurrentMetric}
+                                    className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    Hủy
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleSaveCurrentMetric()}
+                                    disabled={isSavingCurrentMetric}
+                                    className="inline-flex h-8 items-center rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
+                                  >
+                                    {isSavingCurrentMetric ? "Đang lưu..." : "Lưu tiến độ"}
+                                  </button>
+                                </div>
+                              ) : canUpdateKeyResultProgress ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setCurrentMetricDraft(toNumericInput(keyResult.current));
+                                    setIsEditingCurrentMetric(true);
+                                  }}
+                                  className="inline-flex h-8 items-center rounded-lg border border-blue-600 bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700"
+                                >
+                                  Cập nhật tiến độ
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+
                           {isEditingCurrentMetric ? (
-                            <div className="space-y-2">
+                            <div className="mt-3 space-y-2">
                               <FormattedNumberInput
                                 value={currentMetricDraft}
                                 onValueChange={(value) => setCurrentMetricDraft(value)}
-                                className="h-10 w-full min-w-[220px] rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                               />
                               <p className="text-[11px] font-medium text-slate-500">
                                 Đơn vị tiến độ: {formatKeyResultUnit(keyResult.unit)}.
                               </p>
                             </div>
-                          ) : (
-                            <>
-                              {formatKeyResultMetric(keyResult.current, keyResult.unit)}
-                              {" / "}
-                              {formatKeyResultMetric(keyResult.target, keyResult.unit)}
-                            </>
-                          )}
+                          ) : null}
+
+                          <div className="mt-3">
+                            <ProgressBar value={keyResultProgress} />
+                          </div>
+                          {progressHint ? (
+                            <p className="mt-2 text-xs text-slate-500">{progressHint}</p>
+                          ) : null}
                         </div>
-                      </div>
-                      <ProgressBar value={keyResultProgress} />
-                      <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-                        {isEditingCurrentMetric ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setCurrentMetricDraft(toNumericInput(keyResult.current));
-                                setIsEditingCurrentMetric(false);
-                              }}
-                              disabled={isSavingCurrentMetric}
-                              className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              Hủy
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void handleSaveCurrentMetric()}
-                              disabled={isSavingCurrentMetric}
-                              className="inline-flex h-9 items-center rounded-xl bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                            >
-                              {isSavingCurrentMetric ? "Đang lưu..." : "Lưu tiến độ"}
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setCurrentMetricDraft(toNumericInput(keyResult.current));
-                              setIsEditingCurrentMetric(true);
-                            }}
-                            className="inline-flex h-9 items-center rounded-xl border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-700 hover:bg-blue-100"
-                          >
-                            Cập nhật tiến độ
-                          </button>
-                        )}
-                      </div>
-                      <p className="mt-2 text-xs text-slate-500">{progressHint}</p>
-                    </div>
 
-                    {statusNotice ? (
-                      <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                        {statusNotice}
+                        <SummaryMiniCard label="Chỉ số" value={keyResultMetricSummary} />
+                        <SummaryMiniCard
+                          label="Phòng ban"
+                          value={responsibleDepartmentName ?? "Chưa có dữ liệu"}
+                        />
                       </div>
-                    ) : null}
 
-                    {!isCheckingCreatePermission && !canCreateTask ? (
-                      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                        Tài khoản hiện tại chưa có quyền tạo công việc cho KR này.
-                      </div>
-                    ) : null}
-                  </article>
+                      {statusNotice ? (
+                        <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm text-emerald-700">
+                          {statusNotice}
+                        </div>
+                      ) : null}
+                    </SectionCard>
 
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <h2 className="text-base font-semibold text-slate-900">Mô tả</h2>
-                    <p className="mt-2 text-sm leading-relaxed text-slate-700">
-                      {keyResult.description?.trim() || "Chưa có mô tả."}
-                    </p>
-                  </article>
-
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <h2 className="text-base font-semibold text-slate-900">
-                          {isSupportKeyResult
-                            ? "Các KR trực tiếp đang được hỗ trợ"
-                            : "Các KR hỗ trợ"}
-                        </h2>
-                      </div>
-                      <div className="text-xs font-semibold text-slate-500">
-                        {isSupportKeyResult
-                          ? `Hỗ trợ ${outboundSupportLinks.length} KR`
-                          : `Được ${inboundSupportLinks.length} KR hỗ trợ`}
-                      </div>
-                    </div>
-
-                    {supportLinkError ? (
-                      <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                        {supportLinkError}
+                    <SectionCard className="py-4">
+                      <h2 className="text-base font-semibold text-slate-900">Mô tả</h2>
+                      <p className="mt-2 text-sm leading-6 text-slate-700">
+                        {keyResult.description?.trim() || "Chưa có mô tả."}
                       </p>
-                    ) : null}
+                    </SectionCard>
 
-                    {isSupportKeyResult ? (
-                      <div className="mt-4 space-y-4">
-                        {!isLoadingSupportLinks && outboundSupportLinks.length === 0 ? (
-                          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center">
-                            <p className="text-lg font-semibold text-slate-900">
-                              Chưa có liên kết hỗ trợ.
-                            </p>
-                            <p className="mt-2 text-sm text-slate-500">
-                              KR hỗ trợ nên được nối tới một hoặc nhiều KR trực tiếp để thể hiện
-                              phạm vi đóng góp.
-                            </p>
-                          </div>
-                        ) : null}
-
-                        {outboundSupportLinks.length > 0 ? (
-                          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                            <div className="overflow-x-auto">
-                              <table className="w-full min-w-[980px] text-left">
-                                <thead>
-                                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-[0.08em] text-slate-400">
-                                    <th className="px-4 py-3 font-semibold">
-                                      KR trực tiếp nhận hỗ trợ
-                                    </th>
-                                    <th className="px-4 py-3 font-semibold">Giá trị phân bổ</th>
-                                    <th className="px-4 py-3 font-semibold">Cập nhật lần cuối</th>
-                                    <th className="px-4 py-3 font-semibold">Ghi chú liên kết</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {outboundSupportLinks.map((link) => {
-                                    const href = keyResultLinkHref(link.targetKeyResult);
-                                    const allocationSummary = getSupportAllocationSummary({
-                                      allocatedValue: link.allocated_value,
-                                      allocatedPercent: link.allocated_percent,
-                                      unit: keyResult.unit,
-                                    });
-
-                                    return (
-                                      <tr
-                                        key={link.id}
-                                        className="border-b border-slate-100 align-top hover:bg-slate-50/70"
-                                      >
-                                        <td className="px-4 py-4">
-                                          {href ? (
-                                            <Link
-                                              href={href}
-                                              className="inline-flex text-sm font-semibold text-slate-900 hover:text-blue-700"
-                                            >
-                                              {link.targetKeyResult?.name ?? "KR trực tiếp"}
-                                            </Link>
-                                          ) : (
-                                            <p className="text-sm font-semibold text-slate-900">
-                                              {link.targetKeyResult?.name ?? "KR trực tiếp"}
-                                            </p>
-                                          )}
-                                          <p className="mt-1 text-xs text-slate-500">
-                                            {link.targetKeyResult?.goalName ?? "Chưa có mục tiêu"} ·{" "}
-                                            {formatKeyResultTypeLabel(link.targetKeyResult?.type)} ·{" "}
-                                            {formatKeyResultContributionTypeLabel(
-                                              link.targetKeyResult?.contributionType,
-                                            )}
-                                          </p>
-                                        </td>
-                                        <td className="px-4 py-4 text-sm font-semibold text-slate-800">
-                                          <p>{allocationSummary.value}</p>
-                                          <p className="mt-1 text-xs font-medium text-slate-500">
-                                            {allocationSummary.label}
-                                          </p>
-                                        </td>
-                                        <td className="px-4 py-4 text-sm text-slate-600">
-                                          {formatDateTime(link.updated_at)}
-                                        </td>
-                                        <td className="px-4 py-4 text-sm text-slate-600">
-                                          {link.note?.trim() || "Chưa có ghi chú liên kết."}
-                                        </td>
-                                      </tr>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        ) : null}
+                    <SectionCard>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h2 className="text-base font-semibold text-slate-900">
+                            {isSupportKeyResult
+                              ? "Các KR trực tiếp đang được hỗ trợ"
+                              : "Các KR hỗ trợ"}
+                          </h2>
+                        </div>
+                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                          {supportSectionCountLabel}
+                        </span>
                       </div>
-                    ) : (
-                      <>
-                        {!isLoadingSupportLinks && inboundSupportLinks.length === 0 ? (
-                          <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center">
-                            <p className="text-lg font-semibold text-slate-900">
-                              Chưa có KR hỗ trợ liên kết.
-                            </p>
-                            <p className="mt-2 text-sm text-slate-500">
-                              Khi một KR hỗ trợ được phân bổ sang KR trực tiếp này, nó sẽ xuất hiện
-                              tại đây.
-                            </p>
-                          </div>
-                        ) : null}
 
-                        {inboundSupportLinks.length > 0 ? (
-                          <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                            <div className="overflow-x-auto">
-                              <table className="w-full min-w-[720px] table-fixed text-left">
-                                <colgroup>
-                                  <col className="w-[280px]" />
-                                  <col className="w-24" />
-                                  <col className="w-[220px]" />
-                                  <col className="w-[220px]" />
-                                </colgroup>
-                                <thead>
-                                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-[0.08em] text-slate-400">
-                                    <th className="px-4 py-3 font-semibold">Tên KR</th>
-                                    <th className="px-4 py-3 font-semibold">Loại</th>
-                                    <th className="px-4 py-3 font-semibold">Tiến độ</th>
-                                    <th className="px-4 py-3 font-semibold">Thao tác</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {inboundSupportLinks.map((link) => {
-                                    const detailHref = keyResultLinkHref(link.supportKeyResult);
-                                    const editHref = keyResultEditHref(link.supportKeyResult);
-                                    const supportProgress = link.supportKeyResult
-                                      ? getKeyResultComputedProgress({
-                                          id: link.supportKeyResult.id,
-                                          start_value: link.supportKeyResult.startValue,
-                                          current: link.supportKeyResult.current,
-                                          target: link.supportKeyResult.target,
-                                        })
-                                      : 0;
+                      {supportLinkError ? (
+                        <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                          {supportLinkError}
+                        </p>
+                      ) : null}
 
-                                    return (
-                                      <tr
-                                        key={link.id}
-                                        className="border-b border-slate-100 align-top hover:bg-slate-50/70"
-                                      >
-                                        <td className="px-4 py-4">
-                                          <p className="text-sm font-semibold text-slate-900">
-                                            {link.supportKeyResult?.name ?? "KR hỗ trợ"}
-                                          </p>
-                                          <p className="mt-1 text-xs text-slate-500">
-                                            {link.supportKeyResult?.goalName ?? "Chưa có mục tiêu"}
-                                          </p>
-                                        </td>
-                                        <td className="px-4 py-4 text-sm font-medium text-slate-700">
-                                          {formatKeyResultTypeLabel(link.supportKeyResult?.type)}
-                                        </td>
-                                        <td className="px-4 py-4">
-                                          <div className="w-full max-w-[180px]">
-                                            <div className="flex items-center justify-between gap-2 text-xs font-semibold">
-                                              <span className="text-slate-800">
-                                                {supportProgress}%
+                      {isSupportKeyResult ? (
+                        <div className="mt-3 space-y-3">
+                          {!isLoadingSupportLinks && outboundSupportLinks.length === 0 ? (
+                            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-7 text-center">
+                              <p className="text-base font-semibold text-slate-900">
+                                Chưa có liên kết hỗ trợ.
+                              </p>
+                              <p className="mt-1.5 text-sm text-slate-500">
+                                KR hỗ trợ nên được nối tới một hoặc nhiều KR trực tiếp để thể hiện
+                                phạm vi đóng góp.
+                              </p>
+                            </div>
+                          ) : null}
+
+                          {outboundSupportLinks.length > 0 ? (
+                            <div className="overflow-hidden rounded-2xl border border-slate-200">
+                              <div className="max-h-[min(58vh,720px)] overflow-auto">
+                                <table className="w-full min-w-[1060px] text-left text-sm">
+                                  <thead className="sticky top-0 z-10 bg-slate-50">
+                                    <tr className="border-b border-slate-200 text-[11px] uppercase tracking-[0.08em] text-slate-500">
+                                      <th className="px-3 py-2.5 font-semibold">Tên KR</th>
+                                      <th className="px-3 py-2.5 font-semibold">Phân loại</th>
+                                      <th className="px-3 py-2.5 font-semibold">Phòng ban</th>
+                                      <th className="px-3 py-2.5 font-semibold">Chỉ số</th>
+                                      <th className="px-3 py-2.5 font-semibold">Tiến độ</th>
+                                      <th className="px-3 py-2.5 font-semibold">Thời gian</th>
+                                      <th className="px-3 py-2.5 font-semibold">Hành động</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {outboundSupportLinks.map((link) => {
+                                      const href = keyResultLinkHref(link.targetKeyResult);
+                                      const editHref = keyResultEditHref(link.targetKeyResult);
+                                      const targetProgress = link.targetKeyResult
+                                        ? getKeyResultComputedProgress({
+                                            id: link.targetKeyResult.id,
+                                            start_value: link.targetKeyResult.startValue,
+                                            current: link.targetKeyResult.current,
+                                            target: link.targetKeyResult.target,
+                                          })
+                                        : 0;
+                                      const allocationSummary = getSupportAllocationSummary({
+                                        allocatedValue: link.allocated_value,
+                                        allocatedPercent: link.allocated_percent,
+                                        unit: keyResult.unit,
+                                      });
+
+                                      return (
+                                        <tr
+                                          key={link.id}
+                                          className="border-b border-slate-100 align-top bg-white last:border-b-0"
+                                        >
+                                          <td className="px-3 py-2.5">
+                                            {href ? (
+                                              <Link
+                                                href={href}
+                                                className="block text-sm font-semibold text-slate-900 hover:text-blue-700"
+                                                title={link.targetKeyResult?.name ?? "KR trực tiếp"}
+                                              >
+                                                {link.targetKeyResult?.name ?? "KR trực tiếp"}
+                                              </Link>
+                                            ) : (
+                                              <p className="text-sm font-semibold text-slate-900">
+                                                {link.targetKeyResult?.name ?? "KR trực tiếp"}
+                                              </p>
+                                            )}
+                                            <p className="mt-1 text-xs text-slate-500">
+                                              {allocationSummary.shortLabel}:{" "}
+                                              {allocationSummary.value}
+                                            </p>
+                                            {link.note?.trim() ? (
+                                              <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">
+                                                {link.note.trim()}
+                                              </p>
+                                            ) : null}
+                                          </td>
+                                          <td className="px-3 py-2.5">
+                                            <div className="flex flex-wrap gap-1.5 text-[11px]">
+                                              <span className="rounded-full bg-blue-50 px-2 py-1 font-semibold text-blue-700">
+                                                {formatKeyResultTypeLabel(
+                                                  link.targetKeyResult?.type,
+                                                )}
                                               </span>
-                                              <span className="text-slate-400">
-                                                {link.supportKeyResult
-                                                  ? `${formatKeyResultMetric(link.supportKeyResult.current, link.supportKeyResult.unit)} / ${formatKeyResultMetric(link.supportKeyResult.target, link.supportKeyResult.unit)}`
-                                                  : "-"}
+                                              <span className="rounded-full bg-amber-50 px-2 py-1 font-semibold text-amber-700">
+                                                {formatKeyResultContributionTypeLabel(
+                                                  link.targetKeyResult?.contributionType,
+                                                )}
                                               </span>
                                             </div>
-                                            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
-                                              <div
-                                                className="h-full rounded-full bg-blue-600"
-                                                style={{ width: `${supportProgress}%` }}
-                                              />
+                                          </td>
+                                          <td className="px-3 py-2.5 text-slate-700">
+                                            {link.targetKeyResult?.responsibleDepartmentName ??
+                                              "Chưa gán phòng ban"}
+                                          </td>
+                                          <td className="px-3 py-2.5">
+                                            <p className="font-medium text-slate-900">
+                                              {link.targetKeyResult
+                                                ? `${formatKeyResultMetric(link.targetKeyResult.current, link.targetKeyResult.unit)} / ${formatKeyResultMetric(link.targetKeyResult.target, link.targetKeyResult.unit)}`
+                                                : "Chưa có dữ liệu"}
+                                            </p>
+                                          </td>
+                                          <td className="px-3 py-2.5">
+                                            <div className="w-full max-w-[180px]">
+                                              <div className="flex items-center justify-between gap-2">
+                                                <span className="text-xs font-semibold text-slate-800">
+                                                  {targetProgress}%
+                                                </span>
+                                                <span className="text-xs text-slate-500">
+                                                  {link.targetKeyResult
+                                                    ? `${formatKeyResultMetric(link.targetKeyResult.current, link.targetKeyResult.unit)} / ${formatKeyResultMetric(link.targetKeyResult.target, link.targetKeyResult.unit)}`
+                                                    : "Chưa có dữ liệu"}
+                                                </span>
+                                              </div>
+                                              <div className="mt-2">
+                                                <ProgressBar value={targetProgress} />
+                                              </div>
                                             </div>
-                                          </div>
-                                        </td>
-                                        <td className="px-4 py-4">
-                                          <div className="flex items-center gap-2 whitespace-nowrap">
+                                          </td>
+                                          <td className="px-3 py-2.5 text-sm text-slate-700">
+                                            {formatTimelineRangeVi(
+                                              link.targetKeyResult?.startDate ?? null,
+                                              link.targetKeyResult?.endDate ?? null,
+                                              { fallback: "Chưa có mốc thời gian" },
+                                            )}
+                                          </td>
+                                          <td className="px-3 py-2.5">
+                                            <div className="flex justify-end">
+                                              {workspaceAccess.canManage &&
+                                              !workspaceAccess.error &&
+                                              editHref ? (
+                                                <Link
+                                                  href={editHref}
+                                                  className="inline-flex h-8 items-center rounded-lg border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                                                >
+                                                  Sửa KR
+                                                </Link>
+                                              ) : href ? (
+                                                <Link
+                                                  href={href}
+                                                  className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                                >
+                                                  Xem KR
+                                                </Link>
+                                              ) : (
+                                                <span className="text-xs text-slate-400">-</span>
+                                              )}
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <>
+                          {!isLoadingSupportLinks && inboundSupportLinks.length === 0 ? (
+                            <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-7 text-center">
+                              <p className="text-base font-semibold text-slate-900">
+                                Chưa có KR hỗ trợ liên kết.
+                              </p>
+                              <p className="mt-1.5 text-sm text-slate-500">
+                                Khi một KR hỗ trợ được phân bổ sang KR trực tiếp này, nó sẽ xuất
+                                hiện tại đây.
+                              </p>
+                            </div>
+                          ) : null}
+
+                          {inboundSupportLinks.length > 0 ? (
+                            <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200">
+                              <div className="max-h-[min(58vh,720px)] overflow-auto">
+                                <table className="w-full min-w-[1060px] text-left text-sm">
+                                  <thead className="sticky top-0 z-10 bg-slate-50">
+                                    <tr className="border-b border-slate-200 text-[11px] uppercase tracking-[0.08em] text-slate-500">
+                                      <th className="px-3 py-2.5 font-semibold">Tên KR</th>
+                                      <th className="px-3 py-2.5 font-semibold">Phân loại</th>
+                                      <th className="px-3 py-2.5 font-semibold">Phòng ban</th>
+                                      <th className="px-3 py-2.5 font-semibold">Chỉ số</th>
+                                      <th className="px-3 py-2.5 font-semibold">Tiến độ</th>
+                                      <th className="px-3 py-2.5 font-semibold">Thời gian</th>
+                                      <th className="px-3 py-2.5 font-semibold">Hành động</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {inboundSupportLinks.map((link) => {
+                                      const detailHref = keyResultLinkHref(link.supportKeyResult);
+                                      const editHref = keyResultEditHref(link.supportKeyResult);
+                                      const supportProgress = link.supportKeyResult
+                                        ? getKeyResultComputedProgress({
+                                            id: link.supportKeyResult.id,
+                                            start_value: link.supportKeyResult.startValue,
+                                            current: link.supportKeyResult.current,
+                                            target: link.supportKeyResult.target,
+                                          })
+                                        : 0;
+
+                                      return (
+                                        <tr
+                                          key={link.id}
+                                          className="border-b border-slate-100 align-top bg-white last:border-b-0"
+                                        >
+                                          <td className="px-3 py-2.5">
                                             {detailHref ? (
                                               <Link
                                                 href={detailHref}
-                                                className="inline-flex h-8 w-[96px] items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-700 hover:bg-blue-100"
+                                                className="block text-sm font-semibold text-slate-900 hover:text-blue-700"
+                                                title={link.supportKeyResult?.name ?? "KR hỗ trợ"}
                                               >
-                                                Chi tiết KR
+                                                {link.supportKeyResult?.name ?? "KR hỗ trợ"}
                                               </Link>
                                             ) : (
-                                              <span className="inline-flex h-8 w-[96px] items-center justify-center text-xs text-slate-400">
-                                                Không khả dụng
-                                              </span>
+                                              <p className="text-sm font-semibold text-slate-900">
+                                                {link.supportKeyResult?.name ?? "KR hỗ trợ"}
+                                              </p>
                                             )}
-                                            {workspaceAccess.canManage &&
-                                            !workspaceAccess.error &&
-                                            editHref ? (
-                                              <Link
-                                                href={editHref}
-                                                className="inline-flex h-8 w-[96px] items-center justify-center rounded-lg border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                                            {link.note?.trim() ? (
+                                              <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">
+                                                {link.note.trim()}
+                                              </p>
+                                            ) : null}
+                                          </td>
+                                          <td className="px-3 py-2.5">
+                                            <div className="flex flex-wrap gap-1.5 text-[11px]">
+                                              <span className="rounded-full bg-blue-50 px-2 py-1 font-semibold text-blue-700">
+                                                {formatKeyResultTypeLabel(
+                                                  link.supportKeyResult?.type,
+                                                )}
+                                              </span>
+                                              <span className="rounded-full bg-amber-50 px-2 py-1 font-semibold text-amber-700">
+                                                {formatKeyResultContributionTypeLabel(
+                                                  link.supportKeyResult?.contributionType,
+                                                )}
+                                              </span>
+                                            </div>
+                                          </td>
+                                          <td className="px-3 py-2.5 text-slate-700">
+                                            {link.supportKeyResult?.responsibleDepartmentName ??
+                                              "Chưa gán phòng ban"}
+                                          </td>
+                                          <td className="px-3 py-2.5">
+                                            <p className="font-medium text-slate-900">
+                                              {link.supportKeyResult
+                                                ? `${formatKeyResultMetric(link.supportKeyResult.current, link.supportKeyResult.unit)} / ${formatKeyResultMetric(link.supportKeyResult.target, link.supportKeyResult.unit)}`
+                                                : "Chưa có dữ liệu"}
+                                            </p>
+                                          </td>
+                                          <td className="px-3 py-2.5">
+                                            <div className="w-full max-w-[180px]">
+                                              <div className="flex items-center justify-between gap-2">
+                                                <span className="text-xs font-semibold text-slate-800">
+                                                  {supportProgress}%
+                                                </span>
+                                                <span className="text-xs text-slate-500">
+                                                  {link.supportKeyResult
+                                                    ? `${formatKeyResultMetric(link.supportKeyResult.current, link.supportKeyResult.unit)} / ${formatKeyResultMetric(link.supportKeyResult.target, link.supportKeyResult.unit)}`
+                                                    : "Chưa có dữ liệu"}
+                                                </span>
+                                              </div>
+                                              <div className="mt-2">
+                                                <ProgressBar value={supportProgress} />
+                                              </div>
+                                            </div>
+                                          </td>
+                                          <td className="px-3 py-2.5 text-sm text-slate-700">
+                                            {formatTimelineRangeVi(
+                                              link.supportKeyResult?.startDate ?? null,
+                                              link.supportKeyResult?.endDate ?? null,
+                                              { fallback: "Chưa có mốc thời gian" },
+                                            )}
+                                          </td>
+                                          <td className="px-3 py-2.5">
+                                            <div className="flex justify-end">
+                                              {workspaceAccess.canManage &&
+                                              !workspaceAccess.error &&
+                                              editHref ? (
+                                                <Link
+                                                  href={editHref}
+                                                  className="inline-flex h-8 items-center rounded-lg border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                                                >
+                                                  Sửa KR
+                                                </Link>
+                                              ) : detailHref ? (
+                                                <Link
+                                                  href={detailHref}
+                                                  className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                                >
+                                                  Xem KR
+                                                </Link>
+                                              ) : (
+                                                <span className="text-xs text-slate-400">-</span>
+                                              )}
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          ) : null}
+                        </>
+                      )}
+                    </SectionCard>
+
+                    <SectionCard>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h2 className="text-base font-semibold text-slate-900">
+                            Công việc thực thi của KR
+                          </h2>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                            {filteredTasks.length === tasks.length
+                              ? `${tasks.length} công việc`
+                              : `${filteredTasks.length}/${tasks.length} công việc`}
+                          </span>
+                          {canCreateTask ? (
+                            <Link
+                              href={createTaskHref}
+                              className="inline-flex h-8 items-center rounded-lg border border-blue-600 bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700"
+                            >
+                              + Thêm công việc
+                            </Link>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      {taskLoadError ? (
+                        <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                          {taskLoadError}
+                        </p>
+                      ) : null}
+
+                      {!taskLoadError && tasks.length === 0 ? (
+                        <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-7 text-center">
+                          <p className="text-base font-semibold text-slate-900">
+                            KR này chưa có công việc.
+                          </p>
+                          <p className="mt-1.5 text-sm text-slate-500">
+                            Theo dõi công việc thực thi để cập nhật tiến độ KR nhất quán hơn.
+                          </p>
+                          {canCreateTask ? (
+                            <Link
+                              href={createTaskHref}
+                              className="mt-4 inline-flex h-9 items-center rounded-lg border border-blue-600 bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
+                            >
+                              + Thêm công việc đầu tiên
+                            </Link>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {!taskLoadError && tasks.length > 0 ? (
+                        <>
+                          <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px]">
+                            <label className="block">
+                              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
+                                Tìm công việc
+                              </span>
+                              <input
+                                value={taskSearchTerm}
+                                onChange={(event) => {
+                                  setTaskSearchTerm(event.target.value);
+                                  setTaskPage(1);
+                                }}
+                                placeholder="Tên công việc hoặc người phụ trách"
+                                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                              />
+                            </label>
+                            <label className="block">
+                              <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
+                                Lọc theo người phụ trách
+                              </span>
+                              <Select
+                                value={taskAssigneeFilter}
+                                onValueChange={(value) => {
+                                  setTaskAssigneeFilter(value);
+                                  setTaskPage(1);
+                                }}
+                              >
+                                <SelectTrigger className="h-10 bg-white text-sm">
+                                  <SelectValue placeholder="Tất cả người phụ trách" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="all">Tất cả người phụ trách</SelectItem>
+                                  {taskAssigneeOptions.map((assignee) => (
+                                    <SelectItem key={assignee.id} value={assignee.id}>
+                                      {assignee.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </label>
+                          </div>
+                          <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
+                            <div className="overflow-x-auto">
+                              <table className="w-full min-w-[920px] text-left text-sm">
+                                <thead className="sticky top-0 z-10 bg-slate-50">
+                                  <tr className="border-b border-slate-200 text-[11px] uppercase tracking-[0.08em] text-slate-500">
+                                    <th className="px-3 py-2.5 font-semibold">Công việc</th>
+                                    <th className="px-3 py-2.5 font-semibold">Người phụ trách</th>
+                                    <th className="px-3 py-2.5 font-semibold">Tiến độ thực thi</th>
+                                    {canManageTasks ? (
+                                      <th className="px-3 py-2.5 font-semibold">Thao tác</th>
+                                    ) : null}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {paginatedTasks.length === 0 ? (
+                                    <tr>
+                                      <td
+                                        colSpan={canManageTasks ? 4 : 3}
+                                        className="px-3 py-8 text-center text-sm text-slate-500"
+                                      >
+                                        Không có công việc nào khớp bộ lọc hiện tại.
+                                      </td>
+                                    </tr>
+                                  ) : (
+                                    paginatedTasks.map((task) => {
+                                      const alignmentWarning = getTimelineOutsideParentWarning(
+                                        task.startDate,
+                                        task.endDate,
+                                        keyResult.start_date,
+                                        keyResult.end_date,
+                                        {
+                                          subjectLabel: "Thời gian công việc",
+                                          parentLabel: "KR",
+                                        },
+                                      );
+
+                                      return (
+                                        <Fragment key={task.id}>
+                                          <tr className="border-b border-slate-100 align-top hover:bg-slate-50/70">
+                                            <td className="px-3 py-2.5">
+                                              <div className="flex flex-wrap items-center gap-2">
+                                                <Link
+                                                  href={`/tasks/${task.id}`}
+                                                  className="text-sm font-semibold text-slate-900 hover:text-blue-700"
+                                                >
+                                                  {task.name}
+                                                </Link>
+                                                <span className="inline-flex rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                                                  {task.typeLabel}
+                                                </span>
+                                              </div>
+                                              <p className="mt-2 text-sm text-slate-600">
+                                                {formatTimelineRangeVi(
+                                                  task.startDate,
+                                                  task.endDate,
+                                                  {
+                                                    fallback: "Công việc chưa có mốc thời gian",
+                                                  },
+                                                )}
+                                              </p>
+                                              {alignmentWarning ? (
+                                                <p className="mt-1 text-xs text-amber-600">
+                                                  {alignmentWarning}
+                                                </p>
+                                              ) : null}
+                                            </td>
+                                            <td className="px-3 py-2.5">
+                                              <span
+                                                className={`text-sm ${task.assigneeId ? "text-slate-700" : "text-slate-400"}`}
                                               >
-                                                Sửa KR
-                                              </Link>
-                                            ) : (
-                                              <span className="inline-flex h-8 w-[96px] items-center justify-center text-xs text-slate-400">
-                                                Không khả dụng
+                                                {task.assigneeName}
                                               </span>
-                                            )}
-                                          </div>
-                                        </td>
-                                      </tr>
-                                    );
-                                  })}
+                                            </td>
+                                            <td className="px-3 py-2.5">
+                                              <div className="w-[140px]">
+                                                <div className="flex items-center justify-between gap-2">
+                                                  <span className="text-xs font-semibold text-slate-800">
+                                                    {task.progress}%
+                                                  </span>
+                                                </div>
+                                                <div className="mt-2">
+                                                  <ProgressBar value={task.progress} />
+                                                </div>
+                                              </div>
+                                            </td>
+                                            {canManageTasks ? (
+                                              <td className="px-3 py-2.5">
+                                                <Link
+                                                  href={`/tasks/${task.id}`}
+                                                  className="inline-flex h-8 items-center rounded-lg border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                                                >
+                                                  Sửa
+                                                </Link>
+                                              </td>
+                                            ) : null}
+                                          </tr>
+                                        </Fragment>
+                                      );
+                                    })
+                                  )}
                                 </tbody>
                               </table>
                             </div>
                           </div>
-                        ) : null}
-                      </>
-                    )}
-                  </article>
 
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
+                          {totalTaskPages > 1 ? (
+                            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm">
+                              <p className="text-slate-500">
+                                Hiển thị {taskRangeStart}-{taskRangeEnd} / {filteredTasks.length}{" "}
+                                công việc
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setTaskPage((current) => Math.max(1, current - 1))}
+                                  disabled={safeTaskPage === 1}
+                                  className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Trước
+                                </button>
+                                <span className="text-xs font-semibold text-slate-600">
+                                  Trang {safeTaskPage}/{totalTaskPages}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setTaskPage((current) => Math.min(totalTaskPages, current + 1))
+                                  }
+                                  disabled={safeTaskPage === totalTaskPages}
+                                  className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Sau
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </>
+                      ) : null}
+                    </SectionCard>
+                  </section>
+
+                  <aside className="xl:sticky xl:self-start">
+                    <div className="space-y-4">
+                      <article className="rounded-2xl border border-slate-200 bg-white px-3.5 pb-3.5 pt-4 lg:px-4 lg:pb-4 lg:pt-5 xl:max-h-[calc(100vh-7rem)] xl:overflow-auto">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h2 className="text-base font-semibold text-slate-900">
+                              Thông tin chi tiết
+                            </h2>
+                          </div>
+                        </div>
+
+                        <div className="mt-2.5 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                              Tiến độ KR
+                            </span>
+                            <span className="text-lg font-semibold text-slate-900">
+                              {keyResultProgress}%
+                            </span>
+                          </div>
+                          <div className="mt-2">
+                            <ProgressBar value={keyResultProgress} />
+                          </div>
+                        </div>
+
+                        <div className="mt-3 space-y-2.5">
+                          <DetailInfoRow label="Loại mục tiêu" value={goalTypeLabel} />
+                          <DetailInfoRow
+                            label="Phòng ban phụ trách"
+                            value={responsibleDepartmentName ?? "Chưa có dữ liệu"}
+                          />
+                          <DetailInfoRow label="Người phụ trách" value={responsibleLeaderSummary} />
+                          <DetailInfoRow label="Tiến độ" value={keyResultMetricSummary} />
+                          <DetailInfoRow label="Thời gian" value={keyResultTimelineLabel} />
+                        </div>
+
+                        <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+                          <DetailInfoRow
+                            label="Thời gian tạo"
+                            value={formatDateTime(keyResult.created_at)}
+                          />
+                          <DetailInfoRow
+                            label="Cập nhật lần cuối"
+                            value={formatDateTime(keyResult.updated_at)}
+                          />
+                        </div>
+                      </article>
+
+                      <article className="rounded-2xl border border-slate-200 bg-white px-3.5 pb-3.5 pt-4 lg:px-4 lg:pb-4 lg:pt-5">
                         <h2 className="text-base font-semibold text-slate-900">
-                          Công việc thực thi của KR
+                          Hiệu suất thực thi
                         </h2>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
-                          {tasks.length} công việc
-                        </span>
-                        {canCreateTask ? (
-                          <Link
-                            href={createTaskHref}
-                            className="inline-flex h-9 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
-                          >
-                            + Thêm công việc
-                          </Link>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    {taskLoadError ? (
-                      <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                        {taskLoadError}
-                      </p>
-                    ) : null}
-
-                    {!taskLoadError && tasks.length === 0 ? (
-                      <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center">
-                        <p className="text-lg font-semibold text-slate-900">
-                          KR này chưa có công việc.
-                        </p>
-                        {canCreateTask ? (
-                          <Link
-                            href={createTaskHref}
-                            className="mt-4 inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
-                          >
-                            + Thêm công việc đầu tiên
-                          </Link>
-                        ) : null}
-                      </div>
-                    ) : null}
-
-                    {!taskLoadError && tasks.length > 0 ? (
-                      <>
-                        {canManageTasks && assigneeOptionError ? (
-                          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                            {assigneeOptionError}
-                          </div>
-                        ) : null}
-                        <div className="mt-4 grid gap-3 md:grid-cols-3">
-                          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                            <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                              Trung bình tiến độ thực thi
-                            </p>
-                            <p className="mt-2 text-2xl font-semibold text-slate-900">
-                              {executionAverageTaskProgress}%
-                            </p>
-                          </div>
-                          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                            <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                              Tỷ lệ công việc hoàn thành
-                            </p>
-                            <p className="mt-2 text-2xl font-semibold text-slate-900">
-                              {taskCompletionRate}%
-                            </p>
-                          </div>
-                          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                            <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                              Ghi chú
-                            </p>
-                            <p className="mt-2 text-sm text-slate-700">
-                              Các chỉ số này chỉ phản ánh phần thực thi, không phải chỉ số đo lường
-                              chính của KR.
-                            </p>
-                          </div>
+                        <div className="mt-3 space-y-3">
+                          {tasksByProgressBand.map((item) => {
+                            const percent = tasks.length
+                              ? Math.round((item.count / tasks.length) * 100)
+                              : 0;
+                            return (
+                              <div key={item.value} className="space-y-1">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="font-medium text-slate-700">{item.label}</span>
+                                  <span className="text-slate-500">
+                                    {item.count} ({percent}%)
+                                  </span>
+                                </div>
+                                <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                                  <div
+                                    className="h-full rounded-full bg-blue-600"
+                                    style={{ width: `${percent}%` }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-
-                        <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                          <div className="overflow-x-auto">
-                            <table className="w-full min-w-[920px] text-left">
-                              <thead>
-                                <tr className="border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-[0.08em] text-slate-400">
-                                  <th className="px-4 py-3 font-semibold">Công việc</th>
-                                  <th className="px-4 py-3 font-semibold">Người phụ trách</th>
-                                  <th className="px-4 py-3 font-semibold">Tiến độ thực thi</th>
-                                  <th className="px-4 py-3 font-semibold">Thao tác</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {tasks.map((task) => {
-                                  const alignmentWarning = getTimelineOutsideParentWarning(
-                                    task.startDate,
-                                    task.endDate,
-                                    keyResult.start_date,
-                                    keyResult.end_date,
-                                    {
-                                      subjectLabel: "Thời gian công việc",
-                                      parentLabel: "KR",
-                                    },
-                                  );
-
-                                  return (
-                                    <Fragment key={task.id}>
-                                      <tr className="border-b border-slate-100 align-top hover:bg-slate-50/70">
-                                        <td className="px-4 py-4">
-                                          <div className="flex flex-wrap items-center gap-2">
-                                            <Link
-                                              href={`/tasks/${task.id}`}
-                                              className="text-sm font-semibold text-slate-900 hover:text-blue-700"
-                                            >
-                                              {task.name}
-                                            </Link>
-                                            <span className="inline-flex rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
-                                              {task.typeLabel}
-                                            </span>
-                                          </div>
-                                          <p className="mt-2 text-sm text-slate-600">
-                                            {formatTimelineRangeVi(task.startDate, task.endDate, {
-                                              fallback: "Công việc chưa có mốc thời gian",
-                                            })}
-                                          </p>
-                                          {alignmentWarning ? (
-                                            <p className="mt-1 text-xs text-amber-600">
-                                              {alignmentWarning}
-                                            </p>
-                                          ) : null}
-                                        </td>
-                                        <td className="px-4 py-4">
-                                          {canManageTasks ? (
-                                            <div className="w-[220px]">
-                                              <Select
-                                                value={task.assigneeId ?? undefined}
-                                                onValueChange={(value) => void handleReassignTask(task.id, value)}
-                                                disabled={
-                                                  reassigningTaskId === task.id ||
-                                                  assigneeOptions.length === 0
-                                                }
-                                              >
-                                                <SelectTrigger className="h-10 bg-white text-sm">
-                                                  <SelectValue placeholder="Chọn người phụ trách" />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                  {assigneeOptions.map((profile) => (
-                                                    <SelectItem key={profile.id} value={profile.id}>
-                                                      {getProfileDisplayName(profile)}
-                                                    </SelectItem>
-                                                  ))}
-                                                </SelectContent>
-                                              </Select>
-                                              {reassigningTaskId === task.id ? (
-                                                <p className="mt-2 text-xs text-slate-500">
-                                                  Đang cập nhật...
-                                                </p>
-                                              ) : null}
-                                            </div>
-                                          ) : (
-                                            <span
-                                              className={`text-sm ${task.assigneeId ? "text-slate-700" : "text-slate-400"}`}
-                                            >
-                                              {task.assigneeName}
-                                            </span>
-                                          )}
-                                        </td>
-                                        <td className="px-4 py-4">
-                                          <div className="w-[140px]">
-                                            <div className="text-xs font-semibold text-slate-700">
-                                              {task.progress}%
-                                            </div>
-                                            <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
-                                              <div
-                                                className="h-full rounded-full bg-blue-600"
-                                                style={{ width: `${task.progress}%` }}
-                                              />
-                                            </div>
-                                          </div>
-                                        </td>
-                                        <td className="px-4 py-4">
-                                          <Link
-                                            href={`/tasks/${task.id}`}
-                                            className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                                          >
-                                            Chi tiết
-                                          </Link>
-                                        </td>
-                                      </tr>
-                                    </Fragment>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      </>
-                    ) : null}
-                  </article>
-                </section>
-
-                <aside className="h-fit space-y-5">
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <h2 className="text-base font-semibold text-slate-900">Thông tin KR</h2>
-                    <div className="mt-4 space-y-3 text-sm">
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Tên KR</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {keyResult.name}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Loại mục tiêu</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {formatGoalTypeLabel(goal.type)}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Phòng ban phụ trách</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {responsibleDepartmentName ?? "Chưa gán"}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Tiến độ</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {formatKeyResultMetric(keyResult.current, keyResult.unit)}
-                          {" / "}
-                          {formatKeyResultMetric(keyResult.target, keyResult.unit)}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3 border-t border-slate-100 pt-3">
-                        <span className="text-slate-500">Thời gian tạo</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {formatDateTime(keyResult.created_at)}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-slate-500">Cập nhật lần cuối</span>
-                        <span className="text-right font-medium text-slate-800">
-                          {formatDateTime(keyResult.updated_at)}
-                        </span>
-                      </div>
+                      </article>
                     </div>
-                  </article>
-
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <h2 className="text-base font-semibold text-slate-900">Hiệu suất thực thi</h2>
-                    <div className="mt-4 space-y-3">
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                        <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                          Số công việc
-                        </p>
-                        <p className="mt-2 text-2xl font-semibold text-slate-900">{tasks.length}</p>
-                      </div>
-
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                        <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                          Trung bình tiến độ thực thi
-                        </p>
-                        <p className="mt-2 text-2xl font-semibold text-slate-900">
-                          {executionAverageTaskProgress}%
-                        </p>
-                      </div>
-
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                        <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
-                          Tỷ lệ công việc hoàn thành
-                        </p>
-                        <p className="mt-2 text-2xl font-semibold text-slate-900">
-                          {taskCompletionRate}%
-                        </p>
-                      </div>
-
-                      {tasksByProgressBand.map((item) => {
-                        const percent = tasks.length
-                          ? Math.round((item.count / tasks.length) * 100)
-                          : 0;
-                        return (
-                          <div key={item.value} className="space-y-1">
-                            <div className="flex items-center justify-between text-xs">
-                              <span className="font-medium text-slate-700">{item.label}</span>
-                              <span className="text-slate-500">
-                                {item.count} ({percent}%)
-                              </span>
-                            </div>
-                            <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                              <div
-                                className="h-full rounded-full bg-blue-600"
-                                style={{ width: `${percent}%` }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </article>
-                </aside>
+                  </aside>
+                </div>
               </div>
             ) : null}
           </main>

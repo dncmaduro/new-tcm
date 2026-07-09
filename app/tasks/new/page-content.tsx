@@ -1,11 +1,14 @@
 "use client";
 
+import { InfoCircledIcon } from "@radix-ui/react-icons";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
+import { Check } from "lucide-react";
+import { FormEvent, Suspense, type ReactNode, useEffect, useMemo, useState } from "react";
 import { useLeaveFormConfirm } from "@/components/use-leave-form-confirm";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { supabase } from "@/lib/supabase";
 import {
   getTaskPriorityOptionLabel,
@@ -29,10 +32,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  formatTimelineRangeVi,
   getTimelineOutsideParentWarning,
   isDateRangeOrdered,
 } from "@/lib/timeline";
+import { cn } from "@/lib/utils";
 
 type GoalOption = {
   id: string;
@@ -47,6 +50,11 @@ type ProfileOption = {
   id: string;
   name: string;
   email: string | null;
+};
+
+type DepartmentOption = {
+  id: string;
+  name: string;
 };
 
 type KeyResultOption = {
@@ -119,6 +127,43 @@ const defaultForm: TaskFormState = {
 };
 
 const MAX_BULK_TASK_CREATE_COUNT = 200;
+
+const inputClassName =
+  "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500";
+
+const textareaClassName =
+  "w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500";
+
+function FormSection({
+  title,
+  children,
+  className = "",
+}: {
+  title: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={cn("space-y-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4", className)}>
+      <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+      <div className="mt-5">{children}</div>
+    </section>
+  );
+}
+
+function FieldLabel({
+  htmlFor,
+  children,
+}: {
+  htmlFor?: string;
+  children: ReactNode;
+}) {
+  return (
+    <label htmlFor={htmlFor} className="text-sm font-semibold text-slate-700">
+      {children}
+    </label>
+  );
+}
 
 const getSearchParamValue = (searchParams: ReturnType<typeof useSearchParams>, key: string) => {
   const value = searchParams.get(key)?.trim();
@@ -234,7 +279,9 @@ function NewTaskPageContent() {
   const [goalOptions, setGoalOptions] = useState<GoalOption[]>([]);
   const [keyResultOptions, setKeyResultOptions] = useState<KeyResultOption[]>([]);
   const [profileOptions, setProfileOptions] = useState<ProfileOption[]>([]);
+  const [departmentOptions, setDepartmentOptions] = useState<DepartmentOption[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoadingFormData, setIsLoadingFormData] = useState(false);
   const [isContinuousCreate, setIsContinuousCreate] = useState(false);
   const [isBulkCreateEnabled, setIsBulkCreateEnabled] = useState(false);
   const [dataLoadError, setDataLoadError] = useState<string | null>(null);
@@ -298,7 +345,9 @@ function NewTaskPageContent() {
       setGoalOptions([]);
       setKeyResultOptions([]);
       setProfileOptions([]);
+      setDepartmentOptions([]);
       setDataLoadError(null);
+      setIsLoadingFormData(false);
       return;
     }
 
@@ -306,6 +355,7 @@ function NewTaskPageContent() {
 
     const loadFormData = async () => {
       try {
+        setIsLoadingFormData(true);
         setDataLoadError(null);
 
         const [
@@ -359,6 +409,12 @@ function NewTaskPageContent() {
             return acc;
           },
           {},
+        );
+        setDepartmentOptions(
+          (allDepartmentsData ?? []).map((department) => ({
+            id: String(department.id),
+            name: String(department.name),
+          })),
         );
 
         let mappedGoals: GoalOption[] = (goalsData ?? []).map((goal) => {
@@ -689,8 +745,13 @@ function NewTaskPageContent() {
           setGoalOptions([]);
           setKeyResultOptions([]);
           setProfileOptions([]);
+          setDepartmentOptions([]);
           setPrefillWarning(null);
           setDataLoadError("Có lỗi khi tải dữ liệu tạo công việc.");
+        }
+      } finally {
+        if (isActive) {
+          setIsLoadingFormData(false);
         }
       }
     };
@@ -787,6 +848,10 @@ function NewTaskPageContent() {
     ];
   }, [availableKeyResults, form.goalId, form.keyResultId]);
 
+  const selectedGoal = useMemo(
+    () => goalOptions.find((goal) => goal.id === form.goalId) ?? null,
+    [form.goalId, goalOptions],
+  );
   const selectedGoalForDisplay = useMemo(
     () => displayGoalOptions.find((goal) => goal.id === form.goalId) ?? null,
     [displayGoalOptions, form.goalId],
@@ -795,7 +860,6 @@ function NewTaskPageContent() {
     () => displayKeyResultOptions.find((keyResult) => keyResult.id === form.keyResultId) ?? null,
     [displayKeyResultOptions, form.keyResultId],
   );
-
   const selectedKeyResult = useMemo(
     () => keyResultOptions.find((keyResult) => keyResult.id === form.keyResultId) ?? null,
     [form.keyResultId, keyResultOptions],
@@ -830,6 +894,45 @@ function NewTaskPageContent() {
     }
     setIsBulkCreateEnabled(false);
   }, [canBulkCreateByQuantity]);
+
+  const selectedDepartmentName =
+    selectedGoal?.departmentName ??
+    (queryDepartmentId
+      ? (departmentOptions.find((department) => department.id === queryDepartmentId)?.name ?? null)
+      : null);
+
+  const hasMissingGoalContext = Boolean(queryGoalId && !goalOptions.some((goal) => goal.id === queryGoalId));
+  const hasMissingKeyResultContext = Boolean(
+    queryKeyResultId && !keyResultOptions.some((keyResult) => keyResult.id === queryKeyResultId),
+  );
+  const hasMissingDepartmentContext = Boolean(
+    queryDepartmentId &&
+      !departmentOptions.some((department) => department.id === queryDepartmentId) &&
+      !selectedDepartmentName,
+  );
+  const hasContextLookupError =
+    hasMissingGoalContext || hasMissingKeyResultContext || hasMissingDepartmentContext;
+  const goalContextValue = selectedGoal
+    ? selectedGoal.name
+    : hasMissingGoalContext
+      ? "Không tìm thấy dữ liệu đã chọn"
+      : form.goalId
+        ? "Đang đồng bộ dữ liệu..."
+        : "Chưa chọn";
+  const keyResultContextValue = selectedKeyResult
+    ? selectedKeyResult.name
+    : hasMissingKeyResultContext
+      ? "Không tìm thấy dữ liệu đã chọn"
+      : form.keyResultId
+        ? "Đang đồng bộ dữ liệu..."
+        : "Chưa chọn";
+  const departmentContextValue = selectedDepartmentName
+    ? selectedDepartmentName
+    : hasMissingDepartmentContext
+      ? "Không tìm thấy dữ liệu đã chọn"
+      : queryDepartmentId
+        ? "Đang đồng bộ dữ liệu..."
+        : "Chưa chọn";
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -909,7 +1012,8 @@ function NewTaskPageContent() {
             : payload.name,
       }));
 
-      let { error } = await supabase.from("tasks").insert(payloads);
+      let insertedTaskIds: string[] = [];
+      let { data: insertedTasks, error } = await supabase.from("tasks").insert(payloads).select("id");
       if (
         error &&
         typeof error.message === "string" &&
@@ -921,7 +1025,8 @@ function NewTaskPageContent() {
           void current;
           return rest;
         });
-        const retry = await supabase.from("tasks").insert(payloadsWithoutCurrent);
+        const retry = await supabase.from("tasks").insert(payloadsWithoutCurrent).select("id");
+        insertedTasks = retry.data;
         error = retry.error;
       }
       if (error) {
@@ -934,6 +1039,9 @@ function NewTaskPageContent() {
         }
         return;
       }
+      insertedTaskIds = (insertedTasks ?? [])
+        .map((task) => ("id" in task && task.id ? String(task.id) : ""))
+        .filter(Boolean);
 
       if (isContinuousCreate) {
         setForm(defaultForm);
@@ -950,6 +1058,12 @@ function NewTaskPageContent() {
       }
 
       runWithoutConfirm(() => {
+        if (effectiveCreateCount === 1 && insertedTaskIds[0]) {
+          router.push(`/tasks/${insertedTaskIds[0]}?created=1`);
+          router.refresh();
+          return;
+        }
+
         router.push(
           queryGoalId && queryKeyResultId
             ? `/goals/${queryGoalId}/key-results/${queryKeyResultId}?taskCreated=1`
@@ -975,13 +1089,48 @@ function NewTaskPageContent() {
             items={[{ label: "Quản lý công việc", href: "/tasks" }, { label: "Tạo công việc mới" }]}
           />
 
-          <main className="min-h-0 flex-1 overflow-y-auto px-4 py-6 lg:px-7">
-            <section className="mx-auto w-full max-w-[920px] rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_24px_50px_-40px_rgba(15,23,42,0.4)] lg:p-6">
-              <div className="mb-5">
-                <h1 className="text-2xl font-semibold tracking-[-0.02em] text-slate-900">
-                  Thêm công việc mới
-                </h1>
+          <main className="min-h-0 flex-1 overflow-y-auto bg-[#f3f5fa] px-4 py-5 lg:px-7">
+            <section className="mx-auto w-full max-w-[980px] rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_24px_50px_-40px_rgba(15,23,42,0.4)] lg:p-5">
+              <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="flex flex-col gap-2 text-sm text-slate-500 md:flex-row md:flex-wrap md:items-center md:gap-4">
+                  <span className="min-w-0 md:max-w-[32%]">
+                    Mục tiêu:{" "}
+                    <span className="font-semibold text-slate-800" title={goalContextValue}>
+                      <span className="inline-block max-w-full truncate align-bottom">
+                        {goalContextValue}
+                      </span>
+                    </span>
+                  </span>
+                  <span className="min-w-0 md:max-w-[32%]">
+                    KR:{" "}
+                    <span className="font-semibold text-slate-800" title={keyResultContextValue}>
+                      <span className="inline-block max-w-full truncate align-bottom">
+                        {keyResultContextValue}
+                      </span>
+                    </span>
+                  </span>
+                  <span className="min-w-0 md:max-w-[32%]">
+                    Phòng ban:{" "}
+                    <span className="font-semibold text-slate-800" title={departmentContextValue}>
+                      <span className="inline-block max-w-full truncate align-bottom">
+                        {departmentContextValue}
+                      </span>
+                    </span>
+                  </span>
+                </div>
               </div>
+
+              {isLoadingFormData ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  Đang tải dữ liệu công việc...
+                </div>
+              ) : null}
+
+              {!isLoadingFormData && hasContextLookupError ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                  Không tìm thấy dữ liệu đã chọn.
+                </div>
+              ) : null}
 
               {isCheckingPermission ? (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
@@ -996,7 +1145,7 @@ function NewTaskPageContent() {
               ) : null}
 
               {!isCheckingPermission && canCreateTask ? (
-                <form className="space-y-4" onSubmit={handleSubmit}>
+                <form className="space-y-5" onSubmit={handleSubmit}>
                   {dataLoadError ? (
                     <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
                       {dataLoadError}
@@ -1021,130 +1170,200 @@ function NewTaskPageContent() {
                     </div>
                   ) : null}
 
-                  <div className="space-y-1.5">
-                    <label htmlFor="task-name" className="text-sm font-semibold text-slate-700">
-                      Tên công việc *
-                    </label>
-                    <input
-                      id="task-name"
-                      value={form.name}
-                      onChange={(event) =>
-                        setForm((prev) => ({ ...prev, name: event.target.value }))
-                      }
-                      className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                      placeholder="Ví dụ: Hoàn thành mục tiêu Media"
-                    />
-                  </div>
+                  <FormSection title="Thông tin cơ bản">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-1.5 md:col-span-2">
+                        <FieldLabel htmlFor="task-name">Tên công việc *</FieldLabel>
+                        <input
+                          id="task-name"
+                          value={form.name}
+                          onChange={(event) =>
+                            setForm((prev) => ({ ...prev, name: event.target.value }))
+                          }
+                          className={inputClassName}
+                          placeholder="Nhập tên công việc"
+                        />
+                      </div>
 
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">Mục tiêu</label>
-                      <Select
-                        value={form.goalId || undefined}
-                        onValueChange={(value) => {
-                          if (!value) return;
+                      <div className="space-y-1.5">
+                        <FieldLabel>Mục tiêu</FieldLabel>
+                        <Select
+                          disabled={isLoadingFormData}
+                          value={form.goalId || undefined}
+                          onValueChange={(value) => {
+                            if (!value) return;
 
-                          const nextGoalId = value;
-                          const nextGoalKeyResults = keyResultOptions.filter(
-                            (keyResult) => keyResult.goalId === nextGoalId,
-                          );
+                            const nextGoalId = value;
+                            const nextGoalKeyResults = keyResultOptions.filter(
+                              (keyResult) => keyResult.goalId === nextGoalId,
+                            );
 
-                          const resolvedKeyResult =
-                            nextGoalId && form.keyResultId
-                              ? (keyResultOptions.find(
-                                  (keyResult) =>
-                                    keyResult.id === form.keyResultId &&
-                                    keyResult.goalId === nextGoalId,
-                                ) ??
-                                nextGoalKeyResults[0] ??
-                                null)
-                              : (nextGoalKeyResults[0] ?? null);
+                            const resolvedKeyResult =
+                              nextGoalId && form.keyResultId
+                                ? (keyResultOptions.find(
+                                    (keyResult) =>
+                                      keyResult.id === form.keyResultId &&
+                                      keyResult.goalId === nextGoalId,
+                                  ) ??
+                                  nextGoalKeyResults[0] ??
+                                  null)
+                                : (nextGoalKeyResults[0] ?? null);
 
-                          setForm((prev) => ({
-                            ...prev,
-                            goalId: nextGoalId,
-                            keyResultId: resolvedKeyResult?.id ?? "",
-                            startDate: resolvedKeyResult?.startDate ?? "",
-                            endDate: resolvedKeyResult?.endDate ?? "",
-                            ...buildTaskMetricDraft(
-                              resolvedKeyResult
-                                ? normalizeKeyResultTypeValue(resolvedKeyResult.type)
-                                : prev.type,
-                              resolvedKeyResult,
-                            ),
-                          }));
-                        }}
-                      >
-                        <SelectTrigger>
-                          {selectedGoalForDisplay ? (
-                            <span>
-                              {selectedGoalForDisplay.name}
-                              {selectedGoalForDisplay.departmentName
-                                ? ` · ${selectedGoalForDisplay.departmentName}`
-                                : ""}
-                            </span>
-                          ) : (
-                            <SelectValue placeholder="Chọn mục tiêu" />
-                          )}
-                        </SelectTrigger>
-                        <SelectContent>
-                          {displayGoalOptions.map((goal) => (
-                            <SelectItem key={goal.id} value={goal.id}>
-                              {goal.name}
-                              {goal.departmentName ? ` · ${goal.departmentName}` : ""}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                            setForm((prev) => ({
+                              ...prev,
+                              goalId: nextGoalId,
+                              keyResultId: resolvedKeyResult?.id ?? "",
+                              startDate: resolvedKeyResult?.startDate ?? "",
+                              endDate: resolvedKeyResult?.endDate ?? "",
+                              ...buildTaskMetricDraft(
+                                resolvedKeyResult
+                                  ? normalizeKeyResultTypeValue(resolvedKeyResult.type)
+                                  : prev.type,
+                                resolvedKeyResult,
+                              ),
+                            }));
+                          }}
+                        >
+                          <SelectTrigger>
+                            {selectedGoalForDisplay ? (
+                              <span className="truncate">
+                                {selectedGoalForDisplay.name}
+                                {selectedGoalForDisplay.departmentName
+                                  ? ` · ${selectedGoalForDisplay.departmentName}`
+                                  : ""}
+                              </span>
+                            ) : (
+                              <SelectValue
+                                placeholder={
+                                  isLoadingFormData ? "Đang tải mục tiêu..." : "Chọn mục tiêu"
+                                }
+                              />
+                            )}
+                          </SelectTrigger>
+                          <SelectContent>
+                            {displayGoalOptions.map((goal) => (
+                              <SelectItem key={goal.id} value={goal.id}>
+                                {goal.name}
+                                {goal.departmentName ? ` · ${goal.departmentName}` : ""}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <FieldLabel>Key Result</FieldLabel>
+                        <Select
+                          disabled={isLoadingFormData}
+                          value={form.keyResultId || undefined}
+                          onValueChange={(value) => {
+                            if (!value) return;
+
+                            const matchedKeyResult =
+                              keyResultOptions.find((keyResult) => keyResult.id === value) ?? null;
+
+                            setForm((prev) => ({
+                              ...prev,
+                              goalId: matchedKeyResult?.goalId ?? prev.goalId,
+                              keyResultId: value,
+                              startDate: matchedKeyResult?.startDate ?? "",
+                              endDate: matchedKeyResult?.endDate ?? "",
+                              ...buildTaskMetricDraft(
+                                matchedKeyResult
+                                  ? normalizeKeyResultTypeValue(matchedKeyResult.type)
+                                  : prev.type,
+                                matchedKeyResult,
+                              ),
+                            }));
+                          }}
+                        >
+                          <SelectTrigger>
+                            {selectedKeyResultForDisplay ? (
+                              <span className="truncate">{selectedKeyResultForDisplay.name}</span>
+                            ) : (
+                              <SelectValue
+                                placeholder={
+                                  isLoadingFormData ? "Đang tải Key Result..." : "Chọn Key Result"
+                                }
+                              />
+                            )}
+                          </SelectTrigger>
+                          <SelectContent>
+                            {displayKeyResultOptions.map((keyResult) => (
+                              <SelectItem key={keyResult.id} value={keyResult.id}>
+                                {keyResult.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-1.5 md:col-span-2">
+                        <FieldLabel>Người phụ trách *</FieldLabel>
+                        <Select
+                          disabled={isLoadingFormData}
+                          open={isProfileSelectOpen}
+                          onOpenChange={(open) => {
+                            setIsProfileSelectOpen(open);
+                            if (!open) {
+                              setProfileSearchKeyword("");
+                            }
+                          }}
+                          value={form.profileId || undefined}
+                          onValueChange={(value) => {
+                            if (!value) return;
+
+                            setForm((prev) => ({ ...prev, profileId: value }));
+                            setProfileSearchKeyword("");
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue
+                              placeholder={
+                                isLoadingFormData
+                                  ? "Đang tải người phụ trách..."
+                                  : "Chọn người phụ trách"
+                              }
+                            />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <div className="relative sticky top-0 z-30 -mx-1 mb-2 border-b border-slate-100 bg-white px-2 pb-2 pt-2 shadow-[0_1px_0_0_rgba(226,232,240,1)]">
+                              <input
+                                autoFocus
+                                value={profileSearchKeyword}
+                                onChange={(event) => setProfileSearchKeyword(event.target.value)}
+                                onKeyDown={(event) => {
+                                  event.stopPropagation();
+                                  if (event.key === "Escape") {
+                                    setIsProfileSelectOpen(false);
+                                  }
+                                }}
+                                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                placeholder="Tìm theo tên hoặc email"
+                              />
+                              <div className="pointer-events-none absolute inset-x-0 -bottom-2 h-2 bg-white" />
+                            </div>
+                            {filteredProfileOptions.map((profile) => (
+                              <SelectItem key={profile.id} value={profile.id}>
+                                {profile.name}
+                                {profile.email ? ` · ${profile.email}` : ""}
+                              </SelectItem>
+                            ))}
+                            {filteredProfileOptions.length === 0 ? (
+                              <div className="px-2 py-2 text-xs text-slate-500">
+                                Không tìm thấy người phù hợp.
+                              </div>
+                            ) : null}
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
+                  </FormSection>
 
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">Key result</label>
-                      <Select
-                        value={form.keyResultId || undefined}
-                        onValueChange={(value) => {
-                          if (!value) return;
-
-                          const matchedKeyResult =
-                            keyResultOptions.find((keyResult) => keyResult.id === value) ?? null;
-
-                          setForm((prev) => ({
-                            ...prev,
-                            goalId: matchedKeyResult?.goalId ?? prev.goalId,
-                            keyResultId: value,
-                            startDate: matchedKeyResult?.startDate ?? "",
-                            endDate: matchedKeyResult?.endDate ?? "",
-                            ...buildTaskMetricDraft(
-                              matchedKeyResult
-                                ? normalizeKeyResultTypeValue(matchedKeyResult.type)
-                                : prev.type,
-                              matchedKeyResult,
-                            ),
-                          }));
-                        }}
-                      >
-                        <SelectTrigger>
-                          {selectedKeyResultForDisplay ? (
-                            <span>{selectedKeyResultForDisplay.name}</span>
-                          ) : (
-                            <SelectValue placeholder="Chọn key result" />
-                          )}
-                        </SelectTrigger>
-                        <SelectContent>
-                          {displayKeyResultOptions.map((keyResult) => (
-                            <SelectItem key={keyResult.id} value={keyResult.id}>
-                              {keyResult.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  {selectedKeyResult ? (
+                  <FormSection title="Kế hoạch & chỉ tiêu">
                     <div className="grid gap-4 md:grid-cols-2">
                       <div className="space-y-1.5">
-                        <label className="text-sm font-semibold text-slate-700">Ngày bắt đầu</label>
+                        <FieldLabel>Ngày bắt đầu</FieldLabel>
                         <input
                           type="date"
                           value={form.startDate}
@@ -1154,13 +1373,12 @@ function NewTaskPageContent() {
                               startDate: event.target.value,
                             }))
                           }
-                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          className={inputClassName}
                         />
                       </div>
+
                       <div className="space-y-1.5">
-                        <label className="text-sm font-semibold text-slate-700">
-                          Ngày kết thúc
-                        </label>
+                        <FieldLabel>Ngày kết thúc</FieldLabel>
                         <input
                           type="date"
                           min={form.startDate || undefined}
@@ -1171,253 +1389,233 @@ function NewTaskPageContent() {
                               endDate: event.target.value,
                             }))
                           }
-                          className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                          className={inputClassName}
                         />
                       </div>
-                      <p className="md:col-span-2 text-[11px] text-slate-500">
-                        Giá trị ban đầu được autofill từ Key Result đã chọn. Khi lưu, mốc thời gian
-                        này thuộc riêng công việc và không làm thay đổi KR.
-                      </p>
-                    </div>
-                  ) : null}
 
-                  {taskTimelineInputError ? (
-                    <p className="-mt-2 text-xs text-rose-600">{taskTimelineInputError}</p>
-                  ) : null}
-
-                  {selectedKeyResult && !taskTimelineInputError && taskTimelineAlignmentWarning ? (
-                    <p className="-mt-2 text-xs text-amber-600">
-                      {taskTimelineAlignmentWarning} Khung thời gian của KR:{" "}
-                      {formatTimelineRangeVi(
-                        selectedKeyResult.startDate,
-                        selectedKeyResult.endDate,
-                        {
-                          fallback: "KR chưa có mốc thời gian",
-                        },
-                      )}
-                    </p>
-                  ) : null}
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">
-                        Người phụ trách *
-                      </label>
-                      <Select
-                        open={isProfileSelectOpen}
-                        onOpenChange={(open) => {
-                          setIsProfileSelectOpen(open);
-                          if (!open) {
-                            setProfileSearchKeyword("");
+                      <div className="space-y-1.5">
+                        <FieldLabel>Loại công việc</FieldLabel>
+                        <Select
+                          value={form.type}
+                          onValueChange={(value: TaskTypeValue) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              type: value,
+                              unit: normalizeKeyResultUnitForType(value, prev.unit),
+                              target: value === "okr" ? "100" : prev.target,
+                            }))
                           }
-                        }}
-                        value={form.profileId || undefined}
-                        onValueChange={(value) => {
-                          if (!value) return;
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Chọn loại công việc" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {TASK_TYPES.map((type) => (
+                              <SelectItem key={type.value} value={type.value}>
+                                {type.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
 
-                          setForm((prev) => ({ ...prev, profileId: value }));
-                          setProfileSearchKeyword("");
-                        }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Chọn người phụ trách" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <div className="sticky top-0 z-30 -mx-1 mb-2 border-b border-slate-100 bg-white px-2 pb-2 pt-2 shadow-[0_1px_0_0_rgba(226,232,240,1)] relative">
-                            <input
-                              autoFocus
-                              value={profileSearchKeyword}
-                              onChange={(event) => setProfileSearchKeyword(event.target.value)}
-                              onKeyDown={(event) => {
-                                event.stopPropagation();
-                                if (event.key === "Escape") {
-                                  setIsProfileSelectOpen(false);
-                                }
-                              }}
-                              className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                              placeholder="Tìm theo tên hoặc email"
+                      <div className="space-y-1.5">
+                        <FieldLabel>Độ ưu tiên *</FieldLabel>
+                        <Select
+                          value={form.priority}
+                          onValueChange={(value: TaskPriority) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              priority: value,
+                            }))
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Chọn độ ưu tiên" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {TASK_PRIORITIES.map((priority) => (
+                              <SelectItem key={priority.value} value={priority.value}>
+                                {getTaskPriorityOptionLabel(priority.value)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <FieldLabel>Phân loại chỉ tiêu</FieldLabel>
+                        <Select
+                          value={form.unit}
+                          disabled={form.type === "okr"}
+                          onValueChange={(value: KeyResultUnitValue) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              unit: normalizeKeyResultUnitForType(prev.type, value),
+                            }))
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue
+                              placeholder={
+                                form.type === "okr"
+                                  ? "Task OKR dùng phần trăm"
+                                  : "Chọn loại chỉ tiêu"
+                              }
                             />
-                            <div className="pointer-events-none absolute inset-x-0 -bottom-2 h-2 bg-white" />
-                          </div>
-                          {filteredProfileOptions.map((profile) => (
-                            <SelectItem key={profile.id} value={profile.id}>
-                              {profile.name}
-                              {profile.email ? ` · ${profile.email}` : ""}
-                            </SelectItem>
-                          ))}
-                          {filteredProfileOptions.length === 0 ? (
-                            <div className="px-2 py-2 text-xs text-slate-500">
-                              Không tìm thấy người phù hợp.
-                            </div>
-                          ) : null}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {getAllowedKeyResultUnitsByType(form.type).map((unit) => (
+                              <SelectItem key={unit.value} value={unit.value}>
+                                {unit.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
 
-                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">Loại task</label>
-                      <Select
-                        value={form.type}
-                        onValueChange={(value: TaskTypeValue) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            type: value,
-                            unit: normalizeKeyResultUnitForType(value, prev.unit),
-                            target: value === "okr" ? "100" : prev.target,
-                          }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Chọn loại task" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {TASK_TYPES.map((type) => (
-                            <SelectItem key={type.value} value={type.value}>
-                              {type.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <div className="space-y-1.5">
+                        <FieldLabel>Chỉ tiêu cần đạt *</FieldLabel>
+                        <FormattedNumberInput
+                          value={form.target}
+                          disabled={form.type === "okr"}
+                          onValueChange={(value) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              target: value,
+                            }))
+                          }
+                          className={cn(
+                            inputClassName,
+                            form.type === "okr"
+                              ? "cursor-not-allowed bg-slate-50 text-slate-500"
+                              : "",
+                          )}
+                          placeholder={
+                            form.type === "okr"
+                              ? "Task OKR luôn là 100%"
+                              : form.unit === "currency"
+                                ? "Ví dụ: 2.000.000.000 đ"
+                                : "Ví dụ: 40"
+                          }
+                        />
+                      </div>
                     </div>
 
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">Độ ưu tiên *</label>
-                      <Select
-                        value={form.priority}
-                        onValueChange={(value: TaskPriority) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            priority: value,
-                          }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Chọn độ ưu tiên" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {TASK_PRIORITIES.map((priority) => (
-                            <SelectItem key={priority.value} value={priority.value}>
-                              {getTaskPriorityOptionLabel(priority.value)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                    {taskTimelineInputError ? (
+                      <p className="-mt-1 text-xs text-rose-600">{taskTimelineInputError}</p>
+                    ) : null}
 
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">
-                        Phân loại chỉ tiêu
+                    {!taskTimelineInputError && taskTimelineAlignmentWarning ? (
+                      <p className="-mt-1 text-xs text-amber-600">{taskTimelineAlignmentWarning}</p>
+                    ) : null}
+                  </FormSection>
+
+                  <FormSection title="Mô tả & tuỳ chọn">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <label className="block space-y-1.5 md:col-span-2">
+                        <span className="text-sm font-semibold text-slate-700">Mô tả</span>
+                        <textarea
+                          id="task-description"
+                          rows={3}
+                          value={form.description}
+                          onChange={(event) =>
+                            setForm((prev) => ({ ...prev, description: event.target.value }))
+                          }
+                          className={textareaClassName}
+                          placeholder="Mô tả mục tiêu hoặc phạm vi công việc"
+                        />
                       </label>
-                      <Select
-                        value={form.unit}
-                        disabled={form.type === "okr"}
-                        onValueChange={(value: KeyResultUnitValue) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            unit: normalizeKeyResultUnitForType(prev.type, value),
-                          }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue
-                            placeholder={
-                              form.type === "okr" ? "Task OKR dùng phần trăm" : "Chọn loại chỉ tiêu"
-                            }
+
+                      <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-3 md:col-span-2">
+                        <label
+                          htmlFor="bulk-create-enabled"
+                          className={`flex min-w-0 items-center gap-3 ${
+                            canBulkCreateByQuantity ? "cursor-pointer" : "cursor-not-allowed"
+                          }`}
+                        >
+                          <input
+                            id="bulk-create-enabled"
+                            type="checkbox"
+                            checked={isBulkCreateEnabled}
+                            onChange={(event) => setIsBulkCreateEnabled(event.target.checked)}
+                            disabled={!canBulkCreateByQuantity}
+                            className="sr-only"
                           />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {getAllowedKeyResultUnitsByType(form.type).map((unit) => (
-                            <SelectItem key={unit.value} value={unit.value}>
-                              {unit.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                          <span
+                            aria-hidden="true"
+                            className={cn(
+                              "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors",
+                              isBulkCreateEnabled
+                                ? "border-blue-600 bg-blue-600 text-white"
+                                : "border-slate-300 bg-white text-transparent",
+                              !canBulkCreateByQuantity ? "opacity-50" : "",
+                            )}
+                          >
+                            <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                          </span>
+                          <span className="text-sm font-semibold text-slate-700">
+                            Tạo hàng loạt
+                          </span>
+                        </label>
+
+                        <div className="flex items-center gap-2">
+                          {!canBulkCreateByQuantity ? (
+                            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                              Chưa khả dụng
+                            </span>
+                          ) : null}
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <button
+                                type="button"
+                                aria-label="Giải thích tạo hàng loạt"
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
+                              >
+                                <InfoCircledIcon className="h-4 w-4" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[320px] space-y-2 p-3 text-xs text-slate-600" align="end">
+                              <div>
+                                <p className="font-semibold text-slate-800">Khi nào dùng được</p>
+                                <p className="mt-1">
+                                  Chỉ khả dụng khi loại công việc là <strong>KPI</strong> và phân
+                                  loại chỉ tiêu là <strong>Số lượng</strong>.
+                                </p>
+                              </div>
+                              <div>
+                                <p className="font-semibold text-slate-800">Khi nào không dùng được</p>
+                                <p className="mt-1">
+                                  Nếu công việc là <strong>OKR</strong> hoặc chỉ tiêu là{" "}
+                                  <strong>Doanh thu</strong>, tuỳ chọn này sẽ bị tắt.
+                                </p>
+                              </div>
+                              <div>
+                                <p className="font-semibold text-slate-800">Cách hoạt động</p>
+                                <p className="mt-1">
+                                  Khi bật, trường <strong>Chỉ tiêu cần đạt</strong> sẽ được hiểu là
+                                  số lượng công việc cần tạo, từ 1 đến{" "}
+                                  <strong>{MAX_BULK_TASK_CREATE_COUNT}</strong>.
+                                </p>
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-3 md:col-span-2">
+                        <span className="text-sm font-semibold text-slate-700">Tạo liên tục</span>
+                        <FormToggleSwitch
+                          id="continuous-create"
+                          checked={isContinuousCreate}
+                          onCheckedChange={setIsContinuousCreate}
+                        />
+                      </div>
                     </div>
+                  </FormSection>
 
-                    <div className="space-y-1.5">
-                      <label className="text-sm font-semibold text-slate-700">
-                        Chỉ tiêu cần đạt *
-                      </label>
-                      <FormattedNumberInput
-                        value={form.target}
-                        disabled={form.type === "okr"}
-                        onValueChange={(value) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            target: value,
-                          }))
-                        }
-                        className={`h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none ${
-                          form.type === "okr"
-                            ? "cursor-not-allowed bg-slate-50 text-slate-400"
-                            : "bg-white text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                        }`}
-                        placeholder={form.type === "okr" ? "Task OKR luôn là 100%" : "Ví dụ: 40"}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label
-                      htmlFor="task-description"
-                      className="text-sm font-semibold text-slate-700"
-                    >
-                      Mô tả
-                    </label>
-                    <textarea
-                      id="task-description"
-                      rows={4}
-                      value={form.description}
-                      onChange={(event) =>
-                        setForm((prev) => ({ ...prev, description: event.target.value }))
-                      }
-                      className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                      placeholder="Mô tả công việc"
-                    />
-                  </div>
-
-                  <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                    <label
-                      htmlFor="bulk-create-enabled"
-                      className={`inline-flex items-center gap-2 text-sm font-semibold ${
-                        canBulkCreateByQuantity
-                          ? "cursor-pointer text-slate-700"
-                          : "cursor-not-allowed text-slate-400"
-                      }`}
-                    >
-                      <input
-                        id="bulk-create-enabled"
-                        type="checkbox"
-                        checked={isBulkCreateEnabled}
-                        onChange={(event) => setIsBulkCreateEnabled(event.target.checked)}
-                        disabled={!canBulkCreateByQuantity}
-                        className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
-                      />
-                      <span>Tạo hàng loạt</span>
-                    </label>
-                    <p className="text-sm text-slate-500">
-                      {canBulkCreateByQuantity
-                        ? `Bật chế độ này để tạo nhiều task một lúc. "Chỉ tiêu cần đạt" sẽ được hiểu là số lượng task cần tạo, từ 1 đến ${MAX_BULK_TASK_CREATE_COUNT}.`
-                        : "Chỉ hỗ trợ khi loại công việc là KPI và đơn vị đo là Số lượng."}
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col gap-3 border-t border-slate-100 pt-3 md:flex-row md:items-center md:justify-between">
-                    <div className="flex items-center gap-3">
-                      <FormToggleSwitch
-                        id="continuous-create"
-                        checked={isContinuousCreate}
-                        onCheckedChange={setIsContinuousCreate}
-                      />
-                      <span className="text-sm text-slate-700">
-                        Tạo liên tục: tạo xong sẽ ở lại form và xóa toàn bộ dữ liệu đã nhập.
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-end gap-2">
+                  <div className="border-t border-slate-200 pt-4">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
                       <button
                         type="button"
                         onClick={handleCancel}

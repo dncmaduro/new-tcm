@@ -39,6 +39,7 @@ type RichCommentEditorProps = {
   placeholder: string;
   disabled?: boolean;
   autoFocus?: boolean;
+  compact?: boolean;
   onChange: (snapshot: RichCommentSnapshot) => void;
   onErrorChange?: (error: string | null) => void;
   onUploadingChange?: (isUploading: boolean) => void;
@@ -116,6 +117,7 @@ export const RichCommentEditor = forwardRef<RichCommentEditorHandle, RichComment
       placeholder,
       disabled = false,
       autoFocus = false,
+      compact = false,
       onChange,
       onErrorChange,
       onUploadingChange,
@@ -330,7 +332,8 @@ export const RichCommentEditor = forwardRef<RichCommentEditorHandle, RichComment
       editorProps: {
         attributes: {
           class: cn(
-            "comment-rich-text comment-rich-text-editor min-h-[120px] rounded-b-2xl px-3 py-3 outline-none",
+            "comment-rich-text comment-rich-text-editor rounded-b-2xl px-3 py-3 outline-none",
+            compact ? "min-h-[96px]" : "min-h-[120px]",
             disabled && "cursor-not-allowed bg-slate-50 text-slate-400",
           ),
         },
@@ -516,16 +519,24 @@ export const RichCommentEditor = forwardRef<RichCommentEditorHandle, RichComment
       return null;
     }
 
+    const toolbarButtonClassName = compact ? "h-8 w-8 rounded-lg px-0" : "";
+    const toolbarContainerClassName = compact ? "gap-1 px-2 py-1.5" : "gap-2 px-3 py-2";
+
     return (
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-        <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
+        <div
+          className={cn(
+            "flex flex-wrap items-center border-b border-slate-200 bg-slate-50",
+            toolbarContainerClassName,
+          )}
+        >
           <Button
             type="button"
             variant="outline"
             size="sm"
             onClick={() => editor.chain().focus().toggleBold().run()}
             disabled={disabled}
-            className={cn(editor.isActive("bold") && "border-slate-300 bg-slate-200")}
+            className={cn(toolbarButtonClassName, editor.isActive("bold") && "border-slate-300 bg-slate-200")}
           >
             <Bold className="h-4 w-4" />
           </Button>
@@ -535,7 +546,7 @@ export const RichCommentEditor = forwardRef<RichCommentEditorHandle, RichComment
             size="sm"
             onClick={() => editor.chain().focus().toggleItalic().run()}
             disabled={disabled}
-            className={cn(editor.isActive("italic") && "border-slate-300 bg-slate-200")}
+            className={cn(toolbarButtonClassName, editor.isActive("italic") && "border-slate-300 bg-slate-200")}
           >
             <Italic className="h-4 w-4" />
           </Button>
@@ -545,7 +556,7 @@ export const RichCommentEditor = forwardRef<RichCommentEditorHandle, RichComment
             size="sm"
             onClick={() => editor.chain().focus().toggleUnderline().run()}
             disabled={disabled}
-            className={cn(editor.isActive("underline") && "border-slate-300 bg-slate-200")}
+            className={cn(toolbarButtonClassName, editor.isActive("underline") && "border-slate-300 bg-slate-200")}
           >
             <UnderlineIcon className="h-4 w-4" />
           </Button>
@@ -555,7 +566,7 @@ export const RichCommentEditor = forwardRef<RichCommentEditorHandle, RichComment
             size="sm"
             onClick={() => editor.chain().focus().toggleBulletList().run()}
             disabled={disabled}
-            className={cn(editor.isActive("bulletList") && "border-slate-300 bg-slate-200")}
+            className={cn(toolbarButtonClassName, editor.isActive("bulletList") && "border-slate-300 bg-slate-200")}
           >
             <List className="h-4 w-4" />
           </Button>
@@ -565,7 +576,7 @@ export const RichCommentEditor = forwardRef<RichCommentEditorHandle, RichComment
             size="sm"
             onClick={() => editor.chain().focus().toggleOrderedList().run()}
             disabled={disabled}
-            className={cn(editor.isActive("orderedList") && "border-slate-300 bg-slate-200")}
+            className={cn(toolbarButtonClassName, editor.isActive("orderedList") && "border-slate-300 bg-slate-200")}
           >
             <ListOrdered className="h-4 w-4" />
           </Button>
@@ -575,16 +586,29 @@ export const RichCommentEditor = forwardRef<RichCommentEditorHandle, RichComment
             size="sm"
             onClick={handleLinkAction}
             disabled={disabled}
-            className={cn(editor.isActive("link") && "border-slate-300 bg-slate-200")}
+            className={cn(toolbarButtonClassName, editor.isActive("link") && "border-slate-300 bg-slate-200")}
           >
             <LinkIcon className="h-4 w-4" />
           </Button>
-          <Button type="button" variant="outline" size="sm" onClick={triggerImageUpload} disabled={disabled}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={triggerImageUpload}
+            disabled={disabled}
+            className={toolbarButtonClassName}
+          >
             <ImageIcon className="h-4 w-4" />
           </Button>
           <Popover open={isVideoPopoverOpen} onOpenChange={setIsVideoPopoverOpen}>
             <PopoverTrigger asChild>
-              <Button type="button" variant="outline" size="sm" disabled={disabled}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={disabled}
+                className={toolbarButtonClassName}
+              >
                 <Video className="h-4 w-4" />
               </Button>
             </PopoverTrigger>

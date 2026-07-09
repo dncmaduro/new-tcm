@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { EmptyStateCompact, SectionCard } from "@/components/detail-ui";
 import { TASK_EVIDENCE_STORAGE_BUCKET } from "@/lib/constants/storage";
 import { supabase } from "@/lib/supabase";
 import { TaskEvidencePreviewModal } from "./task-evidence-preview-modal";
@@ -420,35 +421,36 @@ export function TaskEvidenceSection({
   };
 
   return (
-    <article className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_12px_30px_-24px_rgba(15,23,42,0.35)]">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-base font-semibold text-slate-900">Bằng chứng hoàn thành</h2>
-        {canCreateEvidence ? (
+    <SectionCard
+      title="Bằng chứng hoàn thành"
+      actions={
+        canCreateEvidence ? (
           <button
             type="button"
             onClick={() => {
               resetForm();
               setIsDialogOpen(true);
             }}
-            className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            className="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
           >
             Thêm bằng chứng
           </button>
-        ) : null}
-      </div>
+        ) : null
+      }
+    >
 
       {error ? (
-        <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
           {error}
         </div>
       ) : null}
 
       {isLoading ? (
-        <p className="mt-4 text-sm text-slate-600">Đang tải...</p>
+        <p className="text-sm text-slate-600">Đang tải...</p>
       ) : evidences.length === 0 ? (
-        <p className="mt-4 text-sm text-slate-600">Chưa có bằng chứng hoàn thành.</p>
+        <EmptyStateCompact>Chưa có bằng chứng hoàn thành.</EmptyStateCompact>
       ) : (
-        <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[980px] text-left text-sm">
               <thead>
@@ -534,6 +536,6 @@ export function TaskEvidenceSection({
           setPreviewState((current) => ({ ...current, open: true }));
         }}
       />
-    </article>
+    </SectionCard>
   );
 }

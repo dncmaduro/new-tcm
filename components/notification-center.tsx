@@ -53,8 +53,12 @@ export function NotificationCenter() {
         </button>
       </PopoverTrigger>
 
-      <PopoverContent align="end" className="w-[380px] p-0">
+      <PopoverContent
+        align="end"
+        className="flex max-h-[min(80vh,42rem)] min-h-0 w-[380px] flex-col overflow-hidden p-0"
+      >
         <NotificationList
+          className="min-h-0 flex-1"
           unreadCount={unreadCount}
           unreadItems={unreadItems}
           readItems={readItems}
@@ -66,7 +70,7 @@ export function NotificationCenter() {
           onMarkAllRead={markAllRead}
         />
 
-        <div className="border-t border-slate-200 px-3 py-3">
+        <div className="shrink-0 border-t border-slate-200 px-3 py-3">
           <Link
             href="/notifications"
             className={cn(
