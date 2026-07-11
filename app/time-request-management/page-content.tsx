@@ -43,10 +43,7 @@ import { supabase } from "@/lib/supabase";
 import { canReadTimekeepingData } from "@/lib/timekeeping-access";
 import {
   buildTimeRequestSharePath,
-  canManageTimeRequestProfile,
   resolveCurrentViewerProfileId,
-  resolveTimeRequestManagementScope,
-  type TimeRequestRoleScope,
 } from "@/lib/time-request-access";
 import { cn } from "@/lib/utils";
 import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
@@ -68,6 +65,10 @@ type TimeRequestReviewerRow = {
   comment: string | null;
   reviewed_at: string | null;
   created_at: string;
+};
+
+type TimeRequestReviewerLinkRow = {
+  time_request_id: string | null;
 };
 
 type TimeRequestRow = {
@@ -408,8 +409,6 @@ function TimeRequestManagementPageContent() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [currentProfileId, setCurrentProfileId] = useState<string | null>(null);
-  const [roleScope, setRoleScope] = useState<TimeRequestRoleScope>("member");
-  const [managedProfileIds, setManagedProfileIds] = useState<string[] | null>([]);
   const [requests, setRequests] = useState<TimeRequestRow[]>([]);
   const [holidaysByDate, setHolidaysByDate] = useState<Map<string, Holiday>>(new Map());
   const [profileNameById, setProfileNameById] = useState<Record<string, string>>({});
@@ -454,46 +453,31 @@ function TimeRequestManagementPageContent() {
           return;
         }
         setCurrentProfileId(viewerProfileId);
-        const managementScope = await resolveTimeRequestManagementScope(viewerProfileId);
+        const { data: reviewerLinksData, error: reviewerLinksError } = await supabase
+          .from("time_request_reviewers")
+          .select("time_request_id")
+          .eq("profile_id", viewerProfileId);
 
-        if (!isActive) {
-          return;
-        }
-        setRoleScope(managementScope.roleScope);
-        setManagedProfileIds(managementScope.managedProfileIds);
-
-        const scopeProfileIds =
-          managementScope.roleScope === "director"
-            ? null
-            : (managementScope.managedProfileIds ?? []);
-        const eligibleProfilesQuery = supabase
-          .from("profiles")
-          .select("id,name,email,is_timekeeping_enabled")
-          .eq("is_timekeeping_enabled", true);
-        const { data: eligibleProfilesData, error: eligibleProfilesError } =
-          scopeProfileIds === null
-            ? await eligibleProfilesQuery.neq("id", viewerProfileId)
-            : scopeProfileIds.length > 0
-              ? await eligibleProfilesQuery.in("id", scopeProfileIds)
-              : { data: [], error: null };
-
-        if (eligibleProfilesError) {
-          throw new Error(eligibleProfilesError.message || "Không tải được thông tin nhân sự.");
+        if (reviewerLinksError) {
+          throw new Error(reviewerLinksError.message || "Không tải được phạm vi duyệt yêu cầu.");
         }
 
-        const eligibleProfiles = ((eligibleProfilesData ?? []) as ProfileRow[]).filter((profile) =>
-          canReadTimekeepingData(profile),
-        );
-        const eligibleProfileIds = eligibleProfiles.map((profile) => String(profile.id));
+        const authorizedRequestIds = [
+          ...new Set(
+            ((reviewerLinksData ?? []) as TimeRequestReviewerLinkRow[])
+              .map((row) => row.time_request_id)
+              .filter((requestId): requestId is string => Boolean(requestId)),
+          ),
+        ];
 
         let requestRows: TimeRequestRow[] = [];
-        if (eligibleProfileIds.length > 0) {
+        if (authorizedRequestIds.length > 0) {
           const { data, error } = await supabase
             .from("time_requests")
             .select(
               "id,profile_id,date,type,leave_subtype,leave_session,requested_hours,minutes,reason,remote_check_in,remote_check_out,created_at,updated_at,time_request_reviewers(id,profile_id,is_approved,comment,reviewed_at,created_at)",
             )
-            .in("profile_id", eligibleProfileIds)
+            .in("id", authorizedRequestIds)
             .order("created_at", { ascending: false });
 
           if (error) {
@@ -526,21 +510,46 @@ function TimeRequestManagementPageContent() {
           setHolidaysByDate(new Map());
         }
 
-        setRequests(
-          requestRows.map((item) => ({
-            ...item,
-            minutes: resolveRequestMinutes(item),
-          })),
-        );
+        const requestProfileIds = [
+          ...new Set(
+            requestRows
+              .map((request) => request.profile_id)
+              .filter((profileId): profileId is string => Boolean(profileId)),
+          ),
+        ];
 
-        if (eligibleProfiles.length === 0) {
+        if (requestProfileIds.length === 0) {
+          setRequests([]);
           setProfileNameById({});
           return;
+        }
+
+        const { data: requestProfilesData, error: requestProfilesError } = await supabase
+          .from("profiles")
+          .select("id,name,email,is_timekeeping_enabled")
+          .in("id", requestProfileIds);
+
+        if (requestProfilesError) {
+          throw new Error(requestProfilesError.message || "Không tải được thông tin nhân sự.");
         }
 
         if (!isActive) {
           return;
         }
+
+        const eligibleProfiles = ((requestProfilesData ?? []) as ProfileRow[]).filter((profile) =>
+          canReadTimekeepingData(profile),
+        );
+        const eligibleProfileIds = new Set(eligibleProfiles.map((profile) => String(profile.id)));
+
+        setRequests(
+          requestRows
+            .filter((request) => request.profile_id && eligibleProfileIds.has(request.profile_id))
+            .map((item) => ({
+              ...item,
+              minutes: resolveRequestMinutes(item),
+            })),
+        );
 
         const nameMap = eligibleProfiles.reduce<Record<string, string>>((acc, profile) => {
           acc[String(profile.id)] = profile.name
@@ -559,8 +568,6 @@ function TimeRequestManagementPageContent() {
           error instanceof Error ? error.message : "Không tải được dữ liệu duyệt yêu cầu.",
         );
         setCurrentProfileId(null);
-        setRoleScope("member");
-        setManagedProfileIds([]);
         setRequests([]);
         setHolidaysByDate(new Map());
         setProfileNameById({});
@@ -599,7 +606,7 @@ function TimeRequestManagementPageContent() {
       try {
         const { data, error } = await supabase
           .from("time_requests")
-          .select("id,profile_id")
+          .select("id")
           .eq("id", openedRequestId)
           .maybeSingle();
 
@@ -607,28 +614,18 @@ function TimeRequestManagementPageContent() {
           throw new Error(error?.message ?? "Không tìm thấy yêu cầu thời gian.");
         }
 
-        if (data.profile_id) {
-          const { data: profileData, error: profileError } = await supabase
-            .from("profiles")
-            .select("id,is_timekeeping_enabled")
-            .eq("id", data.profile_id)
-            .maybeSingle();
+        const { data: reviewerData, error: reviewerError } = await supabase
+          .from("time_request_reviewers")
+          .select("id")
+          .eq("time_request_id", openedRequestId)
+          .eq("profile_id", currentProfileId)
+          .maybeSingle();
 
-          if (profileError) {
-            throw new Error(profileError.message || "Không tải được hồ sơ nhân sự.");
-          }
-
-          if (!profileData || !canReadTimekeepingData(profileData)) {
-            throw new Error("Không tìm thấy yêu cầu thời gian.");
-          }
+        if (reviewerError) {
+          throw new Error(reviewerError.message || "Không thể kiểm tra quyền duyệt yêu cầu.");
         }
 
-        const isAllowed = canManageTimeRequestProfile(currentProfileId, data.profile_id, {
-          roleScope,
-          managedProfileIds,
-        });
-
-        if (!isAllowed) {
+        if (!reviewerData?.id) {
           throw new Error("Yêu cầu này không nằm trong phạm vi duyệt của bạn.");
         }
 
@@ -657,10 +654,8 @@ function TimeRequestManagementPageContent() {
     currentProfileId,
     isLoading,
     loadError,
-    managedProfileIds,
     openedRequestId,
     requests,
-    roleScope,
   ]);
 
   const handleReviewRequest = async (requestId: string, isApproved: boolean) => {
@@ -687,29 +682,20 @@ function TimeRequestManagementPageContent() {
       const reviewedAt = new Date().toISOString();
       const existingId = existingRows?.[0]?.id ? String(existingRows[0].id) : null;
 
-      if (existingId) {
-        const { error: updateError } = await supabase
-          .from("time_request_reviewers")
-          .update({
-            is_approved: isApproved,
-            reviewed_at: reviewedAt,
-          })
-          .eq("id", existingId);
+      if (!existingId) {
+        throw new Error("Bạn không có quyền duyệt yêu cầu này.");
+      }
 
-        if (updateError) {
-          throw new Error(updateError.message || "Không thể cập nhật quyết định duyệt.");
-        }
-      } else {
-        const { error: insertError } = await supabase.from("time_request_reviewers").insert({
-          time_request_id: requestId,
-          profile_id: currentProfileId,
+      const { error: updateError } = await supabase
+        .from("time_request_reviewers")
+        .update({
           is_approved: isApproved,
           reviewed_at: reviewedAt,
-        });
+        })
+        .eq("id", existingId);
 
-        if (insertError) {
-          throw new Error(insertError.message || "Không thể lưu quyết định duyệt.");
-        }
+      if (updateError) {
+        throw new Error(updateError.message || "Không thể cập nhật quyết định duyệt.");
       }
 
       setReloadSeed((prev) => prev + 1);
@@ -1093,15 +1079,6 @@ function TimeRequestManagementPageContent() {
                             {loadError}
                           </td>
                         </tr>
-                      ) : roleScope === "member" ? (
-                        <tr className="border-b border-slate-100">
-                          <td
-                            colSpan={tableColumnCount}
-                            className="px-5 py-8 text-center text-sm text-slate-500"
-                          >
-                            Bạn chưa có phạm vi duyệt yêu cầu của cấp dưới.
-                          </td>
-                        </tr>
                       ) : filteredRequests.length === 0 ? (
                         <tr className="border-b border-slate-100">
                           <td
@@ -1121,7 +1098,7 @@ function TimeRequestManagementPageContent() {
                             : null;
                           const status = toRequestStatus(reviewers);
                           const isApproving = processingRequestId === item.id;
-                          const canReview = status === "pending";
+                          const canReview = status === "pending" && Boolean(myReview);
                           const canUndo = !canReview && Boolean(myReview);
                           const holiday = item.date ? (holidaysByDate.get(item.date) ?? null) : null;
                           const isHolidayRequest = Boolean(holiday);
@@ -1286,7 +1263,11 @@ function TimeRequestManagementPageContent() {
           footerActions={
             openedRequest && openedRequestDetail ? (
               <div className="space-y-3">
-                {toRequestStatus(openedRequest.time_request_reviewers) === "pending" ? (
+                {toRequestStatus(openedRequest.time_request_reviewers) === "pending" &&
+                currentProfileId &&
+                (openedRequest.time_request_reviewers ?? []).some(
+                  (reviewer) => reviewer.profile_id === currentProfileId,
+                ) ? (
                   <>
                     {openedRequest.date &&
                     holidaysByDate.get(openedRequest.date) &&

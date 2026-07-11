@@ -46,6 +46,7 @@ type DepartmentMember = {
   avatar: string;
   tone: string;
   isHead: boolean;
+  isDirector: boolean;
 };
 
 type DepartmentItem = {
@@ -152,14 +153,28 @@ const toInitials = (value: string) => {
 const normalizeText = (value: string) =>
   value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
+const isDirectorRole = (roleName: string) => {
+  const normalized = normalizeText(roleName);
+  return normalized === "director" || normalized.includes("director") || normalized.includes("giam doc");
+};
+
 const isHeadRole = (roleName: string) => {
   const normalized = normalizeText(roleName);
   return (
+    isDirectorRole(roleName) ||
     normalized.includes("leader") ||
     normalized.includes("head") ||
     normalized.includes("manager") ||
     normalized.includes("truong")
   );
+};
+
+const getRolePriority = (roleName: string) => {
+  if (isDirectorRole(roleName)) {
+    return 0;
+  }
+
+  return isHeadRole(roleName) ? 1 : 2;
 };
 
 const sortByVietnameseName = <T extends { name: string }>(items: T[]) =>
@@ -320,7 +335,10 @@ const buildPersonnelLayout = (items: DepartmentItem[]) => {
     return acc;
   }, {});
   const leaderByDepartmentId = items.reduce<Record<string, DepartmentMember | null>>((acc, department) => {
-    acc[department.id] = department.membersList.find((member) => member.isHead) ?? null;
+    acc[department.id] =
+      department.membersList.find((member) => member.isDirector) ??
+      department.membersList.find((member) => member.isHead) ??
+      null;
     return acc;
   }, {});
   const nodesById = membersByNodeId.reduce<Record<string, { departmentId: string; member: DepartmentMember }>>(
@@ -381,6 +399,11 @@ const buildPersonnelLayout = (items: DepartmentItem[]) => {
   const compareNodeIds = (leftId: string, rightId: string) => {
     const left = nodesById[leftId];
     const right = nodesById[rightId];
+    const directorOrder = Number(right.member.isDirector) - Number(left.member.isDirector);
+    if (directorOrder !== 0) {
+      return directorOrder;
+    }
+
     const headOrder = Number(right.member.isHead) - Number(left.member.isHead);
     if (headOrder !== 0) {
       return headOrder;
@@ -570,7 +593,7 @@ function PersonnelCanvasCard({
           <span className="truncate text-base font-semibold text-slate-900">{member.name}</span>
           {member.isHead ? (
             <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-amber-700">
-              Leader
+              {member.isDirector ? "Director" : "Leader"}
             </span>
           ) : null}
         </span>
@@ -621,7 +644,9 @@ function DetailPanelContent({
           </div>
           {member.isHead ? (
             <p className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700">
-              Nhân sự này đang là leader của phòng ban.
+              {member.isDirector
+                ? "Nhân sự này đang là Director của tổ chức."
+                : "Nhân sự này đang là leader của phòng ban."}
             </p>
           ) : null}
         </div>
@@ -688,7 +713,7 @@ function DetailPanelContent({
                       <p className="truncate text-sm font-semibold text-slate-800">{person.name}</p>
                       {person.isHead ? (
                         <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-amber-700">
-                          Leader
+                          {person.isDirector ? "Director" : "Leader"}
                         </span>
                       ) : null}
                     </div>
@@ -889,7 +914,7 @@ function DepartmentsPageContent() {
                 return;
               }
 
-              if (!isHeadRole(existing.roleName) && isHeadRole(roleName)) {
+              if (getRolePriority(roleName) < getRolePriority(existing.roleName)) {
                 memberByProfileId.set(member.profileId, {
                   profileId: member.profileId,
                   roleName,
@@ -914,16 +939,24 @@ function DepartmentsPageContent() {
                   avatar: toInitials(profile.name),
                   tone: memberToneClasses[index % memberToneClasses.length],
                   isHead: isHeadRole(member.roleName),
+                  isDirector: isDirectorRole(member.roleName),
                 } satisfies DepartmentMember;
               })
               .sort((a, b) => {
+                if (a.isDirector !== b.isDirector) {
+                  return a.isDirector ? -1 : 1;
+                }
                 if (a.isHead !== b.isHead) {
                   return a.isHead ? -1 : 1;
                 }
                 return a.name.localeCompare(b.name, "vi");
               });
 
-            const headCandidate = membersList.find((member) => member.isHead) ?? membersList[0] ?? null;
+            const headCandidate =
+              membersList.find((member) => member.isDirector) ??
+              membersList.find((member) => member.isHead) ??
+              membersList[0] ??
+              null;
             const parentId = row.parent_department_id ? String(row.parent_department_id) : null;
 
             return {
@@ -1655,7 +1688,7 @@ function DepartmentsPageContent() {
                                   </button>
                                 </TooltipTrigger>
                                 <TooltipContent className="max-w-[220px] text-xs font-medium">
-                                  Leader được nối với thành viên và leader của các phòng ban trực thuộc.
+                                  Director luôn được ưu tiên ở gốc cây; leader được nối với thành viên và các phòng ban trực thuộc.
                                 </TooltipContent>
                               </Tooltip>
                             </div>
