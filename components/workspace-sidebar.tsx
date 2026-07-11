@@ -86,6 +86,8 @@ const workSidebarItems: SidebarItem[] = [
   { key: "reports", label: "Báo cáo", href: "/reports" },
 ];
 
+const departmentsItem: SidebarItem = { key: "departments", label: "Phòng ban", href: "/departments" };
+
 const timeSidebarItems: SidebarItem[] = [
   { key: "timesheet", label: "Chấm công", href: "/timesheet" },
   { key: "attendanceExport", label: "Xuất chấm công", href: "/attendance-export" },
@@ -631,6 +633,25 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
                   onParentClick={() => setIsUserMenuOpen(false)}
                 />
               ) : null}
+
+              <SidebarTooltip label={departmentsItem.label} enabled={isCollapsed}>
+                <Link
+                  href={departmentsItem.href}
+                  title={departmentsItem.label}
+                  className={`flex w-full items-center rounded-xl text-left transition ${
+                    isCollapsed
+                      ? "justify-center px-0 py-3"
+                      : `gap-3 px-4 py-3 ${PRIMARY_ITEM_TEXT_CLASS}`
+                  } ${
+                    departmentsItem.key === active
+                      ? "bg-[#1e62d8] text-white"
+                      : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
+                  }`}
+                >
+                  <Settings2 className={PRIMARY_ITEM_ICON_CLASS} />
+                  {!isCollapsed ? departmentsItem.label : null}
+                </Link>
+              </SidebarTooltip>
             </nav>
           </div>
 

@@ -2,11 +2,14 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Building2, Info, Search } from "lucide-react";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { supabase } from "@/lib/supabase";
 
-type DepartmentMode = "tree" | "list";
+type DepartmentMode = "departments" | "people";
 
 type DepartmentRow = {
   id: string;
@@ -32,49 +35,90 @@ type RoleRow = {
 };
 
 type DepartmentMember = {
-  id: string;
+  nodeId: string;
+  profileId: string;
+  departmentId: string;
+  departmentName: string;
   name: string;
   email: string | null;
   role: string;
   avatar: string;
   tone: string;
+  isHead: boolean;
 };
 
 type DepartmentItem = {
   id: string;
-  tag: string;
   name: string;
   parentId: string | null;
-  parent: string;
+  parentName: string;
+  pathLabel: string;
   head: string;
   headRole: string;
   members: number;
   subDepartments: number;
-  createdAt: string;
   description: string;
   membersList: DepartmentMember[];
 };
 
-type TreeNode = {
-  id: string;
+type CanvasPosition = {
   x: number;
   y: number;
 };
 
-type TreeEdge = {
+type LayoutDepartmentNode = CanvasPosition & {
+  id: string;
+};
+
+type CanvasEdge = {
+  id: string;
+  from: string;
+  to: string;
+  type: "department";
+};
+
+type PersonnelNode = CanvasPosition & {
+  id: string;
+  departmentId: string;
+  member: DepartmentMember;
+};
+
+type PersonnelEdge = {
+  id: string;
   from: string;
   to: string;
 };
 
-const TREE_CARD_WIDTH = 320;
-const TREE_CARD_HEIGHT = 212;
-const TREE_INITIAL_SCALE = 0.86;
-const TREE_MIN_SCALE = 0.2;
-const TREE_MAX_SCALE = 1.4;
-const TREE_WORLD_WIDTH = 2200;
-const TREE_WORLD_HEIGHT = 1500;
-const TREE_LEVEL_GAP_Y = 280;
-const TREE_NODE_GAP_X = 80;
+type CanvasBounds = {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+};
+
+type CanvasDragTarget = {
+  type: "department";
+  id: string;
+  originX: number;
+  originY: number;
+  pointerX: number;
+  pointerY: number;
+};
+
+const DEPARTMENT_CARD_WIDTH = 280;
+const DEPARTMENT_CARD_HEIGHT = 132;
+const DEPARTMENT_GAP_X = 90;
+const DEPARTMENT_LEVEL_GAP_Y = 130;
+const PERSON_CARD_WIDTH = 244;
+const PERSON_CARD_HEIGHT = 112;
+const PERSON_GAP_X = 68;
+const PERSON_LEVEL_GAP_Y = 108;
+const CANVAS_WORLD_WIDTH = 4200;
+const CANVAS_PADDING = 72;
+const CANVAS_MIN_SCALE = 0.28;
+const CANVAS_MAX_SCALE = 1.28;
+const CANVAS_INITIAL_SCALE = 0.82;
+const FOCUS_PADDING = 88;
 
 const memberToneClasses = [
   "bg-cyan-100 text-cyan-700",
@@ -83,8 +127,8 @@ const memberToneClasses = [
   "bg-rose-100 text-rose-700",
   "bg-emerald-100 text-emerald-700",
   "bg-orange-100 text-orange-700",
-  "bg-purple-100 text-purple-700",
-  "bg-blue-100 text-blue-700",
+  "bg-sky-100 text-sky-700",
+  "bg-fuchsia-100 text-fuchsia-700",
 ];
 
 const toInitials = (value: string) => {
@@ -96,6 +140,7 @@ const toInitials = (value: string) => {
   if (!parts.length) {
     return "--";
   }
+
   if (parts.length === 1) {
     return parts[0].slice(0, 2).toUpperCase();
   }
@@ -103,7 +148,8 @@ const toInitials = (value: string) => {
   return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
 };
 
-const normalizeText = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const normalizeText = (value: string) =>
+  value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
 const isHeadRole = (roleName: string) => {
   const normalized = normalizeText(roleName);
@@ -115,9 +161,57 @@ const isHeadRole = (roleName: string) => {
   );
 };
 
-const buildTreeLayout = (items: DepartmentItem[]): { nodes: TreeNode[]; edges: TreeEdge[] } => {
+const sortByVietnameseName = <T extends { name: string }>(items: T[]) =>
+  [...items].sort((a, b) => a.name.localeCompare(b.name, "vi"));
+
+const getDepartmentPathLabel = (
+  departmentId: string,
+  departmentsById: Record<string, DepartmentRow>,
+) => {
+  const parts: string[] = [];
+  let currentDepartmentId: string | null = departmentId;
+  const visitedDepartmentIds = new Set<string>();
+
+  while (currentDepartmentId) {
+    if (visitedDepartmentIds.has(currentDepartmentId)) {
+      break;
+    }
+
+    visitedDepartmentIds.add(currentDepartmentId);
+    const department: DepartmentRow | undefined = departmentsById[currentDepartmentId];
+    if (!department) {
+      break;
+    }
+
+    parts.unshift(department.name);
+    currentDepartmentId = department.parent_department_id
+      ? String(department.parent_department_id)
+      : null;
+  }
+
+  return parts.join(" / ");
+};
+
+const getConnectorPath = (
+  from: { x: number; y: number; width: number; height: number },
+  to: { x: number; y: number; width: number; height: number },
+) => {
+  const startX = from.x + from.width / 2;
+  const startY = from.y + from.height;
+  const endX = to.x + to.width / 2;
+  const endY = to.y;
+  const distance = Math.max(72, Math.min(160, (endY - startY) * 0.48));
+
+  return `M ${startX} ${startY} C ${startX} ${startY + distance} ${endX} ${endY - distance} ${endX} ${endY}`;
+};
+
+const buildCanvasLayout = (items: DepartmentItem[]) => {
   if (!items.length) {
-    return { nodes: [], edges: [] };
+    return {
+      departmentNodes: [] as LayoutDepartmentNode[],
+      edges: [] as CanvasEdge[],
+      worldHeight: 1800,
+    };
   }
 
   const byId = items.reduce<Record<string, DepartmentItem>>((acc, item) => {
@@ -129,32 +223,33 @@ const buildTreeLayout = (items: DepartmentItem[]): { nodes: TreeNode[]; edges: T
     if (!item.parentId || !byId[item.parentId]) {
       return acc;
     }
+
     if (!acc[item.parentId]) {
       acc[item.parentId] = [];
     }
+
     acc[item.parentId].push(item.id);
     return acc;
   }, {});
 
-  const sortByName = (list: DepartmentItem[]) => [...list].sort((a, b) => a.name.localeCompare(b.name, "vi"));
-
-  const roots = sortByName(items.filter((item) => !item.parentId || !byId[item.parentId]));
+  const roots = sortByVietnameseName(items.filter((item) => !item.parentId || !byId[item.parentId]));
   const queue = roots.map((item) => item.id);
-
   const levelById: Record<string, number> = {};
-  roots.forEach((root) => {
-    levelById[root.id] = 0;
+
+  roots.forEach((item) => {
+    levelById[item.id] = 0;
   });
 
-  while (queue.length) {
+  while (queue.length > 0) {
     const currentId = queue.shift() as string;
     const childIds = (childrenByParent[currentId] ?? []).filter((id) => Boolean(byId[id]));
-    const children = sortByName(childIds.map((id) => byId[id]));
+    const children = sortByVietnameseName(childIds.map((id) => byId[id]));
 
     children.forEach((child) => {
       if (levelById[child.id] !== undefined) {
         return;
       }
+
       levelById[child.id] = (levelById[currentId] ?? 0) + 1;
       queue.push(child.id);
     });
@@ -169,131 +264,378 @@ const buildTreeLayout = (items: DepartmentItem[]): { nodes: TreeNode[]; edges: T
     return acc;
   }, {});
 
-  const nodes: TreeNode[] = [];
-  Object.entries(levelBuckets).forEach(([levelRaw, rawItems]) => {
-    const level = Number(levelRaw);
-    const levelItems = sortByName(rawItems);
-    const rowWidth = levelItems.length * TREE_CARD_WIDTH + (levelItems.length - 1) * TREE_NODE_GAP_X;
-    const startX = Math.max(20, (TREE_WORLD_WIDTH - rowWidth) / 2);
+  const sortedLevels = Object.keys(levelBuckets)
+    .map((value) => Number(value))
+    .sort((a, b) => a - b);
+
+  const levelTopByLevel = new Map<number, number>();
+  let nextTop = 120;
+  sortedLevels.forEach((level) => {
+    levelTopByLevel.set(level, nextTop);
+    nextTop += DEPARTMENT_CARD_HEIGHT + DEPARTMENT_LEVEL_GAP_Y;
+  });
+
+  const departmentNodes: LayoutDepartmentNode[] = [];
+
+  sortedLevels.forEach((level) => {
+    const levelItems = sortByVietnameseName(levelBuckets[level]);
+    const rowWidth =
+      levelItems.length * DEPARTMENT_CARD_WIDTH +
+      Math.max(0, levelItems.length - 1) * DEPARTMENT_GAP_X;
+    const startX = Math.max(CANVAS_PADDING, (CANVAS_WORLD_WIDTH - rowWidth) / 2);
+    const topY = levelTopByLevel.get(level) ?? 120;
 
     levelItems.forEach((item, index) => {
-      nodes.push({
-        id: item.id,
-        x: startX + index * (TREE_CARD_WIDTH + TREE_NODE_GAP_X),
-        y: 120 + level * TREE_LEVEL_GAP_Y,
-      });
+      const x = startX + index * (DEPARTMENT_CARD_WIDTH + DEPARTMENT_GAP_X);
+      const y = topY;
+      departmentNodes.push({ id: item.id, x, y });
     });
   });
 
-  const edges: TreeEdge[] = items
+  const edges: CanvasEdge[] = items
     .filter((item) => item.parentId && byId[item.parentId])
-    .map((item) => ({ from: item.parentId as string, to: item.id }));
+    .map((item) => ({
+      id: `dept:${item.parentId}:${item.id}`,
+      from: item.parentId as string,
+      to: item.id,
+      type: "department" as const,
+    }));
 
-  return { nodes, edges };
+  return {
+    departmentNodes,
+    edges,
+    worldHeight: Math.max(1800, nextTop + CANVAS_PADDING),
+  };
 };
 
-function TreeCard({
+const buildPersonnelLayout = (items: DepartmentItem[]) => {
+  const membersByNodeId = items.flatMap((department) =>
+    department.membersList.map((member) => ({ ...member, departmentId: department.id })),
+  );
+  const departmentById = items.reduce<Record<string, DepartmentItem>>((acc, department) => {
+    acc[department.id] = department;
+    return acc;
+  }, {});
+  const leaderByDepartmentId = items.reduce<Record<string, DepartmentMember | null>>((acc, department) => {
+    acc[department.id] = department.membersList.find((member) => member.isHead) ?? null;
+    return acc;
+  }, {});
+  const nodesById = membersByNodeId.reduce<Record<string, { departmentId: string; member: DepartmentMember }>>(
+    (acc, item) => {
+      acc[item.nodeId] = { departmentId: item.departmentId, member: item };
+      return acc;
+    },
+    {},
+  );
+  const edges: PersonnelEdge[] = [];
+
+  const findParentLeader = (departmentId: string | null): DepartmentMember | null => {
+    const visited = new Set<string>();
+    let currentId = departmentId;
+
+    while (currentId && !visited.has(currentId)) {
+      visited.add(currentId);
+      const leader = leaderByDepartmentId[currentId];
+      if (leader) {
+        return leader;
+      }
+      currentId = departmentById[currentId]?.parentId ?? null;
+    }
+
+    return null;
+  };
+
+  items.forEach((department) => {
+    const leader = leaderByDepartmentId[department.id];
+    if (!leader) {
+      return;
+    }
+
+    const parentLeader = findParentLeader(department.parentId);
+    if (parentLeader && parentLeader.nodeId !== leader.nodeId) {
+      edges.push({
+        id: `person:${parentLeader.nodeId}:${leader.nodeId}`,
+        from: parentLeader.nodeId,
+        to: leader.nodeId,
+      });
+    }
+
+    department.membersList.forEach((member) => {
+      if (member.nodeId !== leader.nodeId) {
+        edges.push({
+          id: `person:${leader.nodeId}:${member.nodeId}`,
+          from: leader.nodeId,
+          to: member.nodeId,
+        });
+      }
+    });
+  });
+
+  const incoming = new Set(edges.map((edge) => edge.to));
+  const childrenByParent = edges.reduce<Record<string, string[]>>((acc, edge) => {
+    (acc[edge.from] ??= []).push(edge.to);
+    return acc;
+  }, {});
+  const roots = Object.keys(nodesById).filter((nodeId) => !incoming.has(nodeId));
+  const levelById: Record<string, number> = {};
+  const queue = roots.map((id) => ({ id, level: 0 }));
+
+  while (queue.length > 0) {
+    const current = queue.shift() as { id: string; level: number };
+    if (levelById[current.id] !== undefined) {
+      continue;
+    }
+    levelById[current.id] = current.level;
+    (childrenByParent[current.id] ?? []).forEach((childId) => {
+      queue.push({ id: childId, level: current.level + 1 });
+    });
+  }
+
+  Object.keys(nodesById).forEach((nodeId) => {
+    levelById[nodeId] ??= 0;
+  });
+
+  const buckets = Object.entries(levelById).reduce<Record<number, string[]>>((acc, [nodeId, level]) => {
+    (acc[level] ??= []).push(nodeId);
+    return acc;
+  }, {});
+  const levels = Object.keys(buckets).map(Number).sort((a, b) => a - b);
+  let nextTop = 120;
+  const personnelNodes: PersonnelNode[] = [];
+
+  levels.forEach((level) => {
+    const nodeIds = buckets[level].sort((a, b) => {
+      const left = nodesById[a].member;
+      const right = nodesById[b].member;
+      return left.name.localeCompare(right.name, "vi");
+    });
+    const rowWidth = nodeIds.length * PERSON_CARD_WIDTH + Math.max(0, nodeIds.length - 1) * PERSON_GAP_X;
+    const startX = Math.max(CANVAS_PADDING, (CANVAS_WORLD_WIDTH - rowWidth) / 2);
+
+    nodeIds.forEach((nodeId, index) => {
+      const item = nodesById[nodeId];
+      personnelNodes.push({
+        id: nodeId,
+        departmentId: item.departmentId,
+        member: item.member,
+        x: startX + index * (PERSON_CARD_WIDTH + PERSON_GAP_X),
+        y: nextTop,
+      });
+    });
+    nextTop += PERSON_CARD_HEIGHT + PERSON_LEVEL_GAP_Y;
+  });
+
+  return {
+    personnelNodes,
+    edges,
+    worldHeight: Math.max(1800, nextTop + CANVAS_PADDING),
+  };
+};
+
+function DepartmentCanvasCard({
   item,
   active,
+  faded,
   onSelect,
   onPointerDown,
 }: {
   item: DepartmentItem;
   active: boolean;
-  onSelect: (departmentId: string) => void;
-  onPointerDown?: (event: React.PointerEvent<HTMLButtonElement>) => void;
+  faded: boolean;
+  onSelect: () => void;
+  onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => void;
 }) {
   return (
     <button
-      data-tree-card="true"
+      data-node-card="true"
       type="button"
       onPointerDown={onPointerDown}
-      onClick={() => onSelect(item.id)}
-      className={`flex h-[212px] w-[320px] flex-col rounded-2xl border bg-white p-4 text-left shadow-sm transition ${
-        active ? "border-blue-500 ring-1 ring-blue-200" : "border-slate-200 hover:border-blue-300"
-      }`}
+      onClick={onSelect}
+      className={`flex h-[132px] w-[280px] flex-col rounded-[24px] border bg-white/98 px-4 py-3 text-left shadow-[0_18px_40px_-34px_rgba(15,23,42,0.35)] transition ${
+        active
+          ? "border-blue-500 ring-2 ring-blue-100"
+          : "border-slate-200 hover:border-blue-300 hover:bg-white"
+      } ${faded ? "opacity-55" : ""}`}
     >
-      <div className="flex items-center justify-between">
-        <span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 uppercase">
-          {item.tag}
-        </span>
-        <span className="text-xs text-slate-500">{item.members} thành viên</span>
-      </div>
-      <p className="mt-3 text-xl font-semibold tracking-[-0.01em] text-slate-900">{item.name}</p>
-      <p className="mt-2 line-clamp-2 text-sm text-slate-500">{item.description}</p>
-      <div className="mt-auto flex items-center gap-2">
-        <span className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">
-          {toInitials(item.head)}
-        </span>
-        <div>
-          <p className="text-sm font-semibold text-slate-700">{item.head}</p>
-          <p className="text-xs text-slate-500">{item.headRole}</p>
-        </div>
-      </div>
+      <p className="line-clamp-2 min-w-0 text-lg font-semibold leading-snug tracking-[-0.03em] text-slate-900">
+        {item.name}
+      </p>
+      <p className="mt-4 truncate text-sm text-slate-600">
+        Leader: <span className="font-medium text-slate-800">{item.head}</span>
+      </p>
+      <p className="mt-1 text-sm text-slate-600">
+        Nhân viên: <span className="font-medium text-slate-800">{item.members}</span>
+      </p>
     </button>
   );
 }
 
-function DepartmentPanel({ item }: { item: DepartmentItem | null }) {
-  if (!item) {
+function PersonnelCanvasCard({
+  member,
+  active,
+  faded,
+  onSelect,
+}: {
+  member: DepartmentMember;
+  active: boolean;
+  faded: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      data-node-card="true"
+      type="button"
+      onClick={onSelect}
+      className={`flex h-[112px] w-[244px] items-center gap-3 rounded-[22px] border bg-white/98 px-4 text-left shadow-[0_18px_40px_-34px_rgba(15,23,42,0.35)] transition ${
+        active
+          ? "border-blue-500 ring-2 ring-blue-100"
+          : "border-slate-200 hover:border-blue-300 hover:bg-white"
+      } ${faded ? "opacity-55" : ""}`}
+    >
+      <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl text-sm font-semibold ${member.tone}`}>
+        {member.avatar}
+      </span>
+      <span className="min-w-0">
+        <span className="flex items-center gap-2">
+          <span className="truncate text-base font-semibold text-slate-900">{member.name}</span>
+          {member.isHead ? (
+            <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-amber-700">
+              Leader
+            </span>
+          ) : null}
+        </span>
+        <span className="mt-1 block truncate text-sm text-slate-600">{member.role}</span>
+        <span className="mt-1 block truncate text-xs text-slate-400">{member.departmentName}</span>
+      </span>
+    </button>
+  );
+}
+
+function DetailPanelContent({
+  department,
+  member = null,
+}: {
+  department: DepartmentItem | null;
+  member?: DepartmentMember | null;
+}) {
+  if (member) {
     return (
-      <aside className="self-start rounded-2xl border border-slate-200 bg-white p-5 xl:sticky xl:top-[92px]">
-        <p className="text-sm text-slate-500">Chưa có dữ liệu phòng ban để hiển thị.</p>
-      </aside>
+      <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_18px_44px_-36px_rgba(15,23,42,0.35)]">
+        <div className="border-b border-slate-100 px-4 py-4">
+          <div className="flex items-center gap-3">
+            <span className={`grid h-12 w-12 place-items-center rounded-[18px] text-sm font-semibold ${member.tone}`}>
+              {member.avatar}
+            </span>
+            <div className="min-w-0">
+              <h3 className="truncate text-xl font-semibold tracking-[-0.02em] text-slate-900">{member.name}</h3>
+              <p className="truncate text-xs text-slate-500">{member.role}</p>
+            </div>
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+          <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">Phòng ban</p>
+              <p className="mt-1 font-semibold text-slate-900">{member.departmentName}</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">Vai trò</p>
+              <p className="mt-1 font-semibold text-slate-900">{member.role}</p>
+            </div>
+            {member.email ? (
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">Email</p>
+                <p className="mt-1 break-all font-medium text-slate-700">{member.email}</p>
+              </div>
+            ) : null}
+          </div>
+          {member.isHead ? (
+            <p className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700">
+              Nhân sự này đang là leader của phòng ban.
+            </p>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  if (!department) {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center rounded-[24px] border border-slate-200 bg-white p-5 text-sm text-slate-500 shadow-[0_18px_44px_-36px_rgba(15,23,42,0.35)]">
+        Chọn một phòng ban để xem chi tiết.
+      </div>
     );
   }
 
   return (
-    <aside className="self-start overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 xl:sticky xl:top-[92px] xl:max-h-[calc(100vh-112px)]">
-      <div className="grid h-12 w-12 place-items-center rounded-2xl bg-blue-100 text-blue-700">▣</div>
-      <h3 className="mt-3 text-2xl font-semibold tracking-[-0.01em] text-slate-900">{item.name}</h3>
-      <p className="mt-1 text-sm text-slate-500">
-        {item.members} thành viên · {item.subDepartments} phòng ban con
-      </p>
-
-      <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-3">
-        <p className="text-xs font-bold tracking-[0.08em] text-slate-400 uppercase">Trưởng phòng</p>
-        <div className="mt-2 flex items-center gap-2">
-          <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700">
-            {toInitials(item.head)}
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_18px_44px_-36px_rgba(15,23,42,0.35)]">
+      <div className="border-b border-slate-100 px-4 py-4">
+        <div className="flex items-center gap-3">
+          <span className="grid h-12 w-12 place-items-center rounded-[18px] bg-blue-50 text-blue-700">
+            <Building2 className="h-5 w-5" />
           </span>
-          <div>
-            <p className="text-sm font-semibold text-slate-700">{item.head}</p>
-            <p className="text-xs text-slate-500">{item.headRole}</p>
+          <div className="min-w-0">
+            <h3 className="truncate text-xl font-semibold tracking-[-0.02em] text-slate-900">
+              {department.name}
+            </h3>
+            <p className="truncate text-xs text-slate-500">{department.headRole}</p>
           </div>
         </div>
       </div>
-
-      <div className="mt-5">
-        <div className="mb-3 flex items-center justify-between">
-          <p className="text-xs font-bold tracking-[0.08em] text-slate-400 uppercase">Thành viên</p>
-          <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
-            {item.members}
-          </span>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">Số người</p>
+              <p className="mt-1 text-xl font-semibold tracking-[-0.02em] text-slate-900">{department.members}</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">Leader</p>
+              <p className="mt-1 truncate text-sm font-semibold text-slate-900">{department.head}</p>
+            </div>
+          </div>
         </div>
 
-        {item.membersList.length > 0 ? (
-          <div className="space-y-3">
-            {item.membersList.slice(0, 12).map((member) => (
-              <div key={member.id} className="flex items-center gap-2">
-                <span className={`grid h-9 w-9 place-items-center rounded-full text-xs font-semibold ${member.tone}`}>
-                  {member.avatar}
-                </span>
-                <div>
-                  <p className="text-sm font-semibold text-slate-700">{member.name}</p>
-                  <p className="text-xs text-slate-500">{member.role}</p>
-                  {member.email ? (
-                    <p className="text-[11px] text-slate-400">{member.email}</p>
-                  ) : null}
+        <div className="mt-4">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">Thành viên</p>
+            <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-600">
+              {department.membersList.length}
+            </span>
+          </div>
+
+          {department.membersList.length > 0 ? (
+            <div className="space-y-2">
+              {department.membersList.map((person) => (
+                <div key={person.nodeId} className="flex items-center gap-3 rounded-2xl border border-slate-200 px-3 py-2.5">
+                  <span
+                    className={`grid h-9 w-9 place-items-center rounded-2xl text-xs font-semibold ${person.tone}`}
+                  >
+                    {person.avatar}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-sm font-semibold text-slate-800">{person.name}</p>
+                      {person.isHead ? (
+                        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-amber-700">
+                          Leader
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="truncate text-xs text-slate-500">{person.role}</p>
+                    {person.email ? (
+                      <p className="truncate text-[11px] text-slate-400">{person.email}</p>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-slate-500">Chưa có thành viên trong phòng ban này.</p>
-        )}
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">Chưa có nhân sự được gắn.</p>
+          )}
+        </div>
       </div>
-    </aside>
+    </div>
   );
 }
 
@@ -306,28 +648,70 @@ function DepartmentsPageContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
+  const [selectedDepartmentIdState, setSelectedDepartmentIdState] = useState<string | null>(null);
+  const [selectedMemberNodeIdState, setSelectedMemberNodeIdState] = useState<string | null>(null);
+  const [departmentPositions, setDepartmentPositions] = useState<Record<string, CanvasPosition>>({});
+  const [canvasScale, setCanvasScale] = useState(CANVAS_INITIAL_SCALE);
+  const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 });
+  const [draggingTarget, setDraggingTarget] = useState<CanvasDragTarget | null>(null);
+  const [isPanning, setIsPanning] = useState(false);
+  const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
 
-  const mode: DepartmentMode = searchParams.get("mode") === "list" ? "list" : "tree";
-  const selectedId = searchParams.get("dept") ?? "";
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const canvasScaleRef = useRef(CANVAS_INITIAL_SCALE);
+  const canvasPanRef = useRef({ x: 0, y: 0 });
+  const panStartRef = useRef<{ pointerX: number; pointerY: number; originX: number; originY: number } | null>(
+    null,
+  );
+  const dragMovedRef = useRef(false);
+  const suppressClickUntilRef = useRef(0);
+  const autoFittedLayoutKeyRef = useRef("");
 
-  const updateQuery = (next: { mode?: DepartmentMode; dept?: string | null }) => {
-    const params = new URLSearchParams(searchParams.toString());
+  const mode: DepartmentMode = searchParams.get("mode") === "people" ? "people" : "departments";
+  const selectedDepartmentIdParam = searchParams.get("dept");
 
-    if (next.mode) {
-      params.set("mode", next.mode);
-    }
+  const updateQuery = useCallback(
+    (next: { mode?: DepartmentMode; dept?: string | null }) => {
+      const params = new URLSearchParams(searchParams.toString());
 
-    if (next.dept !== undefined) {
-      if (next.dept) {
-        params.set("dept", next.dept);
-      } else {
-        params.delete("dept");
+      if (next.mode) {
+        params.set("mode", next.mode);
       }
-    }
 
-    const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
-  };
+      if (next.dept !== undefined) {
+        if (next.dept) {
+          params.set("dept", next.dept);
+        } else {
+          params.delete("dept");
+        }
+      }
+
+      const query = params.toString();
+      router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
+
+  useEffect(() => {
+    canvasScaleRef.current = canvasScale;
+  }, [canvasScale]);
+
+  useEffect(() => {
+    canvasPanRef.current = canvasPan;
+  }, [canvasPan]);
+
+  useEffect(() => {
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousDocumentOverflow = document.documentElement.style.overflow;
+
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousDocumentOverflow;
+    };
+  }, []);
 
   useEffect(() => {
     let isActive = true;
@@ -337,13 +721,17 @@ function DepartmentsPageContent() {
       setLoadError(null);
 
       try {
-        const [{ data: departmentsData, error: departmentsError }, { data: urdData, error: urdError }, { data: profilesData, error: profilesError }, { data: rolesData, error: rolesError }] =
-          await Promise.all([
-            supabase.from("departments").select("id,name,parent_department_id"),
-            supabase.from("user_role_in_department").select("department_id,profile_id,role_id"),
-            supabase.from("profiles").select("id,name,email"),
-            supabase.from("roles").select("id,name"),
-          ]);
+        const [
+          { data: departmentsData, error: departmentsError },
+          { data: urdData, error: urdError },
+          { data: profilesData, error: profilesError },
+          { data: rolesData, error: rolesError },
+        ] = await Promise.all([
+          supabase.from("departments").select("id,name,parent_department_id"),
+          supabase.from("user_role_in_department").select("department_id,profile_id,role_id"),
+          supabase.from("profiles").select("id,name,email"),
+          supabase.from("roles").select("id,name"),
+        ]);
 
         if (!isActive) {
           return;
@@ -355,23 +743,17 @@ function DepartmentsPageContent() {
           return;
         }
 
-        const rows = (departmentsData ?? []) as DepartmentRow[];
+        const departmentRows = ((departmentsData ?? []) as DepartmentRow[]).map((row) => ({
+          id: String(row.id),
+          name: String(row.name),
+          parent_department_id: row.parent_department_id ? String(row.parent_department_id) : null,
+        }));
         const urdRows = (urdData ?? []) as UserRoleDepartmentRow[];
         const profileRows = (profilesData ?? []) as ProfileRow[];
         const roleRows = (rolesData ?? []) as RoleRow[];
 
-        const nameByDepartmentId = rows.reduce<Record<string, string>>((acc, row) => {
-          acc[String(row.id)] = String(row.name);
-          return acc;
-        }, {});
-
-        const profileInfoById = profileRows.reduce<
-          Record<string, { name: string; email: string | null }>
-        >((acc, row) => {
-          acc[String(row.id)] = {
-            name: String(row.name ?? "Chưa có tên"),
-            email: row.email ? String(row.email) : null,
-          };
+        const departmentRowsById = departmentRows.reduce<Record<string, DepartmentRow>>((acc, row) => {
+          acc[row.id] = row;
           return acc;
         }, {});
 
@@ -380,12 +762,23 @@ function DepartmentsPageContent() {
           return acc;
         }, {});
 
-        const subDepartmentsById = rows.reduce<Record<string, number>>((acc, row) => {
+        const profileInfoById = profileRows.reduce<Record<string, { name: string; email: string | null }>>(
+          (acc, row) => {
+            acc[String(row.id)] = {
+              name: String(row.name ?? "Chưa có tên"),
+              email: row.email ? String(row.email) : null,
+            };
+            return acc;
+          },
+          {},
+        );
+
+        const subDepartmentsById = departmentRows.reduce<Record<string, number>>((acc, row) => {
           if (!row.parent_department_id) {
             return acc;
           }
-          const parentId = String(row.parent_department_id);
-          acc[parentId] = (acc[parentId] ?? 0) + 1;
+
+          acc[row.parent_department_id] = (acc[row.parent_department_id] ?? 0) + 1;
           return acc;
         }, {});
 
@@ -409,54 +802,77 @@ function DepartmentsPageContent() {
           return acc;
         }, {});
 
-        const mappedDepartments = rows.map((row) => {
-          const rawMembers = membersByDepartmentId[String(row.id)] ?? [];
-          const uniqueMembersByProfile = new Map<string, { profileId: string; roleName: string }>();
+        const mappedDepartments = sortByVietnameseName(
+          departmentRows.map((row) => {
+            const rawMembers = membersByDepartmentId[row.id] ?? [];
+            const memberByProfileId = new Map<string, { profileId: string; roleName: string }>();
 
-          rawMembers.forEach((member) => {
-            const roleName = member.roleId ? roleNameById[member.roleId] ?? "Thành viên" : "Thành viên";
-            if (!uniqueMembersByProfile.has(member.profileId)) {
-              uniqueMembersByProfile.set(member.profileId, {
-                profileId: member.profileId,
-                roleName,
+            rawMembers.forEach((member) => {
+              const roleName = member.roleId ? (roleNameById[member.roleId] ?? "Thành viên") : "Thành viên";
+              const existing = memberByProfileId.get(member.profileId);
+
+              if (!existing) {
+                memberByProfileId.set(member.profileId, {
+                  profileId: member.profileId,
+                  roleName,
+                });
+                return;
+              }
+
+              if (!isHeadRole(existing.roleName) && isHeadRole(roleName)) {
+                memberByProfileId.set(member.profileId, {
+                  profileId: member.profileId,
+                  roleName,
+                });
+              }
+            });
+
+            const membersList = Array.from(memberByProfileId.values())
+              .map((member, index) => {
+                const profile = profileInfoById[member.profileId] ?? {
+                  name: "Chưa có tên",
+                  email: null,
+                };
+                return {
+                  nodeId: `member:${row.id}:${member.profileId}`,
+                  profileId: member.profileId,
+                  departmentId: row.id,
+                  departmentName: row.name,
+                  name: profile.name,
+                  email: profile.email,
+                  role: member.roleName,
+                  avatar: toInitials(profile.name),
+                  tone: memberToneClasses[index % memberToneClasses.length],
+                  isHead: isHeadRole(member.roleName),
+                } satisfies DepartmentMember;
+              })
+              .sort((a, b) => {
+                if (a.isHead !== b.isHead) {
+                  return a.isHead ? -1 : 1;
+                }
+                return a.name.localeCompare(b.name, "vi");
               });
-            }
-          });
 
-          const membersList: DepartmentMember[] = Array.from(uniqueMembersByProfile.values())
-            .map((member, index) => {
-              const info = profileInfoById[member.profileId] ?? { name: "Chưa có tên", email: null };
-              return {
-                id: member.profileId,
-                name: info.name,
-                email: info.email,
-                role: member.roleName,
-                avatar: toInitials(info.name),
-                tone: memberToneClasses[index % memberToneClasses.length],
-              };
-            })
-            .sort((a, b) => a.name.localeCompare(b.name, "vi"));
+            const headCandidate = membersList.find((member) => member.isHead) ?? membersList[0] ?? null;
+            const parentId = row.parent_department_id ? String(row.parent_department_id) : null;
 
-          const headCandidate = membersList.find((member) => isHeadRole(member.role)) ?? membersList[0] ?? null;
-
-          const parentId = row.parent_department_id ? String(row.parent_department_id) : null;
-          const parentName = parentId ? nameByDepartmentId[parentId] ?? "—" : "—";
-
-          return {
-            id: String(row.id),
-            tag: parentId ? "Phòng ban con" : "Phòng ban gốc",
-            name: String(row.name),
-            parentId,
-            parent: parentName,
-            head: headCandidate?.name ?? "Chưa có",
-            headRole: headCandidate?.role ?? "Chưa gán vai trò",
-            members: membersList.length,
-            subDepartments: subDepartmentsById[String(row.id)] ?? 0,
-            createdAt: "Chưa có",
-            description: `Phòng ban ${row.name}.`,
-            membersList,
-          } as DepartmentItem;
-        });
+            return {
+              id: row.id,
+              name: row.name,
+              parentId,
+              parentName: parentId ? (departmentRowsById[parentId]?.name ?? "—") : "—",
+              pathLabel: getDepartmentPathLabel(row.id, departmentRowsById),
+              head: headCandidate?.name ?? "Chưa có",
+              headRole: headCandidate?.role ?? "Chưa gán vai trò",
+              members: membersList.length,
+              subDepartments: subDepartmentsById[row.id] ?? 0,
+              description: parentId
+                ? `Nhóm chức năng trực thuộc ${departmentRowsById[parentId]?.name ?? "đơn vị cha"}.`
+                : "Đơn vị gốc trong cơ cấu tổ chức hiện tại.",
+              membersList,
+            } satisfies DepartmentItem;
+          }),
+        );
 
         setDepartments(mappedDepartments);
 
@@ -475,7 +891,8 @@ function DepartmentsPageContent() {
         if (!isActive) {
           return;
         }
-        setLoadError("Có lỗi xảy ra khi tải dữ liệu phòng ban.");
+
+        setLoadError("Có lỗi xảy ra khi tải dữ liệu cơ cấu tổ chức.");
         setDepartments([]);
       } finally {
         if (isActive) {
@@ -492,94 +909,125 @@ function DepartmentsPageContent() {
   }, []);
 
   const visibleDepartments = useMemo(() => {
-    const normalizedKeyword = normalizeText(searchKeyword.trim());
-
-    if (!normalizedKeyword) {
+    const keyword = normalizeText(searchKeyword.trim());
+    if (!keyword) {
       return departments;
     }
 
-    return departments.filter((item) => {
-      const haystack = normalizeText(`${item.name} ${item.parent} ${item.head}`);
-      return haystack.includes(normalizedKeyword);
+    return departments.filter((department) => {
+      const memberNames = department.membersList.map((member) => `${member.name} ${member.role}`).join(" ");
+      const haystack = normalizeText(
+        `${department.name} ${department.parentName} ${department.head} ${department.pathLabel} ${memberNames}`,
+      );
+      return haystack.includes(keyword);
     });
   }, [departments, searchKeyword]);
 
   const visibleDepartmentById = useMemo(
     () =>
-      visibleDepartments.reduce<Record<string, DepartmentItem>>((acc, item) => {
-        acc[item.id] = item;
+      visibleDepartments.reduce<Record<string, DepartmentItem>>((acc, department) => {
+        acc[department.id] = department;
         return acc;
       }, {}),
     [visibleDepartments],
   );
 
-  const selectedDepartment =
-    visibleDepartments.find((item) => item.id === selectedId) ?? visibleDepartments[0] ?? null;
+  const layout = useMemo(() => buildCanvasLayout(visibleDepartments), [visibleDepartments]);
+  const personnelLayout = useMemo(() => buildPersonnelLayout(visibleDepartments), [visibleDepartments]);
 
-  const layout = useMemo(() => buildTreeLayout(visibleDepartments), [visibleDepartments]);
-
-  const [treeNodes, setTreeNodes] = useState<TreeNode[]>([]);
-  const [draggingTreeId, setDraggingTreeId] = useState<string | null>(null);
-  const [treeScale, setTreeScale] = useState(TREE_INITIAL_SCALE);
-  const [treePan, setTreePan] = useState({ x: -520, y: -160 });
-  const [isTreePanning, setIsTreePanning] = useState(false);
-  const treeCanvasRef = useRef<HTMLDivElement | null>(null);
-  const treeDragOffsetRef = useRef({ x: 0, y: 0 });
-  const autoCenteredTreeKeyRef = useRef<string>("");
-  const treePanStartRef = useRef<{
-    pointerX: number;
-    pointerY: number;
-    startX: number;
-    startY: number;
-  } | null>(null);
+  const departmentLayoutKey = useMemo(
+    () => layout.departmentNodes.map((node) => node.id).sort((a, b) => a.localeCompare(b)).join("|"),
+    [layout.departmentNodes],
+  );
+  const personnelLayoutKey = useMemo(
+    () => personnelLayout.personnelNodes.map((node) => node.id).sort((a, b) => a.localeCompare(b)).join("|"),
+    [personnelLayout.personnelNodes],
+  );
 
   useEffect(() => {
-    setTreeNodes((prev) => {
-      if (!layout.nodes.length) {
-        return [];
-      }
-
-      const prevById = prev.reduce<Record<string, TreeNode>>((acc, node) => {
-        acc[node.id] = node;
-        return acc;
-      }, {});
-
-      return layout.nodes.map((node) => prevById[node.id] ?? node);
-    });
-  }, [layout.nodes]);
-
-  const treeNodeMap = useMemo(
-    () =>
-      treeNodes.reduce<Record<string, TreeNode>>((acc, node) => {
-        acc[node.id] = node;
+    setDepartmentPositions((prev) =>
+      layout.departmentNodes.reduce<Record<string, CanvasPosition>>((acc, node) => {
+        acc[node.id] = prev[node.id] ?? { x: node.x, y: node.y };
         return acc;
       }, {}),
-    [treeNodes],
-  );
+    );
+  }, [layout.departmentNodes]);
 
-  const treeNodeIdentityKey = useMemo(
+  const departmentNodeMap = useMemo(
     () =>
-      layout.nodes
-        .map((node) => node.id)
-        .sort((a, b) => a.localeCompare(b))
-        .join("|"),
-    [layout.nodes],
+      layout.departmentNodes.reduce<Record<string, LayoutDepartmentNode>>((acc, node) => {
+        const position = departmentPositions[node.id] ?? { x: node.x, y: node.y };
+        acc[node.id] = { ...node, ...position };
+        return acc;
+      }, {}),
+    [departmentPositions, layout.departmentNodes],
   );
+  useEffect(() => {
+    const nextSelectedDepartmentId =
+      selectedDepartmentIdParam && visibleDepartmentById[selectedDepartmentIdParam]
+        ? selectedDepartmentIdParam
+        : null;
+
+    setSelectedDepartmentIdState((current) => {
+      if (current && visibleDepartmentById[current]) {
+        return current;
+      }
+      return nextSelectedDepartmentId;
+    });
+  }, [selectedDepartmentIdParam, visibleDepartmentById]);
+
+  const selectedDepartmentId =
+    selectedDepartmentIdState && visibleDepartmentById[selectedDepartmentIdState]
+      ? selectedDepartmentIdState
+      : (selectedDepartmentIdParam && visibleDepartmentById[selectedDepartmentIdParam]
+          ? selectedDepartmentIdParam
+          : null);
+  const selectedDepartment = selectedDepartmentId ? (visibleDepartmentById[selectedDepartmentId] ?? null) : null;
+  const selectedPersonnelMember =
+    mode === "people" && selectedMemberNodeIdState
+      ? (personnelLayout.personnelNodes.find((node) => node.id === selectedMemberNodeIdState)?.member ?? null)
+      : null;
+
+  const canvasBounds = useMemo<CanvasBounds | null>(() => {
+    const nodes = (mode === "departments" ? layout.departmentNodes : personnelLayout.personnelNodes).map((node) => {
+      const position = mode === "departments" ? (departmentNodeMap[node.id] ?? node) : node;
+      const cardWidth = mode === "departments" ? DEPARTMENT_CARD_WIDTH : PERSON_CARD_WIDTH;
+      const cardHeight = mode === "departments" ? DEPARTMENT_CARD_HEIGHT : PERSON_CARD_HEIGHT;
+      return {
+        minX: position.x,
+        minY: position.y,
+        maxX: position.x + cardWidth,
+        maxY: position.y + cardHeight,
+      };
+    });
+
+    if (!nodes.length) {
+      return null;
+    }
+
+    return {
+      minX: Math.min(...nodes.map((node) => node.minX)),
+      minY: Math.min(...nodes.map((node) => node.minY)),
+      maxX: Math.max(...nodes.map((node) => node.maxX)),
+      maxY: Math.max(...nodes.map((node) => node.maxY)),
+    };
+  }, [departmentNodeMap, layout.departmentNodes, mode, personnelLayout.personnelNodes]);
 
   const clampScale = useCallback(
-    (nextScale: number) => Math.min(TREE_MAX_SCALE, Math.max(TREE_MIN_SCALE, nextScale)),
+    (value: number) => Math.min(CANVAS_MAX_SCALE, Math.max(CANVAS_MIN_SCALE, value)),
     [],
   );
 
   const clampPanToViewport = useCallback(
     (nextPan: { x: number; y: number }, scale: number, rect?: DOMRect) => {
-      const viewportRect = rect ?? treeCanvasRef.current?.getBoundingClientRect();
+      const viewportRect = rect ?? canvasRef.current?.getBoundingClientRect();
       if (!viewportRect) {
         return nextPan;
       }
 
-      const worldPixelWidth = TREE_WORLD_WIDTH * scale;
-      const worldPixelHeight = TREE_WORLD_HEIGHT * scale;
+      const worldPixelWidth = CANVAS_WORLD_WIDTH * scale;
+      const worldPixelHeight = (mode === "departments" ? layout.worldHeight : personnelLayout.worldHeight) * scale;
+
       if (worldPixelWidth <= viewportRect.width && worldPixelHeight <= viewportRect.height) {
         return {
           x: (viewportRect.width - worldPixelWidth) / 2,
@@ -589,440 +1037,668 @@ function DepartmentsPageContent() {
 
       const minX = Math.min(0, viewportRect.width - worldPixelWidth);
       const minY = Math.min(0, viewportRect.height - worldPixelHeight);
-      const centeredX =
-        worldPixelWidth <= viewportRect.width
-          ? (viewportRect.width - worldPixelWidth) / 2
-          : Math.min(0, Math.max(minX, nextPan.x));
-      const centeredY =
-        worldPixelHeight <= viewportRect.height
-          ? (viewportRect.height - worldPixelHeight) / 2
-          : Math.min(0, Math.max(minY, nextPan.y));
 
       return {
-        x: centeredX,
-        y: centeredY,
+        x:
+          worldPixelWidth <= viewportRect.width
+            ? (viewportRect.width - worldPixelWidth) / 2
+            : Math.min(0, Math.max(minX, nextPan.x)),
+        y:
+          worldPixelHeight <= viewportRect.height
+            ? (viewportRect.height - worldPixelHeight) / 2
+            : Math.min(0, Math.max(minY, nextPan.y)),
       };
     },
-    [],
+    [layout.worldHeight, mode, personnelLayout.worldHeight],
   );
 
-  const fitTreeToNodes = useCallback(() => {
-    if (!treeCanvasRef.current || treeNodes.length === 0) {
+  const focusCanvasBounds = useCallback(
+    (bounds: CanvasBounds) => {
+      if (!canvasRef.current) {
+        return;
+      }
+
+      const rect = canvasRef.current.getBoundingClientRect();
+      const width = Math.max(1, bounds.maxX - bounds.minX);
+      const height = Math.max(1, bounds.maxY - bounds.minY);
+      const scaleByWidth = (rect.width - FOCUS_PADDING * 2) / width;
+      const scaleByHeight = (rect.height - FOCUS_PADDING * 2) / height;
+      const targetScale = clampScale(Math.min(scaleByWidth, scaleByHeight, CANVAS_MAX_SCALE));
+      const centerX = bounds.minX + width / 2;
+      const centerY = bounds.minY + height / 2;
+      const targetPan = {
+        x: rect.width / 2 - centerX * targetScale,
+        y: rect.height / 2 - centerY * targetScale,
+      };
+
+      setCanvasScale(targetScale);
+      setCanvasPan(clampPanToViewport(targetPan, targetScale, rect));
+    },
+    [clampPanToViewport, clampScale],
+  );
+
+  const fitCanvasToNodes = useCallback(() => {
+    if (!canvasBounds) {
       return;
     }
+    focusCanvasBounds(canvasBounds);
+  }, [canvasBounds, focusCanvasBounds]);
 
-    const rect = treeCanvasRef.current.getBoundingClientRect();
-    const minNodeX = Math.min(...treeNodes.map((node) => node.x));
-    const minNodeY = Math.min(...treeNodes.map((node) => node.y));
-    const maxNodeX = Math.max(...treeNodes.map((node) => node.x + TREE_CARD_WIDTH));
-    const maxNodeY = Math.max(...treeNodes.map((node) => node.y + TREE_CARD_HEIGHT));
+  const applyCanvasZoom = useCallback(
+    (nextScaleRaw: number, anchor?: { x: number; y: number }) => {
+      if (!canvasRef.current) {
+        return;
+      }
 
-    const contentWidth = Math.max(1, maxNodeX - minNodeX);
-    const contentHeight = Math.max(1, maxNodeY - minNodeY);
-    const padding = 72;
+      const rect = canvasRef.current.getBoundingClientRect();
+      const anchorX = anchor?.x ?? rect.width / 2;
+      const anchorY = anchor?.y ?? rect.height / 2;
+      const nextScale = clampScale(nextScaleRaw);
+      const worldX = (anchorX - canvasPanRef.current.x) / canvasScaleRef.current;
+      const worldY = (anchorY - canvasPanRef.current.y) / canvasScaleRef.current;
 
-    const scaleByWidth = (rect.width - padding * 2) / contentWidth;
-    const scaleByHeight = (rect.height - padding * 2) / contentHeight;
-    const targetScale = clampScale(Math.min(scaleByWidth, scaleByHeight, TREE_MAX_SCALE));
-    const contentCenterX = minNodeX + contentWidth / 2;
-    const contentCenterY = minNodeY + contentHeight / 2;
-    const targetPan = {
-      x: rect.width / 2 - contentCenterX * targetScale,
-      y: rect.height / 2 - contentCenterY * targetScale,
-    };
+      const nextPan = {
+        x: anchorX - worldX * nextScale,
+        y: anchorY - worldY * nextScale,
+      };
 
-    setTreeScale(targetScale);
-    setTreePan(clampPanToViewport(targetPan, targetScale, rect));
-  }, [clampPanToViewport, clampScale, treeNodes]);
-
-  const applyTreeZoom = (nextScaleRaw: number, anchor?: { x: number; y: number }) => {
-    if (!treeCanvasRef.current) {
-      return;
-    }
-
-    const rect = treeCanvasRef.current.getBoundingClientRect();
-    const anchorX = anchor?.x ?? rect.width / 2;
-    const anchorY = anchor?.y ?? rect.height / 2;
-    const nextScale = clampScale(nextScaleRaw);
-
-    const worldX = (anchorX - treePan.x) / treeScale;
-    const worldY = (anchorY - treePan.y) / treeScale;
-    const nextPan = {
-      x: anchorX - worldX * nextScale,
-      y: anchorY - worldY * nextScale,
-    };
-
-    setTreeScale(nextScale);
-    setTreePan(clampPanToViewport(nextPan, nextScale, rect));
-  };
-
-  const handleTreeCardPointerDown = (
-    event: React.PointerEvent<HTMLButtonElement>,
-    departmentId: string,
-  ) => {
-    if (mode !== "tree") {
-      return;
-    }
-
-    event.stopPropagation();
-    const cardRect = event.currentTarget.getBoundingClientRect();
-    treeDragOffsetRef.current = {
-      x: event.clientX - cardRect.left,
-      y: event.clientY - cardRect.top,
-    };
-    updateQuery({ dept: departmentId });
-    setDraggingTreeId(departmentId);
-    if (treeCanvasRef.current) {
-      treeCanvasRef.current.setPointerCapture(event.pointerId);
-    }
-  };
-
-  const handleTreePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (mode !== "tree" || draggingTreeId) {
-      return;
-    }
-
-    treePanStartRef.current = {
-      pointerX: event.clientX,
-      pointerY: event.clientY,
-      startX: treePan.x,
-      startY: treePan.y,
-    };
-    setIsTreePanning(true);
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const handleTreePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!treeCanvasRef.current || mode !== "tree") {
-      return;
-    }
-
-    const rect = treeCanvasRef.current.getBoundingClientRect();
-    if (draggingTreeId) {
-      const nextX =
-        (event.clientX - rect.left - treeDragOffsetRef.current.x - treePan.x) / treeScale;
-      const nextY =
-        (event.clientY - rect.top - treeDragOffsetRef.current.y - treePan.y) / treeScale;
-
-      const clampedX = Math.max(20, Math.min(nextX, TREE_WORLD_WIDTH - TREE_CARD_WIDTH - 20));
-      const clampedY = Math.max(20, Math.min(nextY, TREE_WORLD_HEIGHT - TREE_CARD_HEIGHT - 20));
-
-      setTreeNodes((prev) =>
-        prev.map((node) =>
-          node.id === draggingTreeId ? { ...node, x: clampedX, y: clampedY } : node,
-        ),
-      );
-      return;
-    }
-
-    if (!isTreePanning || !treePanStartRef.current) {
-      return;
-    }
-
-    const deltaX = event.clientX - treePanStartRef.current.pointerX;
-    const deltaY = event.clientY - treePanStartRef.current.pointerY;
-    const tentativeX = treePanStartRef.current.startX + deltaX;
-    const tentativeY = treePanStartRef.current.startY + deltaY;
-    setTreePan(clampPanToViewport({ x: tentativeX, y: tentativeY }, treeScale, rect));
-  };
-
-  const handleTreePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (draggingTreeId) {
-      setDraggingTreeId(null);
-    }
-    if (isTreePanning) {
-      setIsTreePanning(false);
-    }
-    treePanStartRef.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  };
-
-  const handleTreeWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    if (!treeCanvasRef.current || mode !== "tree") {
-      return;
-    }
-
-    event.preventDefault();
-    const rect = treeCanvasRef.current.getBoundingClientRect();
-    const pointer = {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-    };
-    const factor = event.deltaY < 0 ? 1.08 : 0.92;
-    applyTreeZoom(treeScale * factor, pointer);
-  };
+      setCanvasScale(nextScale);
+      setCanvasPan(clampPanToViewport(nextPan, nextScale, rect));
+    },
+    [clampPanToViewport, clampScale],
+  );
 
   useEffect(() => {
-    if (mode !== "tree" || treeNodes.length === 0 || !treeNodeIdentityKey) {
+    const layoutKey = mode === "departments" ? departmentLayoutKey : personnelLayoutKey;
+    if (isLoading || !canvasBounds || !layoutKey) {
       return;
     }
 
-    if (autoCenteredTreeKeyRef.current === treeNodeIdentityKey) {
+    const autoFitKey = `${mode}:${layoutKey}`;
+    if (autoFittedLayoutKeyRef.current === autoFitKey) {
       return;
     }
 
-    autoCenteredTreeKeyRef.current = treeNodeIdentityKey;
+    autoFittedLayoutKeyRef.current = autoFitKey;
     const frameId = requestAnimationFrame(() => {
-      fitTreeToNodes();
+      fitCanvasToNodes();
     });
 
     return () => {
       cancelAnimationFrame(frameId);
     };
-  }, [fitTreeToNodes, mode, treeNodeIdentityKey, treeNodes.length]);
+  }, [canvasBounds, departmentLayoutKey, fitCanvasToNodes, isLoading, mode, personnelLayoutKey]);
+
+  useEffect(() => {
+    if (isLoading || !canvasBounds || !canvasRef.current) {
+      return;
+    }
+
+    const canvasElement = canvasRef.current;
+    const observer = new ResizeObserver(() => {
+      fitCanvasToNodes();
+    });
+
+    observer.observe(canvasElement);
+    return () => observer.disconnect();
+  }, [canvasBounds, fitCanvasToNodes, isLoading, mode]);
+
+  const handleSelectDepartment = useCallback(
+    (departmentId: string) => {
+      setSelectedMemberNodeIdState(null);
+      setSelectedDepartmentIdState(departmentId);
+      updateQuery({ dept: departmentId });
+    },
+    [updateQuery],
+  );
+
+  const handleSelectMember = useCallback(
+    (node: PersonnelNode) => {
+      setSelectedMemberNodeIdState(node.id);
+      setSelectedDepartmentIdState(node.departmentId);
+      updateQuery({ dept: node.departmentId });
+    },
+    [updateQuery],
+  );
+
+  const consumeSuppressedClick = useCallback(() => Date.now() < suppressClickUntilRef.current, []);
+
+  const startDraggingNode = useCallback(
+    (
+      event: React.PointerEvent<HTMLButtonElement>,
+      target: { type: "department"; id: string; position: CanvasPosition },
+    ) => {
+      event.stopPropagation();
+      dragMovedRef.current = false;
+      setDraggingTarget({
+        type: target.type,
+        id: target.id,
+        originX: target.position.x,
+        originY: target.position.y,
+        pointerX: event.clientX,
+        pointerY: event.clientY,
+      });
+    },
+    [],
+  );
+
+  const handleCanvasPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (mode !== "departments" && mode !== "people") {
+      return;
+    }
+
+    if ((event.target as HTMLElement).closest("[data-node-card='true']")) {
+      return;
+    }
+
+    panStartRef.current = {
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      originX: canvasPanRef.current.x,
+      originY: canvasPanRef.current.y,
+    };
+    setIsPanning(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handleCanvasPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!canvasRef.current) {
+      return;
+    }
+
+    const rect = canvasRef.current.getBoundingClientRect();
+
+    if (draggingTarget) {
+      const deltaX = (event.clientX - draggingTarget.pointerX) / canvasScaleRef.current;
+      const deltaY = (event.clientY - draggingTarget.pointerY) / canvasScaleRef.current;
+      if (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2) {
+        dragMovedRef.current = true;
+      }
+
+      const nextPosition = {
+        x: Math.max(24, Math.min(CANVAS_WORLD_WIDTH - DEPARTMENT_CARD_WIDTH - 24, draggingTarget.originX + deltaX)),
+        y: Math.max(24, Math.min(layout.worldHeight - DEPARTMENT_CARD_HEIGHT - 24, draggingTarget.originY + deltaY)),
+      };
+
+      setDepartmentPositions((prev) => ({
+        ...prev,
+        [draggingTarget.id]: nextPosition,
+      }));
+
+      return;
+    }
+
+    if (!isPanning || !panStartRef.current) {
+      return;
+    }
+
+    const deltaX = event.clientX - panStartRef.current.pointerX;
+    const deltaY = event.clientY - panStartRef.current.pointerY;
+    const nextPan = {
+      x: panStartRef.current.originX + deltaX,
+      y: panStartRef.current.originY + deltaY,
+    };
+    setCanvasPan(clampPanToViewport(nextPan, canvasScaleRef.current, rect));
+  };
+
+  const handleCanvasPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (dragMovedRef.current) {
+      suppressClickUntilRef.current = Date.now() + 180;
+    }
+
+    dragMovedRef.current = false;
+    setDraggingTarget(null);
+    setIsPanning(false);
+    panStartRef.current = null;
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const handleNativeCanvasWheel = useCallback(
+    (event: WheelEvent) => {
+      if (!canvasRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const rect = canvasRef.current.getBoundingClientRect();
+      const pointer = {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      };
+
+      applyCanvasZoom(canvasScaleRef.current * (event.deltaY < 0 ? 1.08 : 0.92), pointer);
+    },
+    [applyCanvasZoom],
+  );
+
+  useEffect(() => {
+    if (isLoading) {
+      return;
+    }
+
+    const element = canvasRef.current;
+    if (!element) {
+      return;
+    }
+
+    element.addEventListener("wheel", handleNativeCanvasWheel, { passive: false });
+
+    return () => {
+      element.removeEventListener("wheel", handleNativeCanvasWheel);
+    };
+  }, [handleNativeCanvasWheel, isLoading]);
+
+  const activeDepartmentForHighlight = selectedDepartment?.id ?? null;
+
+  const isDepartmentFaded = useCallback(
+    (departmentId: string) => {
+      if (!activeDepartmentForHighlight) {
+        return false;
+      }
+      return departmentId !== activeDepartmentForHighlight;
+    },
+    [activeDepartmentForHighlight],
+  );
 
   return (
-    <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
-      <div className="flex min-h-screen w-full">
-        <WorkspaceSidebar active="departments" />
+    <TooltipProvider>
+      <div className="h-dvh overflow-hidden bg-[#f3f5fa] text-slate-900">
+        <div className="flex h-full w-full overflow-hidden">
+          <WorkspaceSidebar active="departments" />
 
-        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <WorkspacePageHeader title="Phòng ban" items={[{ label: "Phòng ban" }]} />
+          <div className="flex h-dvh min-h-0 w-full flex-1 flex-col overflow-hidden lg:pl-[var(--workspace-sidebar-width)]">
+            <WorkspacePageHeader title="Phòng ban" items={[{ label: "Phòng ban" }]} />
 
-          <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-7">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1">
-                <button
-                  type="button"
-                  onClick={() => updateQuery({ mode: "tree" })}
-                  className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
-                    mode === "tree" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                  }`}
-                >
-                  Tree
-                </button>
-                <button
-                  type="button"
-                  onClick={() => updateQuery({ mode: "list" })}
-                  className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
-                    mode === "list" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                  }`}
-                >
-                  List
-                </button>
-              </div>
+            <main className="flex min-h-0 flex-1 overflow-hidden px-4 py-4 lg:px-6">
+              <div className="flex min-h-0 w-full flex-1 flex-col gap-3 overflow-hidden">
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-[22px] border border-slate-200 bg-white px-3 py-2 shadow-[0_16px_30px_-32px_rgba(15,23,42,0.4)]">
+                  <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1">
+                    <button
+                      type="button"
+                      onClick={() => updateQuery({ mode: "departments" })}
+                      className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                        mode === "departments"
+                          ? "bg-white text-slate-800 shadow-sm"
+                          : "text-slate-500 hover:text-slate-700"
+                      }`}
+                    >
+                      Phòng ban
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateQuery({ mode: "people" })}
+                      className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                        mode === "people"
+                          ? "bg-white text-slate-800 shadow-sm"
+                          : "text-slate-500 hover:text-slate-700"
+                      }`}
+                    >
+                      Nhân sự
+                    </button>
+                  </div>
 
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={searchKeyword}
-                  onChange={(event) => setSearchKeyword(event.target.value)}
-                  placeholder="Tìm phòng ban..."
-                  className="h-10 w-[280px] rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                />
-              </div>
-            </div>
-            {isLoading ? (
-              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
-                Đang tải dữ liệu phòng ban...
-              </div>
-            ) : null}
+                  <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
+                    <label className="relative block min-w-[220px] flex-1 md:max-w-[360px]">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        value={searchKeyword}
+                        onChange={(event) => setSearchKeyword(event.target.value)}
+                        placeholder="Tìm phòng ban hoặc nhân sự"
+                        className="h-10 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-4 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      />
+                    </label>
 
-            {!isLoading && loadError ? (
-              <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                {loadError}
-              </div>
-            ) : null}
+                    <button
+                      type="button"
+                      onClick={() => setIsDetailDialogOpen(true)}
+                      disabled={!selectedDepartment && !selectedPersonnelMember}
+                      className="inline-flex h-10 items-center rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm xl:hidden"
+                    >
+                      Chi tiết
+                    </button>
 
-            {!isLoading ? (
-              <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-                <section className="min-w-0">
-                  {mode === "tree" ? (
-                    <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                      <div className="mb-3 flex items-center justify-between">
-                        <p className="text-sm text-slate-500">
-                          Giữ chuột để kéo sơ đồ. Lăn chuột để zoom.
-                        </p>
-                        <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white p-1">
-                          <button
-                            type="button"
-                            onClick={() => applyTreeZoom(treeScale - 0.08)}
-                            className="h-7 w-7 rounded text-sm font-semibold text-slate-600 hover:bg-slate-100"
-                          >
-                            −
-                          </button>
-                          <button
-                            type="button"
-                            onClick={fitTreeToNodes}
-                            className="h-7 rounded px-2 text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                          >
-                            {Math.round(treeScale * 100)}%
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => applyTreeZoom(treeScale + 0.08)}
-                            className="h-7 w-7 rounded text-sm font-semibold text-slate-600 hover:bg-slate-100"
-                          >
-                            +
-                          </button>
-                        </div>
+                    {mode === "departments" || mode === "people" ? (
+                      <div className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+                        <button
+                          type="button"
+                          onClick={() => applyCanvasZoom(canvasScaleRef.current - 0.08)}
+                          className="h-8 w-8 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-100"
+                        >
+                          −
+                        </button>
+                        <button
+                          type="button"
+                          onClick={fitCanvasToNodes}
+                          className="h-8 rounded-lg px-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                        >
+                          {Math.round(canvasScale * 100)}%
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => applyCanvasZoom(canvasScaleRef.current + 0.08)}
+                          className="h-8 w-8 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-100"
+                        >
+                          +
+                        </button>
                       </div>
+                    ) : null}
+                  </div>
+                </div>
 
-                      <div
-                        ref={treeCanvasRef}
-                        onPointerDown={handleTreePointerDown}
-                        onPointerMove={handleTreePointerMove}
-                        onPointerUp={handleTreePointerUp}
-                        onPointerCancel={handleTreePointerUp}
-                        onWheel={handleTreeWheel}
-                        className={`relative h-[700px] overflow-hidden rounded-xl border border-slate-100 bg-slate-50/60 select-none ${
-                          isTreePanning || draggingTreeId ? "cursor-grabbing" : "cursor-grab"
-                        }`}
-                        style={{ touchAction: "none" }}
-                      >
-                        {treeNodes.length === 0 ? (
-                          <div className="grid h-full place-items-center text-sm text-slate-500">
-                            Không có phòng ban phù hợp.
+                {isLoading ? (
+                  <div className="flex min-h-0 flex-1 items-center justify-center rounded-[28px] border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
+                    Đang tải dữ liệu cơ cấu tổ chức...
+                  </div>
+                ) : null}
+
+                {!isLoading && loadError ? (
+                  <div className="rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+                    {loadError}
+                  </div>
+                ) : null}
+
+                {!isLoading ? (
+                  <div className="flex min-h-0 flex-1 gap-3 overflow-hidden">
+                    <section className="min-h-0 min-w-0 flex-1">
+                      {mode === "departments" ? (
+                        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white p-3 shadow-[0_20px_50px_-38px_rgba(15,23,42,0.25)]">
+                          <div className="mb-3 flex items-center justify-between gap-3 px-1">
+                            <div className="flex items-center gap-2">
+                              <h2 className="text-lg font-semibold tracking-[-0.03em] text-slate-900">
+                                Cây phòng ban
+                              </h2>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    type="button"
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:text-slate-700"
+                                  >
+                                    <Info className="h-4 w-4" />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-[220px] text-xs font-medium">
+                                  Kéo nền để pan, lăn chuột để zoom và kéo thẻ phòng ban để sắp xếp lại.
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+                            <p className="text-xs font-medium text-slate-500">
+                              {visibleDepartments.length} phòng ban
+                            </p>
                           </div>
-                        ) : (
+
                           <div
-                            className="absolute left-0 top-0"
+                            ref={canvasRef}
+                            onPointerDown={handleCanvasPointerDown}
+                            onPointerMove={handleCanvasPointerMove}
+                            onPointerUp={handleCanvasPointerUp}
+                            onPointerCancel={handleCanvasPointerUp}
+                            className={`relative min-h-0 flex-1 overflow-hidden rounded-[24px] border border-slate-200/80 bg-[#f8fbff] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] select-none ${
+                              isPanning || draggingTarget ? "cursor-grabbing" : "cursor-grab"
+                            }`}
                             style={{
-                              width: TREE_WORLD_WIDTH,
-                              height: TREE_WORLD_HEIGHT,
-                              transform: `translate(${treePan.x}px, ${treePan.y}px) scale(${treeScale})`,
-                              transformOrigin: "0 0",
+                              touchAction: "none",
+                              overscrollBehavior: "contain",
+                              backgroundImage:
+                                "radial-gradient(circle at 1px 1px, rgba(148,163,184,0.12) 1px, transparent 0)",
+                              backgroundSize: "24px 24px",
                             }}
                           >
-                            <svg
-                              className="pointer-events-none absolute inset-0"
-                              style={{ width: TREE_WORLD_WIDTH, height: TREE_WORLD_HEIGHT }}
-                            >
-                              {layout.edges.map((edge) => {
-                                const fromNode = treeNodeMap[edge.from];
-                                const toNode = treeNodeMap[edge.to];
-                                if (!fromNode || !toNode) {
-                                  return null;
-                                }
-
-                                const startX = fromNode.x + TREE_CARD_WIDTH / 2;
-                                const startY = fromNode.y + TREE_CARD_HEIGHT;
-                                const endX = toNode.x + TREE_CARD_WIDTH / 2;
-                                const endY = toNode.y;
-                                const midY = startY + (endY - startY) * 0.55;
-
-                                return (
-                                  <path
-                                    key={`${edge.from}-${edge.to}`}
-                                    d={`M ${startX} ${startY} L ${startX} ${midY} L ${endX} ${midY} L ${endX} ${endY}`}
-                                    stroke="#a8bedf"
-                                    strokeWidth="2.4"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    fill="none"
-                                  />
-                                );
-                              })}
-                            </svg>
-
-                            {treeNodes.map((node) => {
-                              const item = visibleDepartmentById[node.id];
-                              if (!item) {
-                                return null;
-                              }
-
-                              return (
-                                <div
-                                  key={node.id}
-                                  className="absolute"
-                                  style={{ left: node.x, top: node.y, width: TREE_CARD_WIDTH }}
-                                >
-                                  <TreeCard
-                                    item={item}
-                                    active={selectedDepartment?.id === item.id}
-                                    onSelect={(dept) => updateQuery({ dept })}
-                                    onPointerDown={(event) => handleTreeCardPointerDown(event, item.id)}
-                                  />
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="rounded-2xl border border-slate-200 bg-white">
-                      <div className="border-b border-slate-100 px-5 py-4">
-                        <h2 className="text-3xl font-semibold tracking-[-0.02em] text-slate-900">Cơ cấu tổ chức</h2>
-                        <p className="mt-1 text-sm text-slate-500">
-                          Quản lý và theo dõi cấu trúc phòng ban cùng nguồn lực nhân sự.
-                        </p>
-                      </div>
-
-                      <div className="overflow-x-auto">
-                        <table className="w-full min-w-[980px] text-left">
-                          <thead>
-                            <tr className="text-xs tracking-[0.08em] text-slate-400 uppercase">
-                              <th className="px-5 py-3 font-semibold">Phòng ban</th>
-                              <th className="px-5 py-3 font-semibold">Phòng ban cha</th>
-                              <th className="px-5 py-3 font-semibold">Trưởng phòng</th>
-                              <th className="px-5 py-3 font-semibold">Thành viên</th>
-                              <th className="px-5 py-3 font-semibold">Ngày tạo</th>
-                              <th className="px-5 py-3 font-semibold text-right">Hành động</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {visibleDepartments.map((item) => (
-                              <tr
-                                key={item.id}
-                                className={`cursor-pointer border-t border-slate-100 transition hover:bg-slate-50 ${
-                                  selectedDepartment?.id === item.id ? "bg-blue-50/50" : ""
-                                }`}
-                                onClick={() => updateQuery({ dept: item.id })}
+                            {layout.departmentNodes.length === 0 ? (
+                              <div className="grid h-full place-items-center px-4 text-center text-sm text-slate-500">
+                                Không có phòng ban hoặc nhân sự phù hợp với bộ lọc hiện tại.
+                              </div>
+                            ) : (
+                              <div
+                                className="absolute left-0 top-0"
+                                style={{
+                                  width: CANVAS_WORLD_WIDTH,
+                                  height: layout.worldHeight,
+                                  transform: `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasScale})`,
+                                  transformOrigin: "0 0",
+                                  willChange: isPanning || draggingTarget ? "transform" : "auto",
+                                }}
                               >
-                                <td className="px-5 py-4">
-                                  <p className="text-lg font-semibold text-slate-800">{item.name}</p>
-                                </td>
-                                <td className="px-5 py-4 text-base text-slate-600">{item.parent}</td>
-                                <td className="px-5 py-4">
-                                  <div className="flex items-center gap-2">
-                                    <span className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-700">
-                                      {toInitials(item.head)}
-                                    </span>
-                                    <span className="text-base font-medium text-slate-700">{item.head}</span>
-                                  </div>
-                                </td>
-                                <td className="px-5 py-4 text-base font-semibold text-slate-700">{item.members}</td>
-                                <td className="px-5 py-4 text-base text-slate-600">{item.createdAt}</td>
-                                <td className="px-5 py-4 text-right text-lg text-slate-400">⋯</td>
-                              </tr>
-                            ))}
+                                <svg
+                                  className="pointer-events-none absolute inset-0"
+                                  style={{ width: CANVAS_WORLD_WIDTH, height: layout.worldHeight }}
+                                >
+                                  {layout.edges.map((edge) => {
+                                    const fromDepartment = departmentNodeMap[edge.from];
+                                    const toDepartment = departmentNodeMap[edge.to];
 
-                            {visibleDepartments.length === 0 ? (
-                              <tr>
-                                <td colSpan={6} className="px-5 py-10 text-center text-sm text-slate-500">
-                                  Không có phòng ban phù hợp.
-                                </td>
-                              </tr>
-                            ) : null}
-                          </tbody>
-                        </table>
-                      </div>
+                                    if (!fromDepartment) {
+                                      return null;
+                                    }
 
-                      <div className="flex items-center justify-between px-5 py-4 text-sm text-slate-500">
-                        <p>Hiển thị {visibleDepartments.length} phòng ban</p>
-                        <div className="flex items-center gap-2">
-                          <button type="button" className="rounded-xl border border-slate-200 px-3 py-1.5 text-slate-500">
-                            Trước
-                          </button>
-                          <button type="button" className="rounded-xl border border-slate-200 px-3 py-1.5 text-slate-500">
-                            Sau
-                          </button>
+                                    const targetBox = toDepartment
+                                      ? {
+                                          x: toDepartment.x,
+                                          y: toDepartment.y,
+                                          width: DEPARTMENT_CARD_WIDTH,
+                                          height: DEPARTMENT_CARD_HEIGHT,
+                                        }
+                                      : null;
+
+                                    if (!targetBox) {
+                                      return null;
+                                    }
+
+                                    const isActiveDepartmentEdge =
+                                      edge.type === "department" &&
+                                      activeDepartmentForHighlight &&
+                                      (edge.from === activeDepartmentForHighlight ||
+                                        edge.to === activeDepartmentForHighlight);
+
+                                    return (
+                                      <path
+                                        key={edge.id}
+                                        d={getConnectorPath(
+                                          {
+                                            x: fromDepartment.x,
+                                            y: fromDepartment.y,
+                                            width: DEPARTMENT_CARD_WIDTH,
+                                            height: DEPARTMENT_CARD_HEIGHT,
+                                          },
+                                          targetBox,
+                                        )}
+                                        stroke={
+                                          isActiveDepartmentEdge
+                                            ? "#2563eb"
+                                            : "#bfd0e7"
+                                        }
+                                        strokeWidth={isActiveDepartmentEdge ? 3 : 2.1}
+                                        opacity={
+                                          activeDepartmentForHighlight
+                                            ? isActiveDepartmentEdge
+                                              ? 0.96
+                                              : 0.42
+                                            : 0.72
+                                        }
+                                        strokeLinecap="round"
+                                        fill="none"
+                                      />
+                                    );
+                                  })}
+                                </svg>
+
+                                {layout.departmentNodes.map((departmentNode) => {
+                                  const department = visibleDepartmentById[departmentNode.id];
+                                  const position = departmentNodeMap[departmentNode.id];
+
+                                  if (!department || !position) {
+                                    return null;
+                                  }
+
+                                  return (
+                                    <div
+                                      key={department.id}
+                                      className="absolute"
+                                      style={{
+                                        left: position.x,
+                                        top: position.y,
+                                        width: DEPARTMENT_CARD_WIDTH,
+                                      }}
+                                    >
+                                      <DepartmentCanvasCard
+                                        item={department}
+                                        active={selectedDepartment?.id === department.id}
+                                        faded={isDepartmentFaded(department.id)}
+                                        onSelect={() => {
+                                          if (consumeSuppressedClick()) {
+                                            return;
+                                          }
+                                          handleSelectDepartment(department.id);
+                                        }}
+                                        onPointerDown={(event) =>
+                                          startDraggingNode(event, {
+                                            type: "department",
+                                            id: department.id,
+                                            position,
+                                          })
+                                        }
+                                      />
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    </div>
-                  )}
-                </section>
+                      ) : (
+                        <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white p-3 shadow-[0_20px_50px_-38px_rgba(15,23,42,0.25)]">
+                          <div className="mb-3 flex items-center justify-between gap-3 px-1">
+                            <div className="flex items-center gap-2">
+                              <h2 className="text-lg font-semibold tracking-[-0.03em] text-slate-900">Cây nhân sự</h2>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    type="button"
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 text-slate-500 hover:text-slate-700"
+                                  >
+                                    <Info className="h-4 w-4" />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-[220px] text-xs font-medium">
+                                  Leader được nối với thành viên và leader của các phòng ban trực thuộc.
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+                            <p className="text-xs font-medium text-slate-500">
+                              {personnelLayout.personnelNodes.length} nhân sự
+                            </p>
+                          </div>
 
-                <DepartmentPanel item={selectedDepartment} />
+                          <div
+                            ref={canvasRef}
+                            onPointerDown={handleCanvasPointerDown}
+                            onPointerMove={handleCanvasPointerMove}
+                            onPointerUp={handleCanvasPointerUp}
+                            onPointerCancel={handleCanvasPointerUp}
+                            className={`relative min-h-0 flex-1 overflow-hidden rounded-[24px] border border-slate-200/80 bg-[#f8fbff] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] select-none ${
+                              isPanning ? "cursor-grabbing" : "cursor-grab"
+                            }`}
+                            style={{
+                              touchAction: "none",
+                              overscrollBehavior: "contain",
+                              backgroundImage:
+                                "radial-gradient(circle at 1px 1px, rgba(148,163,184,0.12) 1px, transparent 0)",
+                              backgroundSize: "24px 24px",
+                            }}
+                          >
+                            {personnelLayout.personnelNodes.length === 0 ? (
+                              <div className="grid h-full place-items-center px-4 text-center text-sm text-slate-500">
+                                Không có nhân sự phù hợp với bộ lọc hiện tại.
+                              </div>
+                            ) : (
+                              <div
+                                className="absolute left-0 top-0"
+                                style={{
+                                  width: CANVAS_WORLD_WIDTH,
+                                  height: personnelLayout.worldHeight,
+                                  transform: `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasScale})`,
+                                  transformOrigin: "0 0",
+                                  willChange: isPanning ? "transform" : "auto",
+                                }}
+                              >
+                                <svg
+                                  className="pointer-events-none absolute inset-0"
+                                  style={{ width: CANVAS_WORLD_WIDTH, height: personnelLayout.worldHeight }}
+                                >
+                                  {personnelLayout.edges.map((edge) => {
+                                    const from = personnelLayout.personnelNodes.find((node) => node.id === edge.from);
+                                    const to = personnelLayout.personnelNodes.find((node) => node.id === edge.to);
+                                    if (!from || !to) return null;
+                                    const isActive =
+                                      activeDepartmentForHighlight &&
+                                      (from.departmentId === activeDepartmentForHighlight ||
+                                        to.departmentId === activeDepartmentForHighlight);
+
+                                    return (
+                                      <path
+                                        key={edge.id}
+                                        d={getConnectorPath(
+                                          { x: from.x, y: from.y, width: PERSON_CARD_WIDTH, height: PERSON_CARD_HEIGHT },
+                                          { x: to.x, y: to.y, width: PERSON_CARD_WIDTH, height: PERSON_CARD_HEIGHT },
+                                        )}
+                                        stroke={isActive ? "#2563eb" : "#bfd0e7"}
+                                        strokeWidth={isActive ? 3 : 2.1}
+                                        opacity={activeDepartmentForHighlight ? (isActive ? 0.96 : 0.42) : 0.72}
+                                        strokeLinecap="round"
+                                        fill="none"
+                                      />
+                                    );
+                                  })}
+                                </svg>
+
+                                {personnelLayout.personnelNodes.map((node) => (
+                                  <div
+                                    key={node.id}
+                                    className="absolute"
+                                    style={{ left: node.x, top: node.y, width: PERSON_CARD_WIDTH }}
+                                  >
+                                    <PersonnelCanvasCard
+                                      member={node.member}
+                                      active={selectedDepartment?.id === node.departmentId}
+                                      faded={isDepartmentFaded(node.departmentId)}
+                                      onSelect={() => handleSelectMember(node)}
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </section>
+
+                    <aside className="hidden h-full min-h-0 w-[320px] xl:block">
+                      <DetailPanelContent department={selectedDepartment} member={selectedPersonnelMember} />
+                    </aside>
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-          </main>
+            </main>
+
+            <Dialog open={isDetailDialogOpen} onOpenChange={setIsDetailDialogOpen}>
+              <DialogContent className="top-auto bottom-0 left-1/2 max-h-[82dvh] w-[calc(100vw-1rem)] max-w-none translate-x-[-50%] translate-y-0 gap-0 overflow-hidden rounded-t-[28px] rounded-b-none border-slate-200 p-0 sm:bottom-4 sm:w-[560px] sm:rounded-[28px]">
+                <DialogHeader className="border-b border-slate-100 px-4 py-4">
+                  <DialogTitle>Chi tiết</DialogTitle>
+                </DialogHeader>
+                <div className="min-h-0 flex-1 overflow-hidden p-4">
+                  <DetailPanelContent department={selectedDepartment} member={selectedPersonnelMember} />
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
         </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }
 
@@ -1030,13 +1706,13 @@ export default function DepartmentsPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
-          <div className="flex min-h-screen w-full">
+        <div className="h-dvh overflow-hidden bg-[#f3f5fa] text-slate-900">
+          <div className="flex h-full w-full overflow-hidden">
             <WorkspaceSidebar active="departments" />
-            <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[280px]">
-              <main className="px-4 py-6 lg:px-7">
-                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
-                  Đang tải sơ đồ phòng ban...
+            <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden lg:pl-[280px]">
+              <main className="flex min-h-0 flex-1 items-center px-4 py-4 lg:px-6">
+                <div className="w-full rounded-[28px] border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
+                  Đang tải canvas cơ cấu tổ chức...
                 </div>
               </main>
             </div>
