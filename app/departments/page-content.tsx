@@ -27,6 +27,7 @@ type ProfileRow = {
   id: string;
   name: string | null;
   email: string | null;
+  is_active: boolean | null;
 };
 
 type RoleRow = {
@@ -210,6 +211,7 @@ const buildCanvasLayout = (items: DepartmentItem[]) => {
     return {
       departmentNodes: [] as LayoutDepartmentNode[],
       edges: [] as CanvasEdge[],
+      worldWidth: CANVAS_WORLD_WIDTH,
       worldHeight: 1800,
     };
   }
@@ -304,6 +306,7 @@ const buildCanvasLayout = (items: DepartmentItem[]) => {
   return {
     departmentNodes,
     edges,
+    worldWidth: CANVAS_WORLD_WIDTH,
     worldHeight: Math.max(1800, nextTop + CANVAS_PADDING),
   };
 };
@@ -371,64 +374,131 @@ const buildPersonnelLayout = (items: DepartmentItem[]) => {
     });
   });
 
-  const incoming = new Set(edges.map((edge) => edge.to));
   const childrenByParent = edges.reduce<Record<string, string[]>>((acc, edge) => {
     (acc[edge.from] ??= []).push(edge.to);
     return acc;
   }, {});
-  const roots = Object.keys(nodesById).filter((nodeId) => !incoming.has(nodeId));
-  const levelById: Record<string, number> = {};
-  const queue = roots.map((id) => ({ id, level: 0 }));
-
-  while (queue.length > 0) {
-    const current = queue.shift() as { id: string; level: number };
-    if (levelById[current.id] !== undefined) {
-      continue;
+  const compareNodeIds = (leftId: string, rightId: string) => {
+    const left = nodesById[leftId];
+    const right = nodesById[rightId];
+    const headOrder = Number(right.member.isHead) - Number(left.member.isHead);
+    if (headOrder !== 0) {
+      return headOrder;
     }
-    levelById[current.id] = current.level;
-    (childrenByParent[current.id] ?? []).forEach((childId) => {
-      queue.push({ id: childId, level: current.level + 1 });
+
+    const departmentOrder = left.member.departmentName.localeCompare(right.member.departmentName, "vi");
+    if (departmentOrder !== 0) {
+      return departmentOrder;
+    }
+
+    return left.member.name.localeCompare(right.member.name, "vi");
+  };
+
+  Object.values(childrenByParent).forEach((childIds) => childIds.sort(compareNodeIds));
+
+  const incoming = new Set(edges.map((edge) => edge.to));
+  const roots = Object.keys(nodesById).filter((nodeId) => !incoming.has(nodeId)).sort(compareNodeIds);
+  const positionedNodeIds = new Set<string>();
+  const treeRoots = [...roots];
+
+  // Dữ liệu phòng ban hợp lệ tạo thành một rừng. Phần dự phòng này vẫn hiển thị
+  // node nếu dữ liệu có vòng lặp hoặc liên kết chưa đầy đủ.
+  Object.keys(nodesById)
+    .sort(compareNodeIds)
+    .forEach((nodeId) => {
+      if (!incoming.has(nodeId) || treeRoots.includes(nodeId)) {
+        return;
+      }
+
+      let currentId: string | undefined = nodeId;
+      const visited = new Set<string>();
+      while (currentId && !visited.has(currentId)) {
+        visited.add(currentId);
+        const parentEdge = edges.find((edge) => edge.to === currentId);
+        currentId = parentEdge?.from;
+      }
+
+      if (currentId) {
+        treeRoots.push(nodeId);
+      }
     });
-  }
 
-  Object.keys(nodesById).forEach((nodeId) => {
-    levelById[nodeId] ??= 0;
-  });
+  const subtreeWidthById: Record<string, number> = {};
+  const getSubtreeWidth = (nodeId: string, visiting = new Set<string>()): number => {
+    if (subtreeWidthById[nodeId] !== undefined) {
+      return subtreeWidthById[nodeId];
+    }
+    if (visiting.has(nodeId)) {
+      return PERSON_CARD_WIDTH;
+    }
 
-  const buckets = Object.entries(levelById).reduce<Record<number, string[]>>((acc, [nodeId, level]) => {
-    (acc[level] ??= []).push(nodeId);
-    return acc;
-  }, {});
-  const levels = Object.keys(buckets).map(Number).sort((a, b) => a - b);
-  let nextTop = 120;
+    visiting.add(nodeId);
+    const childWidths = (childrenByParent[nodeId] ?? []).map((childId) => getSubtreeWidth(childId, visiting));
+    visiting.delete(nodeId);
+
+    const childrenWidth =
+      childWidths.reduce((total, width) => total + width, 0) + Math.max(0, childWidths.length - 1) * PERSON_GAP_X;
+    const subtreeWidth = Math.max(PERSON_CARD_WIDTH, childrenWidth);
+    subtreeWidthById[nodeId] = subtreeWidth;
+    return subtreeWidth;
+  };
+
+  const rootsWidth =
+    treeRoots.reduce((total, nodeId) => total + getSubtreeWidth(nodeId), 0) +
+    Math.max(0, treeRoots.length - 1) * PERSON_GAP_X;
+  const worldWidth = Math.max(1800, rootsWidth + CANVAS_PADDING * 2);
   const personnelNodes: PersonnelNode[] = [];
+  let maxDepth = 0;
 
-  levels.forEach((level) => {
-    const nodeIds = buckets[level].sort((a, b) => {
-      const left = nodesById[a].member;
-      const right = nodesById[b].member;
-      return left.name.localeCompare(right.name, "vi");
-    });
-    const rowWidth = nodeIds.length * PERSON_CARD_WIDTH + Math.max(0, nodeIds.length - 1) * PERSON_GAP_X;
-    const startX = Math.max(CANVAS_PADDING, (CANVAS_WORLD_WIDTH - rowWidth) / 2);
+  const placeSubtree = (nodeId: string, left: number, depth: number, path = new Set<string>()) => {
+    if (path.has(nodeId) || positionedNodeIds.has(nodeId)) {
+      return;
+    }
 
-    nodeIds.forEach((nodeId, index) => {
-      const item = nodesById[nodeId];
-      personnelNodes.push({
-        id: nodeId,
-        departmentId: item.departmentId,
-        member: item.member,
-        x: startX + index * (PERSON_CARD_WIDTH + PERSON_GAP_X),
-        y: nextTop,
-      });
+    path.add(nodeId);
+    positionedNodeIds.add(nodeId);
+    maxDepth = Math.max(maxDepth, depth);
+    const subtreeWidth = getSubtreeWidth(nodeId);
+    const item = nodesById[nodeId];
+    personnelNodes.push({
+      id: nodeId,
+      departmentId: item.departmentId,
+      member: item.member,
+      x: left + (subtreeWidth - PERSON_CARD_WIDTH) / 2,
+      y: 120 + depth * (PERSON_CARD_HEIGHT + PERSON_LEVEL_GAP_Y),
     });
-    nextTop += PERSON_CARD_HEIGHT + PERSON_LEVEL_GAP_Y;
+
+    const children = childrenByParent[nodeId] ?? [];
+    const childrenWidth =
+      children.reduce((total, childId) => total + getSubtreeWidth(childId), 0) +
+      Math.max(0, children.length - 1) * PERSON_GAP_X;
+    let childLeft = left + (subtreeWidth - childrenWidth) / 2;
+
+    children.forEach((childId) => {
+      placeSubtree(childId, childLeft, depth + 1, new Set(path));
+      childLeft += getSubtreeWidth(childId) + PERSON_GAP_X;
+    });
+  };
+
+  let rootLeft = Math.max(CANVAS_PADDING, (worldWidth - rootsWidth) / 2);
+  treeRoots.forEach((nodeId) => {
+    placeSubtree(nodeId, rootLeft, 0);
+    rootLeft += getSubtreeWidth(nodeId) + PERSON_GAP_X;
   });
+
+  Object.keys(nodesById)
+    .filter((nodeId) => !positionedNodeIds.has(nodeId))
+    .sort(compareNodeIds)
+    .forEach((nodeId) => {
+      placeSubtree(nodeId, rootLeft, 0);
+      rootLeft += getSubtreeWidth(nodeId) + PERSON_GAP_X;
+    });
 
   return {
     personnelNodes,
     edges,
-    worldHeight: Math.max(1800, nextTop + CANVAS_PADDING),
+    worldWidth,
+    worldHeight: Math.max(1800, 120 + (maxDepth + 1) * (PERSON_CARD_HEIGHT + PERSON_LEVEL_GAP_Y) + CANVAS_PADDING),
   };
 };
 
@@ -729,7 +799,7 @@ function DepartmentsPageContent() {
         ] = await Promise.all([
           supabase.from("departments").select("id,name,parent_department_id"),
           supabase.from("user_role_in_department").select("department_id,profile_id,role_id"),
-          supabase.from("profiles").select("id,name,email"),
+          supabase.from("profiles").select("id,name,email,is_active").eq("is_active", true),
           supabase.from("roles").select("id,name"),
         ]);
 
@@ -1025,7 +1095,7 @@ function DepartmentsPageContent() {
         return nextPan;
       }
 
-      const worldPixelWidth = CANVAS_WORLD_WIDTH * scale;
+      const worldPixelWidth = (mode === "departments" ? layout.worldWidth : personnelLayout.worldWidth) * scale;
       const worldPixelHeight = (mode === "departments" ? layout.worldHeight : personnelLayout.worldHeight) * scale;
 
       if (worldPixelWidth <= viewportRect.width && worldPixelHeight <= viewportRect.height) {
@@ -1049,7 +1119,7 @@ function DepartmentsPageContent() {
             : Math.min(0, Math.max(minY, nextPan.y)),
       };
     },
-    [layout.worldHeight, mode, personnelLayout.worldHeight],
+    [layout.worldHeight, layout.worldWidth, mode, personnelLayout.worldHeight, personnelLayout.worldWidth],
   );
 
   const focusCanvasBounds = useCallback(
@@ -1216,7 +1286,7 @@ function DepartmentsPageContent() {
       }
 
       const nextPosition = {
-        x: Math.max(24, Math.min(CANVAS_WORLD_WIDTH - DEPARTMENT_CARD_WIDTH - 24, draggingTarget.originX + deltaX)),
+        x: Math.max(24, Math.min(layout.worldWidth - DEPARTMENT_CARD_WIDTH - 24, draggingTarget.originX + deltaX)),
         y: Math.max(24, Math.min(layout.worldHeight - DEPARTMENT_CARD_HEIGHT - 24, draggingTarget.originY + deltaY)),
       };
 
@@ -1457,7 +1527,7 @@ function DepartmentsPageContent() {
                               <div
                                 className="absolute left-0 top-0"
                                 style={{
-                                  width: CANVAS_WORLD_WIDTH,
+                                  width: layout.worldWidth,
                                   height: layout.worldHeight,
                                   transform: `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasScale})`,
                                   transformOrigin: "0 0",
@@ -1466,7 +1536,7 @@ function DepartmentsPageContent() {
                               >
                                 <svg
                                   className="pointer-events-none absolute inset-0"
-                                  style={{ width: CANVAS_WORLD_WIDTH, height: layout.worldHeight }}
+                                  style={{ width: layout.worldWidth, height: layout.worldHeight }}
                                 >
                                   {layout.edges.map((edge) => {
                                     const fromDepartment = departmentNodeMap[edge.from];
@@ -1619,7 +1689,7 @@ function DepartmentsPageContent() {
                               <div
                                 className="absolute left-0 top-0"
                                 style={{
-                                  width: CANVAS_WORLD_WIDTH,
+                                  width: personnelLayout.worldWidth,
                                   height: personnelLayout.worldHeight,
                                   transform: `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasScale})`,
                                   transformOrigin: "0 0",
@@ -1628,7 +1698,7 @@ function DepartmentsPageContent() {
                               >
                                 <svg
                                   className="pointer-events-none absolute inset-0"
-                                  style={{ width: CANVAS_WORLD_WIDTH, height: personnelLayout.worldHeight }}
+                                  style={{ width: personnelLayout.worldWidth, height: personnelLayout.worldHeight }}
                                 >
                                   {personnelLayout.edges.map((edge) => {
                                     const from = personnelLayout.personnelNodes.find((node) => node.id === edge.from);

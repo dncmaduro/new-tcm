@@ -12,6 +12,7 @@ import {
   Activity,
   Bell,
   BriefcaseBusiness,
+  Building2,
   CalendarDays,
   ClipboardList,
   FileText,
@@ -120,7 +121,7 @@ const getSidebarItemIcon = (key: SidebarKey): ComponentType<{ className?: string
   if (key === "realtimeReports") return Activity;
   if (key === "attendanceManagement") return ShieldCheck;
   if (key === "timeRequestManagement") return Timer;
-  if (key === "departments") return Settings2;
+  if (key === "departments") return Building2;
   if (key === "departmentPerformance") return Gauge;
   if (key === "profile") return UserCircle2;
   return LayoutDashboard;
@@ -648,7 +649,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
                       : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
                   }`}
                 >
-                  <Settings2 className={PRIMARY_ITEM_ICON_CLASS} />
+                  <Building2 className={PRIMARY_ITEM_ICON_CLASS} />
                   {!isCollapsed ? departmentsItem.label : null}
                 </Link>
               </SidebarTooltip>
