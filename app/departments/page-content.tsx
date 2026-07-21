@@ -899,7 +899,9 @@ function DepartmentsPageContent() {
 
         const mappedDepartments = sortByVietnameseName(
           departmentRows.map((row) => {
-            const rawMembers = membersByDepartmentId[row.id] ?? [];
+            const rawMembers = (membersByDepartmentId[row.id] ?? []).filter(
+              (member) => Boolean(profileInfoById[member.profileId]),
+            );
             const memberByProfileId = new Map<string, { profileId: string; roleName: string }>();
 
             rawMembers.forEach((member) => {
@@ -924,10 +926,7 @@ function DepartmentsPageContent() {
 
             const membersList = Array.from(memberByProfileId.values())
               .map((member, index) => {
-                const profile = profileInfoById[member.profileId] ?? {
-                  name: "Chưa có tên",
-                  email: null,
-                };
+                const profile = profileInfoById[member.profileId];
                 return {
                   nodeId: `member:${row.id}:${member.profileId}`,
                   profileId: member.profileId,
@@ -955,7 +954,6 @@ function DepartmentsPageContent() {
             const headCandidate =
               membersList.find((member) => member.isDirector) ??
               membersList.find((member) => member.isHead) ??
-              membersList[0] ??
               null;
             const parentId = row.parent_department_id ? String(row.parent_department_id) : null;
 
