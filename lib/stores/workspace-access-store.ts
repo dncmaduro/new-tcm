@@ -33,12 +33,14 @@ type WorkspaceProfile = {
   id: string;
   name: string | null;
   avatar: string | null;
+  isParttime: boolean;
 };
 
 type ProfileRow = {
   id: string;
   name: string | null;
   avatar: string | null;
+  is_parttime: boolean | null;
 };
 
 type RoleRow = {
@@ -215,7 +217,11 @@ export const useWorkspaceAccessStore = create<WorkspaceAccessStore>((set, get) =
         }
 
         const [profileResult, rolesResult] = await Promise.all([
-          supabase.from("profiles").select("id,name,avatar").eq("user_id", authData.user.id).maybeSingle(),
+          supabase
+            .from("profiles")
+            .select("id,name,avatar,is_parttime")
+            .eq("user_id", authData.user.id)
+            .maybeSingle(),
           supabase.from("roles").select("id,name"),
         ]);
 
@@ -277,6 +283,7 @@ export const useWorkspaceAccessStore = create<WorkspaceAccessStore>((set, get) =
               toStringValue(authData.user.user_metadata?.avatar_url) ||
               toStringValue(authData.user.user_metadata?.picture) ||
               null,
+            isParttime: profile.is_parttime === true,
           },
           roles,
           memberships,
@@ -332,6 +339,7 @@ export function useWorkspaceAccess() {
       profileId: state.profile?.id ?? null,
       profileName: state.profile?.name ?? null,
       profileAvatar: state.profile?.avatar ?? null,
+      isParttime: state.profile?.isParttime ?? false,
       leaderRoleIds,
       directorRoleIds,
       hasLeaderRole,

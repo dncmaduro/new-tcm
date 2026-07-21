@@ -52,6 +52,7 @@ type SidebarKey =
   | "timesheet"
   | "attendanceExport"
   | "timeRequestForms"
+  | "parttimeSchedule"
   | "attendanceManagement"
   | "timeRequestManagement"
   | "reports"
@@ -93,6 +94,7 @@ const timeSidebarItems: SidebarItem[] = [
   { key: "timesheet", label: "Chấm công", href: "/timesheet" },
   { key: "attendanceExport", label: "Xuất chấm công", href: "/attendance-export" },
   { key: "timeRequestForms", label: "Yêu cầu thời gian", href: "/timesheet/requests" },
+  { key: "parttimeSchedule", label: "Lịch part-time", href: "/parttime-schedule" },
 ];
 
 const managementSidebarItems: SidebarItem[] = [
@@ -118,6 +120,7 @@ const getSidebarItemIcon = (key: SidebarKey): ComponentType<{ className?: string
   if (key === "timesheet") return CalendarDays;
   if (key === "attendanceExport") return FileText;
   if (key === "timeRequestForms") return ClipboardList;
+  if (key === "parttimeSchedule") return Clock3;
   if (key === "realtimeReports") return Activity;
   if (key === "attendanceManagement") return ShieldCheck;
   if (key === "timeRequestManagement") return Timer;
