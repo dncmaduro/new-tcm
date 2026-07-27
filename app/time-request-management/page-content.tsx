@@ -41,10 +41,7 @@ import { formatDateDdMmYyyy, formatDateTimeDdMmYyyy } from "@/lib/date-format";
 import { buildHolidayMap, fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
 import { canReadTimekeepingData } from "@/lib/timekeeping-access";
-import {
-  buildTimeRequestSharePath,
-  resolveCurrentViewerProfileId,
-} from "@/lib/time-request-access";
+import { resolveCurrentViewerProfileId } from "@/lib/time-request-access";
 import { cn } from "@/lib/utils";
 import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
 
@@ -893,7 +890,6 @@ function TimeRequestManagementPageContent() {
             leaveSession: openedRequest.leave_session,
             requestedHours: openedRequest.requested_hours,
           }),
-      sharePath: buildTimeRequestSharePath(openedRequest.id),
       requesterName: openedRequest.profile_id
         ? (profileNameById[openedRequest.profile_id] ?? openedRequest.profile_id)
         : "Không rõ",
@@ -1259,7 +1255,6 @@ function TimeRequestManagementPageContent() {
             }
           }}
           request={openedRequestDetail}
-          showShareSection={false}
           footerActions={
             openedRequest && openedRequestDetail ? (
               <div className="space-y-3">

@@ -512,7 +512,7 @@ export async function POST(request: Request) {
         remote_check_in: requestType === "remote" ? remoteCheckIn : null,
         remote_check_out: requestType === "remote" ? remoteCheckOut : null,
       })
-      .select("id")
+      .select("id,short_code")
       .maybeSingle();
 
     if (createRequestError || !createdRequest?.id) {
@@ -534,7 +534,10 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ id: String(createdRequest.id) }, { status: 201 });
+    return NextResponse.json(
+      { id: String(createdRequest.id), shortCode: createdRequest.short_code ?? null },
+      { status: 201 },
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Không thể tạo yêu cầu thời gian.";
     return NextResponse.json({ error: message }, { status: 500 });

@@ -31,7 +31,12 @@ function normalizeText(value: string | null | undefined) {
     .toLowerCase();
 }
 
-export function buildTimeRequestSharePath(requestId: string) {
+export function buildTimeRequestSharePath(requestId: string, shortCode?: string | null) {
+  const normalizedShortCode = shortCode?.trim().toLowerCase() ?? "";
+  if (/^[a-f0-9]{10}$/.test(normalizedShortCode)) {
+    return `/form/${encodeURIComponent(normalizedShortCode)}`;
+  }
+
   return `/time-requests/${encodeURIComponent(requestId)}`;
 }
 

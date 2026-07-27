@@ -37,6 +37,7 @@ type TimeRequestReviewerRow = {
 
 type TimeRequestRow = {
   id: string;
+  short_code: string | null;
   date: string | null;
   type: TimeRequestType | null;
   leave_subtype: LeaveRequestSubtype | null;
@@ -52,6 +53,7 @@ type TimeRequestRow = {
 
 type CorrectionRequest = {
   id: string;
+  shortCode: string | null;
   requestDateISO: string;
   correctionDateISO: string;
   type: string;
@@ -193,15 +195,15 @@ export function TimeRequestManagementOverview({
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
   };
 
-  const handleCopyLink = async (requestId: string) => {
-    const sharePath = buildTimeRequestSharePath(requestId);
+  const handleCopyLink = async (request: CorrectionRequest) => {
+    const sharePath = buildTimeRequestSharePath(request.id, request.shortCode);
     const shareUrl = typeof window === "undefined" ? sharePath : `${window.location.origin}${sharePath}`;
 
     try {
       await navigator.clipboard.writeText(shareUrl);
-      setCopiedRequestId(requestId);
+      setCopiedRequestId(request.id);
       window.setTimeout(() => {
-        setCopiedRequestId((current) => (current === requestId ? null : current));
+        setCopiedRequestId((current) => (current === request.id ? null : current));
       }, 1800);
       setOpenRequestError("");
     } catch {
@@ -289,7 +291,7 @@ export function TimeRequestManagementOverview({
         const { data, error } = await supabase
           .from("time_requests")
           .select(
-            "id,date,type,leave_subtype,leave_session,requested_hours,minutes,reason,remote_check_in,remote_check_out,created_at,time_request_reviewers(is_approved,reviewed_at,created_at)",
+            "id,short_code,date,type,leave_subtype,leave_session,requested_hours,minutes,reason,remote_check_in,remote_check_out,created_at,time_request_reviewers(is_approved,reviewed_at,created_at)",
           )
           .eq("profile_id", profileId)
           .gte("date", startIso)
@@ -309,6 +311,7 @@ export function TimeRequestManagementOverview({
 
           return {
             id: item.id,
+            shortCode: item.short_code ?? null,
             requestDateISO: toDateOnlyIso(item.created_at),
             correctionDateISO: toDateOnlyIso(item.date),
             type: getTimeRequestDisplayLabel(item.type, {
@@ -490,7 +493,6 @@ export function TimeRequestManagementOverview({
           ? formatDurationLabel(openedRequest.minutes)
           : "--",
       reason: openedRequest.reason,
-      sharePath: buildTimeRequestSharePath(openedRequest.id),
       leaveDetailLabel,
       remoteTimeLabel,
     };
@@ -665,7 +667,7 @@ export function TimeRequestManagementOverview({
                       </button>
                       <button
                         type="button"
-                        onClick={() => void handleCopyLink(item.id)}
+                        onClick={() => void handleCopyLink(item)}
                         title="Sao chép link"
                         aria-label="Sao chép link"
                         className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
@@ -727,10 +729,6 @@ export function TimeRequestManagementOverview({
           }
         }}
         request={openedRequestDetail}
-        isCopyingLink={Boolean(openedRequestDetail && copiedRequestId === openedRequestDetail.id)}
-        onCopyLink={
-          openedRequestDetail ? () => void handleCopyLink(openedRequestDetail.id) : undefined
-        }
         footerActions={
           openedRequest?.status === "pending" ? (
             <div className="flex items-center justify-between gap-3">

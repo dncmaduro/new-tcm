@@ -15,15 +15,11 @@ type TimeRequestDetailDialogProps = {
     statusClassName: string;
     durationLabel: string;
     reason: string;
-    sharePath: string;
     requesterName?: string | null;
     leaveDetailLabel?: string | null;
     remoteTimeLabel?: string | null;
     holidayLabel?: string | null;
   } | null;
-  isCopyingLink?: boolean;
-  onCopyLink?: () => void;
-  showShareSection?: boolean;
   footerActions?: ReactNode;
 };
 
@@ -31,9 +27,6 @@ export function TimeRequestDetailDialog({
   open,
   onOpenChange,
   request,
-  isCopyingLink = false,
-  onCopyLink,
-  showShareSection = true,
   footerActions = null,
 }: TimeRequestDetailDialogProps) {
   return (
@@ -93,22 +86,6 @@ export function TimeRequestDetailDialog({
               <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">Lý do</p>
               <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">{request.reason}</p>
             </div>
-
-            {showShareSection ? (
-              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-4">
-                <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">Link chia sẻ</p>
-                <p className="mt-2 break-all text-sm text-slate-600">{request.sharePath}</p>
-                {onCopyLink ? (
-                  <button
-                    type="button"
-                    onClick={onCopyLink}
-                    className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
-                  >
-                    {isCopyingLink ? "Đã sao chép" : "Sao chép link"}
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
 
             {footerActions ? <div className="border-t border-slate-100 pt-5">{footerActions}</div> : null}
           </div>
