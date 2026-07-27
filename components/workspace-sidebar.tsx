@@ -39,6 +39,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AppBrandMark } from "@/components/app-brand-mark";
 import { fetchAttendanceExportAccess } from "@/lib/attendance-export-client-access";
+import { fetchITAdminAccess } from "@/lib/it-admin-client-access";
 import { supabase } from "@/lib/supabase";
 import { useWorkspaceSidebarStore } from "@/lib/stores/workspace-sidebar-store";
 import { useWorkspaceAccess, useWorkspaceAccessStore } from "@/lib/stores/workspace-access-store";
@@ -58,6 +59,7 @@ type SidebarKey =
   | "reports"
   | "departments"
   | "departmentPerformance"
+  | "itAdmin"
   | "profile";
 
 type WorkspaceSidebarProps = {
@@ -98,6 +100,7 @@ const timeSidebarItems: SidebarItem[] = [
 ];
 
 const managementSidebarItems: SidebarItem[] = [
+  { key: "itAdmin", label: "Quản trị IT", href: "/it-admin" },
   { key: "realtimeReports", label: "Quản lý hiệu suất", href: "/reports/realtime" },
   { key: "attendanceManagement", label: "Quản lý chấm công", href: "/attendance-management" },
   {
@@ -126,6 +129,7 @@ const getSidebarItemIcon = (key: SidebarKey): ComponentType<{ className?: string
   if (key === "timeRequestManagement") return Timer;
   if (key === "departments") return Building2;
   if (key === "departmentPerformance") return Gauge;
+  if (key === "itAdmin") return ShieldCheck;
   if (key === "profile") return UserCircle2;
   return LayoutDashboard;
 };
@@ -339,6 +343,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   const [isManagementMenuOpen, setIsManagementMenuOpen] = useState(false);
   const [openCollapsedGroup, setOpenCollapsedGroup] = useState<CollapsedGroupKey | null>(null);
   const [canAccessAttendanceExport, setCanAccessAttendanceExport] = useState(false);
+  const [canAccessITAdmin, setCanAccessITAdmin] = useState(false);
 
   useEffect(() => {
     hydrateSidebarFromStorage();
@@ -360,6 +365,27 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
 
     return () => {
       isActive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadITAdminAccess = async () => {
+      const access = await fetchITAdminAccess();
+      if (isActive) {
+        setCanAccessITAdmin(access.allowed);
+      }
+    };
+
+    void loadITAdminAccess();
+    const { data: authSubscription } = supabase.auth.onAuthStateChange(() => {
+      void loadITAdminAccess();
+    });
+
+    return () => {
+      isActive = false;
+      authSubscription.subscription.unsubscribe();
     };
   }, []);
 
@@ -397,6 +423,9 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   }, [isCollapsed, openCollapsedGroup]);
 
   const visibleManagementItems = managementSidebarItems.filter((item) => {
+    if (item.key === "itAdmin") {
+      return canAccessITAdmin;
+    }
     if (item.key === "realtimeReports") {
       return workspaceAccess.hasDirectorRole || workspaceAccess.hasRootLeaderAccess;
     }

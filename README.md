@@ -33,6 +33,17 @@ Tài liệu này được xây dựng để:
 
 TCM là hệ thống quản lý thực thi nội bộ, giúp doanh nghiệp theo dõi công việc từ mức định hướng đến mức thực hiện hằng ngày.
 
+### Cấu hình quản trị IT
+
+Để bật khu vực **Quản trị IT**, khai báo email chính xác của tài khoản được phép quản trị ở môi trường chạy ứng dụng:
+
+```env
+IT_EMAIL=it-admin@company.com
+SUPABASE_SERVICE_ROLE_KEY=...
+```
+
+Tài khoản khớp `IT_EMAIL` có thể tạo user kèm mật khẩu, xác nhận email ngay khi tạo và gán nhân sự vào phòng ban/vai trò. Các API liên quan kiểm tra quyền này ở server; không chỉ dựa vào giao diện.
+
 Hệ thống được tổ chức theo hai lớp lớn:
 
 - **Lớp thực thi công việc**: theo dõi Goal, KR, Task, tiến độ và mốc thời gian.
