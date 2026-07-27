@@ -19,6 +19,8 @@ type ExportDayRow = {
   lateMinutes: number;
   hasCheckIn: boolean;
   hasCheckOut: boolean;
+  formType: string;
+  formContent: string;
 };
 
 type ProfileSectionLayout = {
@@ -37,6 +39,8 @@ const INFO_ROW_FONT = { name: "Times New Roman", size: 15, bold: true };
 const BORDER_COLOR = "FF000000";
 const HIGHLIGHT_YELLOW = "FFFFFF00";
 const SUNDAY_BLUE = "FF1FC0EA";
+// ExcelJS uses character-based column widths; 57 characters is approximately 400 px in Excel.
+const FORM_CONTENT_COLUMN_WIDTH = 57;
 
 function normalizeText(value: string | null | undefined) {
   return (value ?? "")
@@ -112,6 +116,18 @@ function buildDayRows(context: TimesheetExportContext): ExportDayRow[] {
     }
     return acc;
   }, new Map());
+  const requestsByDate = context.correctionRequests.reduce<Map<string, TimesheetExportContext["correctionRequests"]>>(
+    (acc, request) => {
+      if (!request.correctionDateISO) {
+        return acc;
+      }
+      const requests = acc.get(request.correctionDateISO) ?? [];
+      requests.push(request);
+      acc.set(request.correctionDateISO, requests);
+      return acc;
+    },
+    new Map(),
+  );
 
   return Array.from({ length: totalDaysInMonth }, (_, index) => {
     const dayNumber = index + 1;
@@ -143,6 +159,9 @@ function buildDayRows(context: TimesheetExportContext): ExportDayRow[] {
         : 0;
     const hasCheckIn = Boolean(meta?.checkIn && meta.checkIn !== "--:--");
     const hasCheckOut = Boolean(meta?.checkOut && meta.checkOut !== "--:--");
+    const requests = requestsByDate.get(dateIso) ?? [];
+    const formType = requests.map((request) => request.type).join("\n");
+    const formContent = requests.map((request) => request.reason).filter(Boolean).join("\n");
 
     return {
       isSunday,
@@ -150,6 +169,8 @@ function buildDayRows(context: TimesheetExportContext): ExportDayRow[] {
       lateMinutes,
       hasCheckIn,
       hasCheckOut,
+      formType,
+      formContent,
       values: [
         formatDateDdMmYyyy(dateIso, "", ""),
         toTitleCaseVi(
@@ -164,12 +185,23 @@ function buildDayRows(context: TimesheetExportContext): ExportDayRow[] {
         workingMinutes > 0 ? formatHoursDecimal(workingMinutes) : "",
         formatWorkdayCredit(meta ?? { day: dayNumber }),
         overtimeMinutes > 0 ? formatHoursDecimal(overtimeMinutes) : "",
+        formType,
+        formContent,
         "",
         "",
         "",
       ],
     };
   });
+}
+
+function getWrappedFormRowHeight(formType: string, formContent: string) {
+  const countLines = (value: string, charactersPerLine: number) =>
+    value
+      ? value.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(line.length / charactersPerLine)), 0)
+      : 0;
+  const lineCount = Math.max(countLines(formType, 28), countLines(formContent, FORM_CONTENT_COLUMN_WIDTH));
+  return lineCount > 0 ? Math.max(20, lineCount * 15 + 8) : 20;
 }
 
 function setCellFill(cell: ExcelJS.Cell, color: string) {
@@ -292,17 +324,17 @@ function applyDailyTableBorders(
   firstDataRow: number,
   lastDataRow: number,
 ) {
-  for (let column = 1; column <= 12; column += 1) {
+  for (let column = 1; column <= 14; column += 1) {
     setCellBorder(worksheet.getRow(headerRow).getCell(column));
   }
 
   for (let row = firstDataRow; row <= lastDataRow; row += 1) {
-    for (let column = 1; column <= 9; column += 1) {
+    for (let column = 1; column <= 11; column += 1) {
       setCellBorder(worksheet.getRow(row).getCell(column));
     }
   }
 
-  for (let column = 10; column <= 12; column += 1) {
+  for (let column = 12; column <= 14; column += 1) {
     setCellBorder(worksheet.getRow(firstDataRow).getCell(column));
   }
 }
@@ -353,7 +385,7 @@ function appendProfileSection(
     0,
   );
 
-  worksheet.mergeCells(`A${startRow}:L${startRow}`);
+  worksheet.mergeCells(`A${startRow}:N${startRow}`);
   const infoCell = worksheet.getCell(`A${startRow}`);
   infoCell.value =
     `Tên nhân viên: ${profile.name}    Chức vụ: ${translateRoleLabel(profile.roleLabel)} ${profile.departmentLabel ? `- ${profile.departmentLabel}` : ""}`;
@@ -409,6 +441,8 @@ function appendProfileSection(
     "Giờ",
     "Công",
     "Tăng ca",
+    "Loại form",
+    "Nội dung form",
     "Tổng công",
     "Số buổi đi muộn",
     "Phạt",
@@ -421,9 +455,12 @@ function appendProfileSection(
     const row = worksheet.getRow(rowNumber);
     row.values = dayRow.values;
     row.alignment = { horizontal: "center", vertical: "middle" };
+    row.height = getWrappedFormRowHeight(dayRow.formType, dayRow.formContent);
+    row.getCell(10).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
+    row.getCell(11).alignment = { horizontal: "left", vertical: "middle", wrapText: true };
 
     if (dayRow.isSunday) {
-      for (let column = 1; column <= 9; column += 1) {
+      for (let column = 1; column <= 11; column += 1) {
         setCellFill(row.getCell(column), SUNDAY_BLUE);
       }
       return;
@@ -447,7 +484,7 @@ function appendProfileSection(
     worksheet.getCell(`I${rowNumber}`).numFmt = "0.00";
     worksheet.getCell(`E${rowNumber}`).numFmt = "0.00";
     worksheet.getCell(`F${rowNumber}`).numFmt = "0.00";
-    worksheet.getCell(`L${rowNumber}`).numFmt = "#,##0";
+    worksheet.getCell(`N${rowNumber}`).numFmt = "#,##0";
   });
 
   return {
@@ -456,7 +493,7 @@ function appendProfileSection(
     tableHeaderRow: headerRowIndex,
     tableFirstDataRow: headerRowIndex + 1,
     tableLastDataRow: headerRowIndex + dayRows.length,
-    penaltyCellAddress: `L${headerRowIndex + 1}`,
+    penaltyCellAddress: `N${headerRowIndex + 1}`,
   };
 }
 
@@ -567,6 +604,8 @@ export async function buildAttendanceWorkbookBuffer(
     { key: "hours", width: 14 },
     { key: "credit", width: 14 },
     { key: "overtime", width: 16 },
+    { key: "formType", width: 28 },
+    { key: "formContent", width: FORM_CONTENT_COLUMN_WIDTH },
     { key: "manualTotal", width: 16 },
     { key: "manualLateSessions", width: 20 },
     { key: "manualPenalty", width: 16 },
@@ -576,7 +615,7 @@ export async function buildAttendanceWorkbookBuffer(
     ? formatMonthTitle(entries[0].exportContext.selectedMonth)
     : "BẢNG CHI TIẾT CHẤM CÔNG";
 
-  worksheet.mergeCells("A1:L1");
+  worksheet.mergeCells("A1:N1");
   const titleCell = worksheet.getCell("A1");
   titleCell.value = monthTitle;
   titleCell.font = TITLE_FONT;
@@ -594,8 +633,8 @@ export async function buildAttendanceWorkbookBuffer(
   setBaseSheetStyle(worksheet);
 
   layouts.forEach((layout) => {
-    applyOuterBorderOnly(worksheet, layout.infoStartRow, layout.infoEndRow, 1, 12);
-    applyBottomBorderAcrossRow(worksheet, layout.infoStartRow, 1, 12);
+    applyOuterBorderOnly(worksheet, layout.infoStartRow, layout.infoEndRow, 1, 14);
+    applyBottomBorderAcrossRow(worksheet, layout.infoStartRow, 1, 14);
     applyDailyTableBorders(
       worksheet,
       layout.tableHeaderRow,

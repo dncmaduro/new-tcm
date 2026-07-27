@@ -1456,11 +1456,10 @@ export function TimesheetOverview({
                     </p>
                   </div>
                   {isRemoteSource ? (
-                    <div className="space-y-0.5">
+                    <div>
                       <p className="text-center text-[11px] font-semibold text-indigo-600">
                         Làm việc từ xa
                       </p>
-                      <p className="text-center text-[10px] text-indigo-500">{meta?.sourceNote}</p>
                     </div>
                   ) : null}
                   <p
