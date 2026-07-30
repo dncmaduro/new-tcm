@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   cancelParttimeChangeRequest,
+  createParttimeSchedule,
   createParttimeChangeRequest,
   finalizeParttimeSchedule,
   getDepartmentParttimeChangeRequests,
   getMyParttimeChangeRequests,
+  getParttimeSchedules,
   getParttimeSchedule,
   getParttimeScheduleEntries,
   getPublicParttimeSchedules,
@@ -24,7 +26,7 @@ import type {
 } from "@/lib/parttime-schedule-types";
 import { useParttimeScheduleCache } from "@/lib/parttime-schedule-cache";
 
-type QueryState<T> = { data: T; isLoading: boolean; isFetching: boolean; error: string | null; refetch: () => Promise<void> };
+type QueryState<T> = { data: T; isLoading: boolean; isFetching: boolean; error: string | null; refetch: () => Promise<T | null> };
 
 function useAsyncQuery<T>(enabled: boolean, key: string, initial: T, loader: () => Promise<T>): QueryState<T> {
   const revision = useParttimeScheduleCache((state) => state.revision);
@@ -36,10 +38,10 @@ function useAsyncQuery<T>(enabled: boolean, key: string, initial: T, loader: () 
   const initialRef = useRef(initial);
   loaderRef.current = loader;
   initialRef.current = initial;
-  const refetch = useCallback(async () => {
-    if (!enabled) { setData(initialRef.current); setIsLoading(false); return; }
+  const refetch = useCallback(async (): Promise<T | null> => {
+    if (!enabled) { setData(initialRef.current); setIsLoading(false); return initialRef.current; }
     setIsFetching(true); setError(null);
-    try { setData(await loaderRef.current()); } catch (cause) { setError(cause instanceof Error ? cause.message : "Không thể tải dữ liệu."); }
+    try { const result = await loaderRef.current(); setData(result); return result; } catch (cause) { setError(cause instanceof Error ? cause.message : "Không thể tải dữ liệu."); return null; }
     finally { setIsLoading(false); setIsFetching(false); }
   }, [enabled]);
   useEffect(() => { void refetch(); }, [key, refetch, revision]);
@@ -55,6 +57,9 @@ export function useParttimeScheduleEntries(scheduleId: string | null, activeOnly
 export function usePublicParttimeSchedules(weekStart: string, departmentId?: string) {
   return useAsyncQuery(Boolean(weekStart), `${weekStart}:${departmentId ?? "all"}`, [], () => getPublicParttimeSchedules(weekStart, departmentId));
 }
+export function useParttimeSchedules(weekStart: string, departmentId?: string) {
+  return useAsyncQuery(Boolean(weekStart), `${weekStart}:${departmentId ?? "all"}`, [], () => getParttimeSchedules(weekStart, departmentId));
+}
 export function useMyParttimeChangeRequests(profileId: string | null, weekStart?: string) {
   return useAsyncQuery<ParttimeChangeRequest[]>(Boolean(profileId), `${profileId ?? ""}:${weekStart ?? "all"}`, [], () => getMyParttimeChangeRequests(profileId as string, weekStart));
 }
@@ -69,6 +74,7 @@ function useParttimeMutation<T>(mutation: (input: T) => Promise<void>) {
   return { isPending, mutateAsync };
 }
 export const useRegisterParttimeShift = () => useParttimeMutation((input: { departmentId: string; weekStart: string; workDate: string; shift: ParttimeShift }) => registerParttimeShift(input));
+export const useCreateParttimeSchedule = () => useParttimeMutation((input: { departmentId: string; weekStart: string }) => createParttimeSchedule(input));
 export const useUnregisterParttimeShift = () => useParttimeMutation((entryId: string) => unregisterParttimeShift(entryId));
 export const useFinalizeParttimeSchedule = () => useParttimeMutation((scheduleId: string) => finalizeParttimeSchedule(scheduleId));
 export const useCreateParttimeChangeRequest = () => useParttimeMutation((input: CreateParttimeChangeRequestInput) => createParttimeChangeRequest(input));

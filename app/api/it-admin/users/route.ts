@@ -16,6 +16,7 @@ type UpdateUserPayload = {
   name?: string;
   isActive?: boolean;
   isTimekeepingEnabled?: boolean;
+  isParttime?: boolean;
 };
 
 const normalizeString = (value: unknown) => (typeof value === "string" ? value.trim() : "");
@@ -180,6 +181,9 @@ export async function PATCH(request: Request) {
   if (typeof payload.isTimekeepingEnabled === "boolean") {
     update.is_timekeeping_enabled = payload.isTimekeepingEnabled;
   }
+  if (typeof payload.isParttime === "boolean") {
+    update.is_parttime = payload.isParttime;
+  }
   if (Object.keys(update).length === 0) {
     return NextResponse.json({ error: "Không có thay đổi nào để lưu." }, { status: 400 });
   }
@@ -190,7 +194,7 @@ export async function PATCH(request: Request) {
       .from("profiles")
       .update(update)
       .eq("id", profileId)
-      .select("id,user_id,name,email,is_active,is_timekeeping_enabled")
+      .select("id,user_id,name,email,is_active,is_timekeeping_enabled,is_parttime")
       .maybeSingle();
     if (error) throw error;
     if (!data) {

@@ -30,6 +30,7 @@ type Profile = {
   email: string | null;
   is_active: boolean | null;
   is_timekeeping_enabled: boolean | null;
+  is_parttime: boolean | null;
 };
 type Department = { id: string; name: string };
 type Role = { id: string; name: string | null };
@@ -65,12 +66,12 @@ async function itAdminFetch(path: string, init?: RequestInit) {
   return payload;
 }
 
-function ToggleField({ checked, label, description, onChange }: { checked: boolean; label: string; description: string; onChange: (checked: boolean) => void }) {
+function ToggleField({ checked, label, description, onChange }: { checked: boolean; label: string; description?: string; onChange: (checked: boolean) => void }) {
   return (
     <label className="flex cursor-pointer items-start justify-between gap-4 rounded-xl border border-slate-200 p-3.5 transition hover:border-slate-300">
       <span>
         <span className="block text-sm font-semibold text-slate-800">{label}</span>
-        <span className="mt-0.5 block text-xs leading-5 text-slate-500">{description}</span>
+        {description ? <span className="mt-0.5 block text-xs leading-5 text-slate-500">{description}</span> : null}
       </span>
       <span className="relative mt-0.5 inline-flex shrink-0">
         <input
@@ -97,7 +98,7 @@ export default function ITAdminPageContent() {
   const [editProfile, setEditProfile] = useState<Profile | null>(null);
   const [assignmentProfile, setAssignmentProfile] = useState<Profile | null>(null);
   const [createForm, setCreateForm] = useState(emptyCreateForm);
-  const [editForm, setEditForm] = useState({ name: "", isActive: true, isTimekeepingEnabled: false });
+  const [editForm, setEditForm] = useState({ name: "", isActive: true, isTimekeepingEnabled: false, isParttime: false });
   const [assignment, setAssignment] = useState({ departmentId: "", roleId: "" });
   const [isCreating, setIsCreating] = useState(false);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
@@ -200,7 +201,7 @@ export default function ITAdminPageContent() {
   const openEdit = (profile: Profile) => {
     resetMessages();
     setEditProfile(profile);
-    setEditForm({ name: profile.name || "", isActive: profile.is_active !== false, isTimekeepingEnabled: profile.is_timekeeping_enabled === true });
+    setEditForm({ name: profile.name || "", isActive: profile.is_active !== false, isTimekeepingEnabled: profile.is_timekeeping_enabled === true, isParttime: profile.is_parttime === true });
   };
 
   const handleSaveEdit = async (event: FormEvent<HTMLFormElement>) => {
@@ -346,8 +347,8 @@ export default function ITAdminPageContent() {
 
       <Dialog open={Boolean(editProfile)} onOpenChange={(open) => !open && setEditProfile(null)}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>Chỉnh sửa nhân sự</DialogTitle><DialogDescription>{editProfile?.email || "Cập nhật thông tin và các quyền thao tác của nhân sự."}</DialogDescription></DialogHeader>
-          <form onSubmit={handleSaveEdit} className="space-y-4"><label className="block text-sm font-semibold text-slate-700">Họ và tên<input required value={editForm.name} onChange={(event) => setEditForm((current) => ({ ...current, name: event.target.value }))} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 font-normal outline-none focus:border-blue-500" /></label><div className="space-y-3"><ToggleField checked={editForm.isActive} onChange={(checked) => setEditForm((current) => ({ ...current, isActive: checked }))} label="Cho phép hoạt động" description="Tắt cờ is_active để khóa trạng thái hoạt động của nhân sự." /><ToggleField checked={editForm.isTimekeepingEnabled} onChange={(checked) => setEditForm((current) => ({ ...current, isTimekeepingEnabled: checked }))} label="Cho phép chấm công" description="Bật hoặc tắt cờ is_timekeeping_enabled cho nhân sự." /></div><DialogFooter><button type="button" onClick={() => setEditProfile(null)} className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">Hủy</button><button disabled={isSavingEdit} className="h-10 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:bg-blue-300">{isSavingEdit ? "Đang lưu..." : "Lưu thay đổi"}</button></DialogFooter></form>
+          <DialogHeader><DialogTitle>Chỉnh sửa nhân sự</DialogTitle></DialogHeader>
+          <form onSubmit={handleSaveEdit} className="space-y-4"><label className="block text-sm font-semibold text-slate-700">Họ và tên<input required value={editForm.name} onChange={(event) => setEditForm((current) => ({ ...current, name: event.target.value }))} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 font-normal outline-none focus:border-blue-500" /></label><div className="space-y-3"><ToggleField checked={editForm.isActive} onChange={(checked) => setEditForm((current) => ({ ...current, isActive: checked }))} label="Cho phép hoạt động" /><ToggleField checked={editForm.isTimekeepingEnabled} onChange={(checked) => setEditForm((current) => ({ ...current, isTimekeepingEnabled: checked }))} label="Cho phép chấm công" /><ToggleField checked={editForm.isParttime} onChange={(checked) => setEditForm((current) => ({ ...current, isParttime: checked }))} label="Nhân viên part-time" /></div><DialogFooter><button type="button" onClick={() => setEditProfile(null)} className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">Hủy</button><button disabled={isSavingEdit} className="h-10 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:bg-blue-300">{isSavingEdit ? "Đang lưu..." : "Lưu thay đổi"}</button></DialogFooter></form>
         </DialogContent>
       </Dialog>
 

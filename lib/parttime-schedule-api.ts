@@ -122,6 +122,31 @@ export async function getPublicParttimeSchedules(weekStart: string, departmentId
   return [...schedules.values()].map((schedule) => ({ schedule, entries: rows.filter((row) => String(row.schedule_id) === schedule.id).map((row) => mapEntry(row, profiles)) }));
 }
 
+/** The shared schedule board. Unlike the former public view, it also includes open schedules. */
+export async function getParttimeSchedules(weekStart: string, departmentId?: string) {
+  let query = supabase.from("parttime_schedules").select("*").eq("week_start", weekStart);
+  if (departmentId) query = query.eq("department_id", departmentId);
+  const { data, error } = await query.order("department_id");
+  if (error) throw new Error(error.message || "Không tải được danh sách lịch part-time.");
+  const schedules = await enrichSchedules((data ?? []) as ScheduleRow[]);
+  const ids = [...schedules.keys()];
+  if (ids.length === 0) return [] as Array<{ schedule: ParttimeSchedule; entries: ParttimeScheduleEntry[] }>;
+  const { data: entryData, error: entryError } = await supabase
+    .from("parttime_schedule_entries")
+    .select("*")
+    .in("schedule_id", ids)
+    .eq("is_active", true)
+    .order("work_date")
+    .order("shift");
+  if (entryError) throw new Error(entryError.message || "Không tải được các ca đã đăng ký.");
+  const rows = (entryData ?? []) as EntryRow[];
+  const profiles = await getProfiles(rows.map((row) => String(row.profile_id)));
+  return [...schedules.values()].map((schedule) => ({
+    schedule,
+    entries: rows.filter((row) => String(row.schedule_id) === schedule.id).map((row) => mapEntry(row, profiles)),
+  }));
+}
+
 async function getChangeRequests(filters: { profileId?: string; departmentId?: string; weekStart?: string; status?: ParttimeChangeStatus }) {
   let query = supabase.from("parttime_schedule_change_requests").select("*").order("created_at", { ascending: false });
   if (filters.profileId) query = query.eq("profile_id", filters.profileId);
@@ -161,6 +186,7 @@ async function callRpc(name: string, args: Record<string, string | boolean | nul
   if (error) throw new Error(error.message || "Không thể cập nhật lịch part-time.");
 }
 export const registerParttimeShift = (args: { departmentId: string; weekStart: string; workDate: string; shift: ParttimeShift }) => callRpc("register_parttime_shift", { p_department_id: args.departmentId, p_week_start: args.weekStart, p_work_date: args.workDate, p_shift: args.shift });
+export const createParttimeSchedule = (args: { departmentId: string; weekStart: string }) => callRpc("create_parttime_schedule", { p_department_id: args.departmentId, p_week_start: args.weekStart });
 export const unregisterParttimeShift = (entryId: string) => callRpc("unregister_parttime_shift", { p_entry_id: entryId });
 export const finalizeParttimeSchedule = (scheduleId: string) => callRpc("finalize_parttime_schedule", { p_schedule_id: scheduleId });
 export const createParttimeChangeRequest = (input: CreateParttimeChangeRequestInput) => callRpc("create_parttime_change_request", { p_schedule_id: input.scheduleId, p_request_type: input.requestType, p_reason: input.reason, p_original_entry_id: input.originalEntryId ?? null, p_requested_work_date: input.requestedWorkDate ?? null, p_requested_shift: input.requestedShift ?? null });
