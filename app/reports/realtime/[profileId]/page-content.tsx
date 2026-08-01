@@ -340,7 +340,7 @@ export default function RealtimeReportDetailPage() {
               (goal) =>
                 ({
                   id: String(goal.id),
-                  name: String(goal.name ?? "Mục tiêu"),
+                  name: String(goal.name ?? "Goal"),
                   type: goal.type ? String(goal.type) : null,
                   target: toTrackedNumber(goal.target as number | string | null | undefined),
                   unit: goal.unit ? String(goal.unit) : null,

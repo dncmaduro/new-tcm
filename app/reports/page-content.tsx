@@ -441,9 +441,9 @@ export default function ReportsPage() {
                         <th className="px-3 py-3 font-semibold">Nhân sự</th>
                         <th className="px-3 py-3 font-semibold">Phòng ban</th>
                         <th className="px-3 py-3 font-semibold">Khoảng thời gian</th>
-                        <th className="px-3 py-3 font-semibold">Tiến độ mục tiêu</th>
+                        <th className="px-3 py-3 font-semibold">Tiến độ goal</th>
                         <th className="px-3 py-3 font-semibold">Tiến độ KR</th>
-                        <th className="px-3 py-3 font-semibold">Công việc hoàn thành</th>
+                        <th className="px-3 py-3 font-semibold">Task hoàn thành</th>
                         <th className="px-3 py-3 font-semibold">
                           <span className="inline-flex items-center gap-1.5">
                             Khối lượng hoàn thành
@@ -461,7 +461,7 @@ export default function ReportsPage() {
                                 className="w-[260px] p-3 text-xs leading-5 text-slate-600"
                                 align="start"
                               >
-                                Khối lượng được tính theo điểm của các công việc được giao.
+                                Khối lượng được tính theo điểm của các task được giao.
                               </PopoverContent>
                             </Popover>
                           </span>
@@ -500,7 +500,7 @@ export default function ReportsPage() {
                             <CompletionCell
                               completed={report.completed_task_count}
                               total={report.task_count}
-                              unitLabel="công việc"
+                              unitLabel="task"
                             />
                           </td>
                           <td className="px-3 py-4 text-sm font-semibold text-slate-900">

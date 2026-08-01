@@ -23,7 +23,7 @@ export const REPORT_STATUSES = [
 ] as const;
 
 export const REPORT_ITEM_TYPES = [
-  { value: "goal", label: "Mục tiêu" },
+  { value: "goal", label: "Goal" },
   { value: "direct_kr", label: "KR trực tiếp" },
   { value: "support_kr", label: "KR phối hợp" },
   { value: "execution", label: "Task" },
@@ -320,7 +320,7 @@ export const formatReportStatusLabel = (value: string | null | undefined) =>
   reportStatusLabelMap[normalizeReportStatus(value)] ?? "Nháp";
 
 export const formatReportItemTypeLabel = (value: string | null | undefined) =>
-  reportItemTypeLabelMap[normalizeReportItemType(value)] ?? "Mục tiêu";
+  reportItemTypeLabelMap[normalizeReportItemType(value)] ?? "Goal";
 
 export const getReportStatusTone = (value: string | null | undefined) => {
   const normalized = normalizeReportStatus(value);
@@ -559,7 +559,7 @@ export const getManagerStatusChoices = (status: string | null | undefined): Perf
 
 export const getReportItemGroupDescription = (itemType: PerformanceReportItemType) => {
   if (itemType === "goal") {
-    return "Nhóm này cho thấy mức độ bao đạt mục tiêu trong kỳ đánh giá.";
+    return "Nhóm này cho thấy mức độ bao đạt goal trong kỳ đánh giá.";
   }
   if (itemType === "direct_kr") {
     return "Nhóm này phản ánh mức đóng góp trực tiếp vào kết quả chính của kỳ đánh giá.";
@@ -567,7 +567,7 @@ export const getReportItemGroupDescription = (itemType: PerformanceReportItemTyp
   if (itemType === "support_kr") {
     return "Nhóm này phản ánh phần phối hợp với các KR trực tiếp và các nhóm liên quan.";
   }
-  return "Nhóm này tóm tắt tiến độ task để tham khảo thêm, không thay thế mục tiêu và KR.";
+  return "Nhóm này tóm tắt tiến độ task để tham khảo thêm, không thay thế goal và KR.";
 };
 
 export const buildDepartmentSubtreeIds = (

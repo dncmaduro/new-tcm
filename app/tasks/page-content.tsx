@@ -69,6 +69,7 @@ import {
   getStatusColors,
   getItemProgressStatus,
 } from "@/lib/timeline-ui-helpers";
+import { OKR_FEATURE_ENABLED } from "@/lib/features";
 const DEFAULT_LEFT_PANEL_WIDTH = 420;
 const TASK_LEFT_PANEL_WIDTH = 360;
 const BOARD_BOTTOM_SAFE_SPACE = 24;
@@ -252,22 +253,22 @@ const clampProgress = (value: number | null | undefined) => {
 
 const getSearchPlaceholder = (level: StructureMode) => {
   if (level === "goal") {
-    return "Tìm kiếm mục tiêu...";
+    return "Tìm kiếm goal...";
   }
   if (level === "key_result") {
     return "Tìm kiếm KR...";
   }
-  return "Tìm kiếm công việc...";
+  return "Tìm kiếm task...";
 };
 
 const getAddButtonLabel = (level: StructureMode) => {
   if (level === "goal") {
-    return "+ Thêm mục tiêu";
+    return "+ Thêm goal";
   }
   if (level === "key_result") {
     return "+ Thêm KR";
   }
-  return "+ Thêm công việc";
+  return "+ Thêm task";
 };
 
 const STATUS_FILTER_OPTIONS: Array<{ value: ItemStatusFilter; label: string }> = [
@@ -1054,7 +1055,7 @@ function KeyResultTimelineBar({
             <div className="h-px bg-slate-100" />
             <div className="space-y-2 text-sm">
               <div className="flex items-start justify-between gap-3">
-                <span className="text-slate-600">Mục tiêu</span>
+                <span className="text-slate-600">Goal</span>
                 <span className="text-right font-semibold text-slate-900">
                   {keyResult.goalName}
                 </span>
@@ -1127,7 +1128,7 @@ function TasksPageContent() {
   const [statusFilter, setStatusFilter] = useState<ItemStatusFilter>("all");
   const [priorityFilter, setPriorityFilter] = useState<"all" | string>("all");
   const [overdueFilter, setOverdueFilter] = useState<OverdueFilter>("all");
-  const [viewMode, setViewMode] = useState<TaskViewMode>("gantt");
+  const [viewMode, setViewMode] = useState<TaskViewMode>("list");
   const [structureMode, setStructureMode] = useState<StructureMode>("task");
   const [timeScale, setTimeScale] = useState<TimelineScale>("week");
   const [zoomLevel, setZoomLevel] = useState(1);
@@ -1226,6 +1227,7 @@ function TasksPageContent() {
               )
             `,
             )
+            .neq("is_backlog", true)
             .order("created_at", { ascending: false }),
           supabase.from("profiles").select("id,name,email").order("name", { ascending: true }),
           supabase
@@ -1308,7 +1310,7 @@ function TasksPageContent() {
         }
 
         if (goalOwnersError) {
-          setTaskLoadError(goalOwnersError.message || "Không tải được owners của mục tiêu.");
+          setTaskLoadError(goalOwnersError.message || "Không tải được owners của goal.");
           setTasks([]);
           setGoals([]);
           setKeyResults([]);
@@ -1349,7 +1351,7 @@ function TasksPageContent() {
               Array.isArray(rawRow.profile) ? (rawRow.profile[0] ?? null) : rawRow.profile,
             );
             const effectiveAssignee = assignee ?? fallbackAssignee;
-            const goalName = keyResult?.goal?.name ?? "Chưa có mục tiêu";
+            const goalName = keyResult?.goal?.name ?? "Chưa có goal";
             const keyResultName =
               keyResult?.name ?? (row.key_result_id ? "KR không khả dụng" : "Chưa gắn key result");
             const keyResultMetric = keyResult
@@ -1668,7 +1670,7 @@ function TasksPageContent() {
       keyResults.map((keyResult) => ({
         id: keyResult.id,
         goalId: keyResult.goal?.id ?? (keyResult.goal_id ? String(keyResult.goal_id) : "no-goal"),
-        goalName: keyResult.goal?.name ?? "Chưa có mục tiêu",
+        goalName: keyResult.goal?.name ?? "Chưa có goal",
         name: keyResult.name,
         metric: formatKeyResultProgressMetric(keyResult.current, keyResult.target, keyResult.unit),
         startDate: keyResult.start_date,
@@ -1994,14 +1996,14 @@ function TasksPageContent() {
     () =>
       ({
         goal: {
-          label: "Mục tiêu",
-          pluralLabel: "mục tiêu",
-          subtitle: "Chế độ xem theo cấp mục tiêu",
-          ganttTitle: "Biểu đồ mục tiêu",
-          listTitle: "Danh sách mục tiêu",
-          missingTitle: "Mục tiêu chưa có thời gian thực thi",
+          label: "Goal",
+          pluralLabel: "goal",
+          subtitle: "Chế độ xem theo cấp goal",
+          ganttTitle: "Biểu đồ goal",
+          listTitle: "Danh sách goal",
+          missingTitle: "Goal chưa có thời gian thực thi",
           missingDescription:
-            "Các mục tiêu này chưa có đủ ngày bắt đầu và ngày kết thúc nên chưa thể hiển thị như timeline bar.",
+            "Các goal này chưa có đủ ngày bắt đầu và ngày kết thúc nên chưa thể hiển thị như timeline bar.",
         },
         key_result: {
           label: "Key Result",
@@ -2014,14 +2016,14 @@ function TasksPageContent() {
             "Các key result này chưa có đủ ngày bắt đầu và ngày kết thúc nên chưa thể hiển thị như timeline bar.",
         },
         task: {
-          label: "Công việc",
-          pluralLabel: "công việc",
-          subtitle: "Chế độ xem theo cấp công việc",
-          ganttTitle: "Biểu đồ tiến độ công việc",
-          listTitle: "Danh sách công việc",
-          missingTitle: "Công việc chưa có mốc thời gian",
+          label: "Task",
+          pluralLabel: "task",
+          subtitle: "Chế độ xem theo cấp task",
+          ganttTitle: "Biểu đồ tiến độ task",
+          listTitle: "Danh sách task",
+          missingTitle: "Task chưa có mốc thời gian",
           missingDescription:
-            "Các công việc này chưa có đủ ngày bắt đầu và ngày kết thúc nên chưa thể hiển thị như timeline bar.",
+            "Các task này chưa có đủ ngày bắt đầu và ngày kết thúc nên chưa thể hiển thị như timeline bar.",
         },
       }) satisfies Record<
         StructureMode,
@@ -2428,6 +2430,10 @@ function TasksPageContent() {
   }, [filteredKeyResultTimelineItems, keyResultFilter, keyResultFilters, structureMode]);
 
   const addTaskHref = useMemo(() => {
+    if (!OKR_FEATURE_ENABLED) {
+      return "/tasks/new";
+    }
+
     const params = new URLSearchParams();
     const defaultDepartmentId = rootDepartments[0]?.id;
     if (defaultDepartmentId) {
@@ -2706,10 +2712,10 @@ function TasksPageContent() {
   const renderGanttBoard = () => {
     const leftPanelTitle =
       structureMode === "goal"
-        ? "Danh sách mục tiêu"
+        ? "Danh sách goal"
         : structureMode === "key_result"
           ? "Danh sách key result"
-          : "Danh sách công việc";
+          : "Danh sách task";
 
     return (
       <section
@@ -2990,7 +2996,7 @@ function TasksPageContent() {
                             />
                           ) : (
                             <div className="absolute inset-y-0 left-0 flex items-center px-4 text-xs text-slate-400">
-                              Công việc chưa có mốc thời gian
+                              Task chưa có mốc thời gian
                             </div>
                           )}
                         </div>
@@ -3015,7 +3021,7 @@ function TasksPageContent() {
                 {currentModeMeta.listTitle}
               </h2>
               <p className="mt-0.5 text-xs text-slate-500">
-                Theo dõi nhanh tiến độ và thời gian của từng mục tiêu.
+                Theo dõi nhanh tiến độ và thời gian của từng goal.
               </p>
             </div>
             <span className="inline-flex h-7 items-center rounded-full bg-slate-100 px-3 text-xs font-semibold text-slate-700">
@@ -3029,7 +3035,7 @@ function TasksPageContent() {
                 <thead className="bg-slate-50">
                   <tr className="text-[11px] uppercase tracking-[0.08em] text-slate-500">
                     <th className="sticky top-0 z-10 bg-slate-50 px-4 py-3 font-semibold">
-                      Mục tiêu
+                      Goal
                     </th>
                     <th className="sticky top-0 z-10 bg-slate-50 px-4 py-3 font-semibold">Owner</th>
                     <th className="sticky top-0 z-10 bg-slate-50 px-4 py-3 font-semibold">Quý</th>
@@ -3108,7 +3114,7 @@ function TasksPageContent() {
                 {currentModeMeta.listTitle}
               </h2>
               <p className="mt-0.5 text-xs text-slate-500">
-                Danh sách KR gọn hơn để so sánh tiến độ và mục tiêu liên quan.
+                Danh sách KR gọn hơn để so sánh tiến độ và goal liên quan.
               </p>
             </div>
             <span className="inline-flex h-7 items-center rounded-full bg-slate-100 px-3 text-xs font-semibold text-slate-700">
@@ -3125,7 +3131,7 @@ function TasksPageContent() {
                       Key Result
                     </th>
                     <th className="sticky top-0 z-10 bg-slate-50 px-4 py-3 font-semibold">
-                      Mục tiêu
+                      Goal
                     </th>
                     <th className="sticky top-0 z-10 bg-slate-50 px-4 py-3 font-semibold">Owner</th>
                     <th className="sticky top-0 z-10 bg-slate-50 px-4 py-3 font-semibold">
@@ -3221,11 +3227,13 @@ function TasksPageContent() {
               <thead className="bg-slate-50">
                 <tr className="text-[11px] uppercase tracking-[0.08em] text-slate-500">
                   <th className="sticky top-0 z-10 bg-slate-50 px-4 py-3 font-semibold">
-                    Công việc
+                    Task
                   </th>
-                  <th className="sticky top-0 z-10 bg-slate-50 px-4 py-3 font-semibold">
-                    Key Result
-                  </th>
+                  {OKR_FEATURE_ENABLED ? (
+                    <th className="sticky top-0 z-10 bg-slate-50 px-4 py-3 font-semibold">
+                      Key Result
+                    </th>
+                  ) : null}
                   <th className="sticky top-0 z-10 bg-slate-50 px-4 py-3 font-semibold">
                     Người phụ trách
                   </th>
@@ -3256,11 +3264,13 @@ function TasksPageContent() {
                           {task.name}
                         </Link>
                       </td>
-                      <td className="px-4 py-3.5 text-slate-700">
-                        <span className="block max-w-[220px] truncate" title={task.keyResultName}>
-                          {task.keyResultName}
-                        </span>
-                      </td>
+                      {OKR_FEATURE_ENABLED ? (
+                        <td className="px-4 py-3.5 text-slate-700">
+                          <span className="block max-w-[220px] truncate" title={task.keyResultName}>
+                            {task.keyResultName}
+                          </span>
+                        </td>
+                      ) : null}
                       <td className="px-4 py-3.5 text-slate-600">{task.assigneeName}</td>
                       <td className="px-4 py-3.5 text-slate-600">
                         {formatTimelineRangeVi(task.startDate, task.endDate, {
@@ -3301,7 +3311,7 @@ function TasksPageContent() {
           {filteredTasks.length > 0 ? (
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
               <p className="text-sm text-slate-600">
-                Hiển thị {taskListRangeStart}-{taskListRangeEnd} / {filteredTasks.length} công việc
+                Hiển thị {taskListRangeStart}-{taskListRangeEnd} / {filteredTasks.length} task
               </p>
               <div className="flex items-center gap-2">
                 <button
@@ -3338,8 +3348,8 @@ function TasksPageContent() {
 
         <div className="flex min-w-0 flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <WorkspacePageHeader
-            title="Biểu đồ công việc"
-            items={[{ label: "Quản lý công việc" }]}
+            title="Biểu đồ task"
+            items={[{ label: "Quản lý task" }]}
             compact
           />
 
@@ -3347,7 +3357,7 @@ function TasksPageContent() {
             {showPermissionDebug && permissionDebug ? (
               <div className="shrink-0 rounded-2xl border border-slate-200 bg-slate-950 px-4 py-3 text-xs text-slate-100">
                 <p className="mb-2 font-semibold text-sky-300">
-                  Debug quyền tạo công việc (debugPermission=1)
+                  Debug quyền tạo task (debugPermission=1)
                 </p>
                 <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed">
                   {JSON.stringify(permissionDebug, null, 2)}
@@ -3366,26 +3376,19 @@ function TasksPageContent() {
                       Danh sách
                     </ScaleButton>
                   </div>
-                  <div className="inline-flex h-9 items-center rounded-xl bg-slate-100 p-1">
-                    <ScaleButton
-                      active={structureMode === "goal"}
-                      onClick={() => handleLevelChange("goal")}
-                    >
-                      Mục tiêu
-                    </ScaleButton>
-                    <ScaleButton
-                      active={structureMode === "key_result"}
-                      onClick={() => handleLevelChange("key_result")}
-                    >
-                      KR
-                    </ScaleButton>
-                    <ScaleButton
-                      active={structureMode === "task"}
-                      onClick={() => handleLevelChange("task")}
-                    >
-                      Công việc
-                    </ScaleButton>
-                  </div>
+                  {OKR_FEATURE_ENABLED ? (
+                    <div className="inline-flex h-9 items-center rounded-xl bg-slate-100 p-1">
+                      <ScaleButton active={structureMode === "goal"} onClick={() => handleLevelChange("goal")}>
+                        Goal
+                      </ScaleButton>
+                      <ScaleButton active={structureMode === "key_result"} onClick={() => handleLevelChange("key_result")}>
+                        KR
+                      </ScaleButton>
+                      <ScaleButton active={structureMode === "task"} onClick={() => handleLevelChange("task")}>
+                        Task
+                      </ScaleButton>
+                    </div>
+                  ) : null}
                 </div>
 
                 {!isCheckingCreatePermission && canCreateTask ? (
@@ -3407,7 +3410,7 @@ function TasksPageContent() {
                   className="h-9 min-w-[220px] flex-1 rounded-xl border border-slate-200 bg-white px-3.5 text-sm outline-none transition hover:border-slate-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
                 />
 
-                {(structureMode === "key_result" || structureMode === "task") && (
+                {OKR_FEATURE_ENABLED && (structureMode === "key_result" || structureMode === "task") && (
                   <Select
                     value={goalFilter === "all" ? undefined : goalFilter}
                     onValueChange={(value) => {
@@ -3415,10 +3418,10 @@ function TasksPageContent() {
                     }}
                   >
                     <SelectTrigger className={selectTriggerClassName}>
-                      <SelectValue placeholder="Mục tiêu" />
+                      <SelectValue placeholder="Goal" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">Tất cả mục tiêu</SelectItem>
+                      <SelectItem value="all">Tất cả goal</SelectItem>
                       {goalFilters.map((goal) => (
                         <SelectItem key={goal.id} value={goal.id}>
                           {goal.name}
@@ -3428,7 +3431,7 @@ function TasksPageContent() {
                   </Select>
                 )}
 
-                {structureMode === "task" ? (
+                {OKR_FEATURE_ENABLED && structureMode === "task" ? (
                   <Select
                     value={keyResultFilter === "all" ? undefined : keyResultFilter}
                     onValueChange={(value) => setKeyResultFilter(value as "all" | string)}
@@ -3447,7 +3450,7 @@ function TasksPageContent() {
                   </Select>
                 ) : null}
 
-                {(structureMode === "goal" || structureMode === "key_result") && (
+                {OKR_FEATURE_ENABLED && (structureMode === "goal" || structureMode === "key_result") && (
                   <>
                     <Select
                       value={departmentFilter === "all" ? undefined : departmentFilter}
@@ -3501,7 +3504,7 @@ function TasksPageContent() {
                   </>
                 )}
 
-                {(structureMode === "key_result" || structureMode === "task") && (
+                {(structureMode === "task" || (OKR_FEATURE_ENABLED && structureMode === "key_result")) && (
                   <Select
                     value={assigneeFilter === "all" ? undefined : assigneeFilter}
                     onValueChange={(value) => setAssigneeFilter(value as "all" | string)}
@@ -3637,7 +3640,7 @@ function TasksPageContent() {
                     href="/goals"
                     className="mt-4 inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
                   >
-                    Đi tới mục tiêu
+                    Đi tới goal
                   </Link>
                 </div>
               </section>

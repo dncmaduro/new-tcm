@@ -1219,7 +1219,7 @@ function GoalsPageContent() {
       }
 
       if (goalsLoadError) {
-        setGoalsError("Không tải được danh sách mục tiêu từ hệ thống.");
+        setGoalsError("Không tải được danh sách goal từ hệ thống.");
         setNodes([]);
         setEdges([]);
         setKeyResultDetailsById({});
@@ -1244,7 +1244,7 @@ function GoalsPageContent() {
         return;
       }
       if (goalDepartmentsLoadError) {
-        setGoalsError("Không tải được cấu trúc phòng ban tham gia mục tiêu.");
+        setGoalsError("Không tải được cấu trúc phòng ban tham gia goal.");
         setNodes([]);
         setEdges([]);
         setKeyResultDetailsById({});
@@ -1269,7 +1269,7 @@ function GoalsPageContent() {
         return;
       }
       if (tasksLoadError) {
-        setGoalsError("Không tải được dữ liệu task để hiển thị số lượng công việc.");
+        setGoalsError("Không tải được dữ liệu task để hiển thị số lượng task.");
         setNodes([]);
         setEdges([]);
         setKeyResultDetailsById({});
@@ -1328,7 +1328,7 @@ function GoalsPageContent() {
           ((goalsData ?? []) as GoalRow[]).map((goal) => String(goal.id)),
         );
       } catch {
-        setGoalsError("Không tải được danh sách owners của mục tiêu.");
+        setGoalsError("Không tải được danh sách owners của goal.");
         setNodes([]);
         setEdges([]);
         setKeyResultDetailsById({});
@@ -1577,7 +1577,7 @@ function GoalsPageContent() {
 
       if (logsError) {
         setGoalLogs([]);
-        setGoalLogsError("Không tải được nhật ký mục tiêu.");
+        setGoalLogsError("Không tải được nhật ký goal.");
         setIsLoadingGoalLogs(false);
         return;
       }
@@ -2360,7 +2360,7 @@ function GoalsPageContent() {
       return;
     }
 
-    const confirmed = window.confirm(`Xóa mục tiêu "${targetGoal.tieuDe}"?`);
+    const confirmed = window.confirm(`Xóa goal "${targetGoal.tieuDe}"?`);
     if (!confirmed) {
       return;
     }
@@ -2374,7 +2374,7 @@ function GoalsPageContent() {
 
     if (keyResultsError) {
       window.alert(
-        keyResultsError.message || "Không thể tải danh sách key result để xóa mục tiêu.",
+        keyResultsError.message || "Không thể tải danh sách key result để xóa goal.",
       );
       setDeletingGoalId(null);
       return;
@@ -2391,7 +2391,7 @@ function GoalsPageContent() {
       if (deleteOutboundSupportLinksError) {
         window.alert(
           deleteOutboundSupportLinksError.message ||
-            "Không thể xóa các liên kết hỗ trợ outbound của mục tiêu.",
+            "Không thể xóa các liên kết hỗ trợ outbound của goal.",
         );
         setDeletingGoalId(null);
         return;
@@ -2405,7 +2405,7 @@ function GoalsPageContent() {
       if (deleteInboundSupportLinksError) {
         window.alert(
           deleteInboundSupportLinksError.message ||
-            "Không thể xóa các liên kết hỗ trợ inbound của mục tiêu.",
+            "Không thể xóa các liên kết hỗ trợ inbound của goal.",
         );
         setDeletingGoalId(null);
         return;
@@ -2417,7 +2417,7 @@ function GoalsPageContent() {
         .in("key_result_id", keyResultIds);
 
       if (deleteTasksError) {
-        window.alert(deleteTasksError.message || "Không thể xóa công việc thuộc mục tiêu.");
+        window.alert(deleteTasksError.message || "Không thể xóa task thuộc goal.");
         setDeletingGoalId(null);
         return;
       }
@@ -2430,7 +2430,7 @@ function GoalsPageContent() {
 
     if (deleteGoalDepartmentsError) {
       window.alert(
-        deleteGoalDepartmentsError.message || "Không thể xóa phòng ban tham gia của mục tiêu.",
+        deleteGoalDepartmentsError.message || "Không thể xóa phòng ban tham gia của goal.",
       );
       setDeletingGoalId(null);
       return;
@@ -2442,7 +2442,7 @@ function GoalsPageContent() {
       .eq("goal_id", goalId);
 
     if (deleteGoalOwnersError) {
-      window.alert(deleteGoalOwnersError.message || "Không thể xóa owners của mục tiêu.");
+      window.alert(deleteGoalOwnersError.message || "Không thể xóa owners của goal.");
       setDeletingGoalId(null);
       return;
     }
@@ -2454,7 +2454,7 @@ function GoalsPageContent() {
         .in("id", keyResultIds);
 
       if (deleteKeyResultsError) {
-        window.alert(deleteKeyResultsError.message || "Không thể xóa key result của mục tiêu.");
+        window.alert(deleteKeyResultsError.message || "Không thể xóa key result của goal.");
         setDeletingGoalId(null);
         return;
       }
@@ -2463,7 +2463,7 @@ function GoalsPageContent() {
     const { error } = await supabase.from("goals").delete().eq("id", goalId);
 
     if (error) {
-      window.alert(error.message || "Không thể xóa mục tiêu.");
+      window.alert(error.message || "Không thể xóa goal.");
       setDeletingGoalId(null);
       return;
     }
@@ -2522,7 +2522,7 @@ function GoalsPageContent() {
       <>
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-4">
           <h2 className="text-lg font-semibold tracking-[-0.02em] text-slate-900">
-            {selectedKeyResult ? "Chi tiết KR" : "Chi tiết mục tiêu"}
+            {selectedKeyResult ? "Chi tiết KR" : "Chi tiết goal"}
           </h2>
           <button
             type="button"
@@ -2548,7 +2548,7 @@ function GoalsPageContent() {
                     {selectedKeyResult.name}
                   </h3>
                   <p className="mt-2 text-sm text-slate-500">
-                    Thuộc mục tiêu: {selectedGoal.tieuDe}
+                    Thuộc goal: {selectedGoal.tieuDe}
                   </p>
                 </div>
 
@@ -2634,7 +2634,7 @@ function GoalsPageContent() {
               <>
                 <div>
                   <p className="text-[11px] font-semibold tracking-[0.08em] text-blue-600 uppercase">
-                    Mục tiêu
+                    Goal
                   </p>
                   <h3 className="mt-2 text-xl font-semibold leading-tight tracking-[-0.03em] text-slate-900">
                     {selectedGoal.tieuDe}
@@ -2669,7 +2669,7 @@ function GoalsPageContent() {
                 ) : (
                   <div className="rounded-2xl border border-dashed border-blue-200 bg-blue-50/60 p-4">
                     <p className="text-sm font-medium text-slate-700">
-                      Chưa có Key Result. Hãy thêm KR để bắt đầu theo dõi mục tiêu.
+                      Chưa có Key Result. Hãy thêm KR để bắt đầu theo dõi goal.
                     </p>
                     <Link
                       href={`/goals/${selectedGoal.id}/key-results/new`}
@@ -2720,7 +2720,7 @@ function GoalsPageContent() {
                   href={selectedKeyResultCreateTaskHref}
                   className="flex h-10 flex-1 items-center justify-center rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                 >
-                  Thêm công việc
+                  Thêm task
                 </Link>
                 <Link
                   href={`/goals/${selectedGoal.id}/key-results/${selectedKeyResult.id}`}
@@ -2763,8 +2763,8 @@ function GoalsPageContent() {
           <main className="relative flex h-screen w-full min-w-0 overflow-hidden">
             <section className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               <WorkspacePageHeader
-                title="Mục tiêu"
-                items={[{ label: "Mục tiêu" }]}
+                title="Goal"
+                items={[{ label: "Goal" }]}
                 compact
                 actions={
                   !isCheckingCreatePermission && canCreateGoal ? (
@@ -2779,7 +2779,7 @@ function GoalsPageContent() {
                       }}
                       className="h-9 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-700"
                     >
-                      Thêm mục tiêu
+                      Thêm goal
                     </button>
                   ) : null
                 }
@@ -2891,7 +2891,7 @@ function GoalsPageContent() {
               {showPermissionDebug && permissionDebug ? (
                 <div className="border-b border-slate-200 bg-slate-950 px-4 py-3 text-xs text-slate-100 lg:px-7">
                   <p className="mb-2 font-semibold text-sky-300">
-                    Debug quyền tạo mục tiêu (debugPermission=1)
+                    Debug quyền tạo goal (debugPermission=1)
                   </p>
                   <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed">
                     {JSON.stringify(permissionDebug, null, 2)}
@@ -2903,7 +2903,7 @@ function GoalsPageContent() {
                 {isLoadingGoals ? (
                   <div className="p-4 lg:p-6">
                     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 text-sm text-slate-600">
-                      Đang tải dữ liệu mục tiêu...
+                      Đang tải dữ liệu goal...
                     </div>
                   </div>
                 ) : goalsError ? (
@@ -2915,14 +2915,14 @@ function GoalsPageContent() {
                 ) : nodes.length === 0 ? (
                   <div className="p-4 lg:p-6">
                     <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 text-sm text-slate-600">
-                      Chưa có mục tiêu nào trong hệ thống.
+                      Chưa có goal nào trong hệ thống.
                     </div>
                   </div>
                 ) : mode === "canvas" ? (
                   <div className="h-full min-h-0 p-5 pb-8 lg:p-6 lg:pb-10">
                     {filteredNodes.length === 0 ? (
                       <div className="flex h-full min-h-0 items-center justify-center rounded-[28px] border border-slate-200 bg-white/70 px-4 text-sm text-slate-600">
-                        Không có mục tiêu phù hợp với bộ lọc hiện tại.
+                        Không có goal phù hợp với bộ lọc hiện tại.
                       </div>
                     ) : (
                       <div
@@ -2966,7 +2966,7 @@ function GoalsPageContent() {
                             <p className="font-semibold text-slate-800">Hướng dẫn thao tác</p>
                             <ul className="list-disc space-y-1 pl-4">
                               <li>Nhấp vào một mục để tập trung cụm.</li>
-                              <li>Kéo từng thẻ Mục tiêu hoặc KR để di chuyển riêng.</li>
+                              <li>Kéo từng thẻ Goal hoặc KR để di chuyển riêng.</li>
                               <li>Lăn chuột để phóng to/thu nhỏ.</li>
                             </ul>
                           </PopoverContent>
@@ -3211,7 +3211,7 @@ function GoalsPageContent() {
                                           onPointerDown={(event) => event.stopPropagation()}
                                           className="flex w-full items-center px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                                         >
-                                          Sửa mục tiêu
+                                          Sửa goal
                                         </button>
                                         <button
                                           type="button"
@@ -3225,7 +3225,7 @@ function GoalsPageContent() {
                                         >
                                           {deletingGoalId === goal.id
                                             ? "Đang xóa..."
-                                            : "Xóa mục tiêu"}
+                                            : "Xóa goal"}
                                         </button>
                                       </div>
                                     ) : null}
@@ -3297,7 +3297,7 @@ function GoalsPageContent() {
                                     </div>
                                     <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                                       <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
-                                        Công việc
+                                        Task
                                       </p>
                                       <p className="mt-1 text-lg font-semibold text-slate-900">
                                         {goal.taskCount}
@@ -3354,7 +3354,7 @@ function GoalsPageContent() {
                                   Mở chi tiết cho: {selectedGoal.tieuDe}
                                 </button>
                               ) : (
-                                <p>Chọn một mục tiêu hoặc KR để xem chi tiết.</p>
+                                <p>Chọn một goal hoặc KR để xem chi tiết.</p>
                               )}
                             </div>
                           </div>
@@ -3369,10 +3369,10 @@ function GoalsPageContent() {
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
                             <h2 className="text-xl font-semibold tracking-[-0.02em] text-slate-900">
-                              Danh sách mục tiêu
+                              Danh sách goal
                             </h2>
                             <p className="mt-1 text-sm text-slate-500">
-                              Hiển thị {filteredNodes.length}/{nodes.length} mục tiêu
+                              Hiển thị {filteredNodes.length}/{nodes.length} goal
                             </p>
                           </div>
                         </div>
@@ -3486,7 +3486,7 @@ function GoalsPageContent() {
                             <thead>
                               <tr className="text-[11px] tracking-[0.08em] text-slate-500 uppercase">
                                 <th className="sticky top-0 left-0 z-30 w-[360px] min-w-[360px] border-b border-r border-slate-200 bg-slate-50 px-5 py-3 font-semibold shadow-[12px_0_22px_-22px_rgba(15,23,42,0.4)]">
-                                  Mục tiêu
+                                  Goal
                                 </th>
                                 <th className="sticky top-0 z-20 w-[220px] border-b border-slate-200 bg-slate-50 px-4 py-3 font-semibold">
                                   Phòng ban
@@ -3580,7 +3580,7 @@ function GoalsPageContent() {
                                     colSpan={6}
                                     className="bg-white px-5 py-10 text-center text-sm text-slate-500"
                                   >
-                                    Không có mục tiêu phù hợp với bộ lọc hiện tại.
+                                    Không có goal phù hợp với bộ lọc hiện tại.
                                   </td>
                                 </tr>
                               )}
@@ -3656,7 +3656,7 @@ function GoalsPageContent() {
                 <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
                   <div>
                     <h3 className="text-lg font-semibold text-slate-900">
-                      Nhật ký kiểm tra mục tiêu
+                      Nhật ký kiểm tra goal
                     </h3>
                     <p className="mt-1 text-sm text-slate-500">{selectedGoal.tieuDe}</p>
                   </div>
@@ -3676,7 +3676,7 @@ function GoalsPageContent() {
                     <p className="text-sm text-rose-600">{goalLogsError}</p>
                   ) : goalLogs.length === 0 ? (
                     <p className="text-sm text-slate-500">
-                      Chưa có bản ghi nhật ký cho mục tiêu này.
+                      Chưa có bản ghi nhật ký cho goal này.
                     </p>
                   ) : (
                     goalLogs.map((log) => {

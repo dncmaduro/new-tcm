@@ -26,7 +26,7 @@ const healthLabelMap: Record<DepartmentPerformanceHealth, string> = {
   on_track: "Đúng tiến độ",
   at_risk: "Cần theo dõi",
   off_track: "Chậm tiến độ",
-  achieved: "Đạt mục tiêu",
+  achieved: "Đạt goal",
 };
 
 const goalStatusLabelMap: Record<string, string> = {
@@ -313,7 +313,7 @@ function GoalTrendSparkline({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-slate-900">Xu hướng tiến độ</p>
-          <p className="mt-1 text-xs text-slate-500">Dựng từ lịch sử các lần cập nhật tiến độ của mục tiêu.</p>
+          <p className="mt-1 text-xs text-slate-500">Dựng từ lịch sử các lần cập nhật tiến độ của goal.</p>
         </div>
         <span className="text-xs text-slate-500">{points.length} mốc</span>
       </div>
@@ -545,12 +545,12 @@ export function DepartmentSummaryCards({
   return (
     <section className="grid gap-4 xl:grid-cols-4">
       <SummaryCard
-        title="Hiệu suất hoàn thành mục tiêu"
+        title="Hiệu suất hoàn thành goal"
         value={summary.goalPerformance}
         unit="%"
-        note={`${summary.trackedGoals} mục tiêu đang theo dõi`}
-        helper="Trung bình tiến độ của các mục tiêu đang theo dõi trong phạm vi hiện tại."
-        info="Lấy trung bình phần trăm tiến độ của các mục tiêu đang theo dõi. Không tính các mục tiêu đã hoàn thành hoặc đã hủy."
+        note={`${summary.trackedGoals} goal đang theo dõi`}
+        helper="Trung bình tiến độ của các goal đang theo dõi trong phạm vi hiện tại."
+        info="Lấy trung bình phần trăm tiến độ của các goal đang theo dõi. Không tính các goal đã hoàn thành hoặc đã hủy."
         badgeLabel="Tiến độ"
         tone="blue"
         loading={loading}
@@ -578,12 +578,12 @@ export function DepartmentSummaryCards({
         loading={loading}
       />
       <SummaryCard
-        title="Mục tiêu rủi ro"
+        title="Goal rủi ro"
         value={summary.goalsAtRisk}
         unit="count"
-        note={`${summary.trackedGoals} mục tiêu đang theo dõi`}
-        helper="Số mục tiêu đang chậm tiến độ hoặc có KR rơi vào vùng cần chú ý."
-        info="Đếm các mục tiêu đang theo dõi có health ở mức at_risk hoặc off_track, hoặc có direct/support KR nằm trong vùng rủi ro."
+        note={`${summary.trackedGoals} goal đang theo dõi`}
+        helper="Số goal đang chậm tiến độ hoặc có KR rơi vào vùng cần chú ý."
+        info="Đếm các goal đang theo dõi có health ở mức at_risk hoặc off_track, hoặc có direct/support KR nằm trong vùng rủi ro."
         badgeLabel="Cần chú ý"
         tone="rose"
         loading={loading}
@@ -716,7 +716,7 @@ function AnalyticsTrendChart({ points }: { points: DepartmentTrendPoint[] }) {
 
 function GoalProgressChart({ items }: { items: DepartmentGoalChartItem[] }) {
   if (items.length === 0) {
-    return <EmptyPanel text="Chưa có mục tiêu phù hợp để so sánh tiến độ." />;
+    return <EmptyPanel text="Chưa có goal phù hợp để so sánh tiến độ." />;
   }
 
   return (
@@ -833,7 +833,7 @@ export function DepartmentAnalyticsSection({
         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Phân tích trực quan</p>
         <h2 className="mt-2 text-[30px] font-semibold tracking-[-0.03em] text-slate-950">Tín hiệu cần đọc trước khi xuống chi tiết</h2>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-          Biểu đồ ở đây ưu tiên quyết định quản trị: nhìn xu hướng chung, xác định mục tiêu yếu nhất và xem vấn đề nằm ở KR trực tiếp hay KR hỗ trợ.
+          Biểu đồ ở đây ưu tiên quyết định quản trị: nhìn xu hướng chung, xác định goal yếu nhất và xem vấn đề nằm ở KR trực tiếp hay KR hỗ trợ.
         </p>
       </div>
       {loading || error ? (
@@ -843,14 +843,14 @@ export function DepartmentAnalyticsSection({
           <AnalyticsCard
             icon={<LineChart className="h-5 w-5" />}
             title="Xu hướng hiệu suất"
-            description="Dựng theo các kỳ mục tiêu hiện có trong phạm vi lọc. Nếu chỉ còn một mốc, hệ thống giữ trạng thái trống thay vì vẽ xu hướng giả."
+            description="Dựng theo các kỳ goal hiện có trong phạm vi lọc. Nếu chỉ còn một mốc, hệ thống giữ trạng thái trống thay vì vẽ xu hướng giả."
           >
             <AnalyticsTrendChart points={analytics.trend} />
           </AnalyticsCard>
           <AnalyticsCard
             icon={<Target className="h-5 w-5" />}
-            title="Mục tiêu cần chú ý"
-            description="Sắp theo mục tiêu yếu nhất lên trước để nhận diện ngay phần đang kéo hiệu suất xuống."
+            title="Goal cần chú ý"
+            description="Sắp theo goal yếu nhất lên trước để nhận diện ngay phần đang kéo hiệu suất xuống."
           >
             <GoalProgressChart items={analytics.goalProgress} />
           </AnalyticsCard>
@@ -894,8 +894,8 @@ export function DepartmentGoalsSection({
   return (
     <article className="rounded-3xl border border-slate-200 bg-white shadow-[0_20px_50px_-40px_rgba(15,23,42,0.55)]">
       <SectionHeading
-        eyebrow="Mục tiêu"
-        title="Hiệu suất mục tiêu"
+        eyebrow="Goal"
+        title="Hiệu suất goal"
       />
       <div className="px-6 py-6">
         {loading || error || goals.length === 0 ? (
@@ -903,13 +903,13 @@ export function DepartmentGoalsSection({
             loading={loading}
             error={error}
             empty={goals.length === 0}
-            emptyText="Không có mục tiêu phù hợp với bộ lọc hiện tại."
+            emptyText="Không có goal phù hợp với bộ lọc hiện tại."
           />
         ) : (
           <div className="space-y-4">
             <ProgressSortToolbar
-              needsAttentionText={`${needsAttentionCount} mục tiêu cần chú ý`}
-              totalText={`${goals.length} mục tiêu trong phạm vi`}
+              needsAttentionText={`${needsAttentionCount} goal cần chú ý`}
+              totalText={`${goals.length} goal trong phạm vi`}
               sortOption={sortOption}
               onSortChange={setSortOption}
             />
@@ -971,7 +971,7 @@ export function DepartmentGoalsSection({
                     <div className="rounded-3xl border border-white bg-white p-4">
                       <div className="flex items-end justify-between gap-3">
                         <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Hiệu suất mục tiêu</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Hiệu suất goal</p>
                           <p className="mt-2 text-[36px] font-semibold leading-none tracking-[-0.04em] text-slate-950">{goal.progress}%</p>
                         </div>
                         <p className="text-sm text-slate-500">{goal.metricSummary}</p>
@@ -988,7 +988,7 @@ export function DepartmentGoalsSection({
                     <GoalInsightCard title="Cần cải thiện ngay">
                       <p className="font-medium text-slate-900">{goal.actionText}</p>
                     </GoalInsightCard>
-                    <GoalInsightCard title="Chỉ số mục tiêu">
+                    <GoalInsightCard title="Chỉ số goal">
                       <p className="font-medium text-slate-900">{goal.metricSummary}</p>
                       <p className="mt-2 text-slate-600">
                         {goal.startDate ? `Bắt đầu ${formatShortDate(goal.startDate)}.` : "Chưa có ngày bắt đầu."}{" "}
@@ -1052,7 +1052,7 @@ function DirectKeyResultsTable({ items }: { items: DepartmentDirectKeyResultItem
         <thead>
           <tr className="border-b border-slate-100 text-xs uppercase tracking-[0.12em] text-slate-400">
             <th className="px-4 py-3 font-semibold">KR</th>
-            <th className="px-4 py-3 font-semibold">Mục tiêu cha</th>
+            <th className="px-4 py-3 font-semibold">Goal cha</th>
             <th className="px-4 py-3 font-semibold">Hiện tại / Chỉ tiêu</th>
             <th className="px-4 py-3 font-semibold">Tiến độ</th>
             <th className="px-4 py-3 font-semibold">Nhịp đạt đích</th>
@@ -1137,7 +1137,7 @@ function SupportKeyResultsTable({ items }: { items: DepartmentSupportKeyResultIt
         <thead>
           <tr className="border-b border-slate-100 text-xs uppercase tracking-[0.12em] text-slate-400">
             <th className="px-4 py-3 font-semibold">KR</th>
-            <th className="px-4 py-3 font-semibold">Mục tiêu cha</th>
+            <th className="px-4 py-3 font-semibold">Goal cha</th>
             <th className="px-4 py-3 font-semibold">Hiện tại / Chỉ tiêu</th>
             <th className="px-4 py-3 font-semibold">Tiến độ</th>
             <th className="px-4 py-3 font-semibold">Nhịp đạt đích</th>
@@ -1373,14 +1373,14 @@ export function DepartmentRisksSection({
       <SectionHeading
         eyebrow="Rủi ro"
         title="Điểm nghẽn và cảnh báo ưu tiên"
-        description="Chỉ giữ các tín hiệu rủi ro có thể hành động ngay: mục tiêu chậm nhất, KR yếu nhất và các mốc sắp đến hạn."
+        description="Chỉ giữ các tín hiệu rủi ro có thể hành động ngay: goal chậm nhất, KR yếu nhất và các mốc sắp đến hạn."
       />
       <div className="px-6 py-6">
         {loading || error ? (
           <BlockState loading={loading} error={error} emptyText="" />
         ) : (
           <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-4">
-            <RiskColumn title="Mục tiêu chậm nhất" description="Ưu tiên mục tiêu đang chậm hoặc có nhiều KR dưới ngưỡng an toàn.">
+            <RiskColumn title="Goal chậm nhất" description="Ưu tiên goal đang chậm hoặc có nhiều KR dưới ngưỡng an toàn.">
               {risks.goals.length > 0 ? (
                 risks.goals.map((goal) => (
                   <RiskRow
@@ -1391,7 +1391,7 @@ export function DepartmentRisksSection({
                   />
                 ))
               ) : (
-                <p className="text-sm text-slate-500">Không có mục tiêu rủi ro nổi bật trong phạm vi hiện tại.</p>
+                <p className="text-sm text-slate-500">Không có goal rủi ro nổi bật trong phạm vi hiện tại.</p>
               )}
             </RiskColumn>
 
@@ -1431,7 +1431,7 @@ export function DepartmentRisksSection({
                   <RiskRow
                     key={`${item.entityType}-${item.id}`}
                     title={item.name}
-                    meta={`${item.entityType === "goal" ? "Mục tiêu" : item.parentName} · ${formatDateShortVi(item.endDate)} · ${formatDaysRemaining(item.daysRemaining)}`}
+                    meta={`${item.entityType === "goal" ? "Goal" : item.parentName} · ${formatDateShortVi(item.endDate)} · ${formatDaysRemaining(item.daysRemaining)}`}
                     reason={item.reason}
                   />
                 ))
@@ -1476,11 +1476,11 @@ export function DepartmentMemberContributionSection({
                 <tr className="border-b border-slate-100 text-xs uppercase tracking-[0.12em] text-slate-400">
                   <th className="px-4 py-3 font-semibold">Thành viên</th>
                   <th className="px-4 py-3 font-semibold">Vai trò</th>
-                  <th className="px-4 py-3 font-semibold">Mục tiêu</th>
+                  <th className="px-4 py-3 font-semibold">Goal</th>
                   <th className="px-4 py-3 font-semibold">KR</th>
                   <th className="px-4 py-3 font-semibold">Điểm đóng góp</th>
                   <th className="px-4 py-3 font-semibold">Tín hiệu cần chú ý</th>
-                  <th className="px-4 py-3 font-semibold">Ngữ cảnh công việc</th>
+                  <th className="px-4 py-3 font-semibold">Ngữ cảnh task</th>
                 </tr>
               </thead>
               <tbody>
@@ -1554,20 +1554,20 @@ export function DepartmentExecutionContextSection({
         <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Ngữ cảnh thực thi</p>
-            <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-slate-950">Thông tin công việc hỗ trợ cho việc đọc KR</h2>
+            <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-slate-950">Thông tin task hỗ trợ cho việc đọc KR</h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-              Phần này nằm ở cuối trang và mặc định thu gọn. Công việc chỉ dùng để giải thích vì sao một KR đang chậm, không dùng làm tín hiệu hiệu suất chính.
+              Phần này nằm ở cuối trang và mặc định thu gọn. Task chỉ dùng để giải thích vì sao một KR đang chậm, không dùng làm tín hiệu hiệu suất chính.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700">
-              {loading ? "Đang tải" : `${executionContext.overdueTasks} công việc quá hạn`}
+              {loading ? "Đang tải" : `${executionContext.overdueTasks} task quá hạn`}
             </span>
             <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
-              {loading ? "Đang tải" : `${executionContext.blockedTasks} công việc bị chặn`}
+              {loading ? "Đang tải" : `${executionContext.blockedTasks} task bị chặn`}
             </span>
             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
-              {loading ? "Đang tải" : `${executionContext.openTasks} công việc đang mở`}
+              {loading ? "Đang tải" : `${executionContext.openTasks} task đang mở`}
             </span>
             <CollapsibleTrigger className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
               {open ? "Ẩn chi tiết" : "Xem chi tiết"}

@@ -400,7 +400,7 @@ export default function PerformanceReportDetailPage() {
                 (goal) =>
                   ({
                     id: String(goal.id),
-                    name: String(goal.name ?? "Mục tiêu"),
+                    name: String(goal.name ?? "Goal"),
                     type: goal.type ? String(goal.type) : null,
                     target: toTrackedNumber(goal.target as number | string | null | undefined),
                     unit: goal.unit ? String(goal.unit) : null,
@@ -1182,10 +1182,10 @@ export default function PerformanceReportDetailPage() {
                 />
 
                 <section className="hidden grid gap-4 md:grid-cols-3 xl:grid-cols-6">
-                  <CompactMetricCard label="Mục tiêu" value={report.goal_count} />
+                  <CompactMetricCard label="Goal" value={report.goal_count} />
                   <CompactMetricCard label="KR trực tiếp" value={report.direct_kr_count} />
                   <CompactMetricCard label="KR phối hợp" value={report.support_kr_count} />
-                  <CompactMetricCard label="Công việc" value={report.task_count} />
+                  <CompactMetricCard label="Task" value={report.task_count} />
                   <CompactMetricCard label="Đã hoàn thành" value={report.completed_task_count} />
                   <CompactMetricCard label="Quá hạn" value={report.overdue_task_count} />
                 </section>

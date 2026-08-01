@@ -480,7 +480,7 @@ const buildTaskRelationLabel = (task: NormalizedTask) => {
     return `KR: ${task.keyResultName}`;
   }
   if (task.goalName) {
-    return `Mục tiêu: ${task.goalName}`;
+    return `Goal: ${task.goalName}`;
   }
   return null;
 };
@@ -545,7 +545,7 @@ const buildSummaryCards = ({
           : averageGoalProgress >= 70
             ? "emerald"
             : "blue",
-      ctaLabel: averageGoalProgress !== null ? "Xem mục tiêu" : null,
+      ctaLabel: averageGoalProgress !== null ? "Xem goal" : null,
       ctaHref: averageGoalProgress !== null ? "/goals" : null,
     },
   ];
@@ -563,8 +563,8 @@ const buildFallbackActivities = (
       id: `task-${task.id}`,
       message:
         task.status === "completed"
-          ? `Hoàn thành công việc ${task.name}`
-          : `Cập nhật công việc ${task.name}`,
+          ? `Hoàn thành task ${task.name}`
+          : `Cập nhật task ${task.name}`,
       when: formatRelativeTimeVi(task.updatedAt, now),
     }));
 
@@ -622,8 +622,8 @@ export function useDashboardData() {
       }
 
       const [assigneeResult, ownerResult] = await Promise.all([
-        supabase.from("tasks").select(TASK_SELECT).in("assignee_id", profileIds).order("updated_at", { ascending: false }),
-        supabase.from("tasks").select(TASK_SELECT).in("profile_id", profileIds).order("updated_at", { ascending: false }),
+        supabase.from("tasks").select(TASK_SELECT).in("assignee_id", profileIds).neq("is_backlog", true).order("updated_at", { ascending: false }),
+        supabase.from("tasks").select(TASK_SELECT).in("profile_id", profileIds).neq("is_backlog", true).order("updated_at", { ascending: false }),
       ]);
 
       if (assigneeResult.error) {
@@ -1078,7 +1078,7 @@ export function useDashboardData() {
                     {
                       id: String(keyResult.id),
                       label: String(keyResult.name),
-                      scopeLabel: goalId ? goalsById[goalId]?.name ?? "Chưa có mục tiêu" : "Chưa có mục tiêu",
+                      scopeLabel: goalId ? goalsById[goalId]?.name ?? "Chưa có goal" : "Chưa có goal",
                       typeLabel: "KR",
                       progress: personalKrProgressMap[String(keyResult.id)] ?? 0,
                       endDateAt: goalId ? goalsById[goalId]?.end_date ?? null : null,
@@ -1152,12 +1152,12 @@ export function useDashboardData() {
         });
 
         const weeklyPerformance: DashboardWeeklyPerformance = {
-          title: "Công việc tuần này",
+          title: "Task tuần này",
           completedTasks: completedWeeklyTasks.length,
           totalTasks: weeklyTasks.length,
           progress: weeklyProgress,
           note: null,
-          ctaLabel: "Xem công việc",
+          ctaLabel: "Xem task",
           ctaHref: "/tasks",
         };
 

@@ -284,7 +284,7 @@ const normalizeKeyResultLinkOption = (value: Record<string, unknown>): KeyResult
   return {
     id: String(value.id),
     goalId: value.goal_id ? String(value.goal_id) : null,
-    goalName: goalRecord?.name ? String(goalRecord.name) : "Chưa có mục tiêu",
+    goalName: goalRecord?.name ? String(goalRecord.name) : "Chưa có goal",
     name: String(value.name),
     type: value.type ? String(value.type) : null,
     contributionType: value.contribution_type ? String(value.contribution_type) : null,
@@ -444,7 +444,7 @@ export default function KeyResultDetailPage() {
       : searchParams.get("updated") === "1"
         ? "Đã cập nhật KR."
         : searchParams.get("taskCreated") === "1"
-          ? "Đã tạo công việc và gắn vào KR."
+          ? "Đã tạo task và gắn vào KR."
           : null;
 
   const loadSupportRelationshipData = useCallback(async (currentKeyResultId: string) => {
@@ -643,7 +643,7 @@ export default function KeyResultDetailPage() {
         setTasks([]);
         setOutboundSupportLinks([]);
         setInboundSupportLinks([]);
-        setLoadError(goalError?.message || "Không tải được mục tiêu liên kết.");
+        setLoadError(goalError?.message || "Không tải được goal liên kết.");
         setIsLoading(false);
         return;
       }
@@ -802,7 +802,7 @@ export default function KeyResultDetailPage() {
 
       if (tasksError) {
         setTasks([]);
-        setTaskLoadError("Không tải được danh sách công việc của KR.");
+        setTaskLoadError("Không tải được danh sách task của KR.");
       } else {
         const typedTasks = ((tasksData ?? []) as TaskRow[]).map((task) => ({
           ...task,
@@ -1124,7 +1124,7 @@ export default function KeyResultDetailPage() {
 
     const relatedWarning =
       tasks.length > 0
-        ? ` KR này đang có ${tasks.length} công việc liên kết và có thể ảnh hưởng dữ liệu liên quan.`
+        ? ` KR này đang có ${tasks.length} task liên kết và có thể ảnh hưởng dữ liệu liên quan.`
         : "";
     if (!window.confirm(`Xóa KR "${keyResult.name}"?${relatedWarning}`)) {
       return;
@@ -1154,7 +1154,7 @@ export default function KeyResultDetailPage() {
           <WorkspacePageHeader
             title="Chi tiết KR"
             items={[
-              { label: "Mục tiêu", href: "/goals" },
+              { label: "Goal", href: "/goals" },
               ...(goal ? [{ label: goal.name, href: goalHref }] : []),
               { label: keyResult?.name ?? "Chi tiết KR" },
             ]}
@@ -1163,7 +1163,7 @@ export default function KeyResultDetailPage() {
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 lg:px-6">
             {!hasValidParams ? (
               <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-5 text-sm text-rose-700">
-                Thiếu mã mục tiêu hoặc mã KR.
+                Thiếu mã goal hoặc mã KR.
               </div>
             ) : null}
 
@@ -1676,21 +1676,21 @@ export default function KeyResultDetailPage() {
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <h2 className="text-base font-semibold text-slate-900">
-                            Công việc thực thi của KR
+                            Task thực thi của KR
                           </h2>
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
                             {filteredTasks.length === tasks.length
-                              ? `${tasks.length} công việc`
-                              : `${filteredTasks.length}/${tasks.length} công việc`}
+                              ? `${tasks.length} task`
+                              : `${filteredTasks.length}/${tasks.length} task`}
                           </span>
                           {canCreateTask ? (
                             <Link
                               href={createTaskHref}
                               className="inline-flex h-8 items-center rounded-lg border border-blue-600 bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700"
                             >
-                              + Thêm công việc
+                              + Thêm task
                             </Link>
                           ) : null}
                         </div>
@@ -1705,17 +1705,17 @@ export default function KeyResultDetailPage() {
                       {!taskLoadError && tasks.length === 0 ? (
                         <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-7 text-center">
                           <p className="text-base font-semibold text-slate-900">
-                            KR này chưa có công việc.
+                            KR này chưa có task.
                           </p>
                           <p className="mt-1.5 text-sm text-slate-500">
-                            Theo dõi công việc thực thi để cập nhật tiến độ KR nhất quán hơn.
+                            Theo dõi task thực thi để cập nhật tiến độ KR nhất quán hơn.
                           </p>
                           {canCreateTask ? (
                             <Link
                               href={createTaskHref}
                               className="mt-4 inline-flex h-9 items-center rounded-lg border border-blue-600 bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
                             >
-                              + Thêm công việc đầu tiên
+                              + Thêm task đầu tiên
                             </Link>
                           ) : null}
                         </div>
@@ -1726,7 +1726,7 @@ export default function KeyResultDetailPage() {
                           <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px]">
                             <label className="block">
                               <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
-                                Tìm công việc
+                                Tìm task
                               </span>
                               <input
                                 value={taskSearchTerm}
@@ -1734,7 +1734,7 @@ export default function KeyResultDetailPage() {
                                   setTaskSearchTerm(event.target.value);
                                   setTaskPage(1);
                                 }}
-                                placeholder="Tên công việc hoặc người phụ trách"
+                                placeholder="Tên task hoặc người phụ trách"
                                 className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                               />
                             </label>
@@ -1768,7 +1768,7 @@ export default function KeyResultDetailPage() {
                               <table className="w-full min-w-[920px] text-left text-sm">
                                 <thead className="sticky top-0 z-10 bg-slate-50">
                                   <tr className="border-b border-slate-200 text-[11px] uppercase tracking-[0.08em] text-slate-500">
-                                    <th className="px-3 py-2.5 font-semibold">Công việc</th>
+                                    <th className="px-3 py-2.5 font-semibold">Task</th>
                                     <th className="px-3 py-2.5 font-semibold">Người phụ trách</th>
                                     <th className="px-3 py-2.5 font-semibold">Tiến độ thực thi</th>
                                     {canManageTasks ? (
@@ -1783,7 +1783,7 @@ export default function KeyResultDetailPage() {
                                         colSpan={canManageTasks ? 4 : 3}
                                         className="px-3 py-8 text-center text-sm text-slate-500"
                                       >
-                                        Không có công việc nào khớp bộ lọc hiện tại.
+                                        Không có task nào khớp bộ lọc hiện tại.
                                       </td>
                                     </tr>
                                   ) : (
@@ -1794,7 +1794,7 @@ export default function KeyResultDetailPage() {
                                         keyResult.start_date,
                                         keyResult.end_date,
                                         {
-                                          subjectLabel: "Thời gian công việc",
+                                          subjectLabel: "Thời gian task",
                                           parentLabel: "KR",
                                         },
                                       );
@@ -1819,7 +1819,7 @@ export default function KeyResultDetailPage() {
                                                   task.startDate,
                                                   task.endDate,
                                                   {
-                                                    fallback: "Công việc chưa có mốc thời gian",
+                                                    fallback: "Task chưa có mốc thời gian",
                                                   },
                                                 )}
                                               </p>
@@ -1872,7 +1872,7 @@ export default function KeyResultDetailPage() {
                             <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm">
                               <p className="text-slate-500">
                                 Hiển thị {taskRangeStart}-{taskRangeEnd} / {filteredTasks.length}{" "}
-                                công việc
+                                task
                               </p>
                               <div className="flex items-center gap-2">
                                 <button
@@ -1930,7 +1930,7 @@ export default function KeyResultDetailPage() {
                         </div>
 
                         <div className="mt-3 space-y-2.5">
-                          <DetailInfoRow label="Loại mục tiêu" value={goalTypeLabel} />
+                          <DetailInfoRow label="Loại goal" value={goalTypeLabel} />
                           <DetailInfoRow
                             label="Phòng ban phụ trách"
                             value={responsibleDepartmentName ?? "Chưa có dữ liệu"}

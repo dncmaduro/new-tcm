@@ -41,9 +41,9 @@ export type ActivityActionKind =
   | "unknown";
 
 const ENTITY_LABELS: Record<ActivityEntityType, string> = {
-  goal: "Mục tiêu",
+  goal: "Goal",
   key_result: "Kết quả then chốt",
-  task: "Công việc",
+  task: "Task",
 };
 
 const TECHNICAL_FIELDS = new Set([
@@ -73,9 +73,9 @@ const taskTypeLabelMap = TASK_TYPES.reduce<Record<string, string>>((acc, item) =
 const FIELD_LABELS_BY_ENTITY: Record<ActivityEntityType, Record<string, string>> = {
   goal: {
     title: "Tiêu đề",
-    name: "Tên mục tiêu",
+    name: "Tên goal",
     description: "Mô tả",
-    type: "Loại mục tiêu",
+    type: "Loại goal",
     department_id: "Phòng ban",
     status: "Trạng thái",
     progress: "Tiến độ",
@@ -96,7 +96,7 @@ const FIELD_LABELS_BY_ENTITY: Record<ActivityEntityType, Record<string, string>>
     start_value: "Giá trị bắt đầu",
     current: "Giá trị",
     progress: "Tiến độ",
-    target: "Mục tiêu",
+    target: "Goal",
     unit: "Đơn vị",
     weight: "Trọng số",
     responsible_department_id: "Phòng ban phụ trách",
@@ -106,15 +106,15 @@ const FIELD_LABELS_BY_ENTITY: Record<ActivityEntityType, Record<string, string>>
   },
   task: {
     title: "Tiêu đề",
-    name: "Tên công việc",
+    name: "Tên task",
     description: "Mô tả",
     note: "Ghi chú",
-    type: "Loại công việc",
+    type: "Loại task",
     priority: "Mức ưu tiên",
     status: "Trạng thái",
     current: "Giá trị",
     progress: "Tiến độ",
-    target: "Mục tiêu",
+    target: "Goal",
     unit: "Đơn vị",
     weight: "Trọng số",
     start_date: "Ngày bắt đầu",

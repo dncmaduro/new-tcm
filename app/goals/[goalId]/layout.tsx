@@ -22,11 +22,11 @@ export async function generateMetadata({
   }
 
   return buildPageMetadata({
-    title: joinTitleSegments(goalName, "Chi tiết mục tiêu") || "Chi tiết mục tiêu",
+    title: joinTitleSegments(goalName, "Chi tiết goal") || "Chi tiết goal",
     description:
-      "Theo dõi thông tin mục tiêu, tiến độ, phòng ban tham gia, key result và task liên quan.",
+      "Theo dõi thông tin goal, tiến độ, phòng ban tham gia, key result và task liên quan.",
     path: `/goals/${goalId}`,
-    keywords: ["chi tiết mục tiêu", "goal detail", "theo dõi tiến độ"],
+    keywords: ["chi tiết goal", "goal detail", "theo dõi tiến độ"],
   });
 }
 

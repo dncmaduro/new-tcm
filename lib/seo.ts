@@ -3,12 +3,12 @@ import { createClient } from "@supabase/supabase-js";
 
 const SITE_NAME = "TCM";
 const LOGIN_DESCRIPTION =
-  "Đăng nhập vào TCM để theo dõi mục tiêu, công việc, chấm công, báo cáo và hiệu suất nội bộ.";
+  "Đăng nhập vào TCM để theo dõi goal, task, chấm công, báo cáo và hiệu suất nội bộ.";
 const DEFAULT_KEYWORDS = [
   "TCM",
   "quản lý nội bộ",
-  "quản lý mục tiêu",
-  "quản lý công việc",
+  "quản lý goal",
+  "quản lý task",
   "chấm công",
   "báo cáo hiệu suất",
 ];

@@ -100,7 +100,7 @@ export const loadGoalOwnersByGoalIds = async (goalIds: string[]) => {
     .in("goal_id", normalizedGoalIds);
 
   if (goalOwnersError) {
-    throw new Error(goalOwnersError.message || "Không tải được danh sách owners của mục tiêu.");
+    throw new Error(goalOwnersError.message || "Không tải được danh sách owners của goal.");
   }
 
   const typedGoalOwnerRows = ((goalOwnerRows ?? []) as GoalOwnerLinkRow[]).map((row) => ({
@@ -129,7 +129,7 @@ export const loadGoalOwnersByGoalIds = async (goalIds: string[]) => {
     .in("id", ownerProfileIds);
 
   if (profilesError) {
-    throw new Error(profilesError.message || "Không tải được hồ sơ owners của mục tiêu.");
+    throw new Error(profilesError.message || "Không tải được hồ sơ owners của goal.");
   }
 
   const ownersByGoalId = buildGoalOwnersByGoalId(
@@ -181,7 +181,7 @@ export const syncGoalOwners = async (goalId: string, ownerIds: string[]) => {
     );
 
     if (insertOwnersError) {
-      throw new Error(insertOwnersError.message || "Không thêm được owners mới cho mục tiêu.");
+      throw new Error(insertOwnersError.message || "Không thêm được owners mới cho goal.");
     }
   }
 
@@ -193,7 +193,7 @@ export const syncGoalOwners = async (goalId: string, ownerIds: string[]) => {
       .in("profile_id", ownerIdsToRemove);
 
     if (deleteOwnersError) {
-      throw new Error(deleteOwnersError.message || "Không xóa được owners cũ của mục tiêu.");
+      throw new Error(deleteOwnersError.message || "Không xóa được owners cũ của goal.");
     }
   }
 };

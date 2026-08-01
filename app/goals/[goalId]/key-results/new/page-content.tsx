@@ -208,7 +208,7 @@ const normalizeKeyResultLinkOption = (value: Record<string, unknown>): KeyResult
   return {
     id: String(value.id),
     goalId: value.goal_id ? String(value.goal_id) : null,
-    goalName: goalRecord?.name ? String(goalRecord.name) : "Chưa có mục tiêu",
+    goalName: goalRecord?.name ? String(goalRecord.name) : "Chưa có goal",
     name: String(value.name),
     type: value.type ? String(value.type) : null,
     contributionType: value.contribution_type ? String(value.contribution_type) : null,
@@ -322,7 +322,7 @@ function RequiredKeyResultTypeInfo({ typeLabel }: { typeLabel: string }) {
       </PopoverTrigger>
       <PopoverContent className="w-[280px] space-y-2 p-3 text-xs text-slate-600" align="start">
         <p>
-          Loại KR được cố định theo loại mục tiêu hiện tại: <strong>{typeLabel}</strong>.
+          Loại KR được cố định theo loại goal hiện tại: <strong>{typeLabel}</strong>.
         </p>
       </PopoverContent>
     </Popover>
@@ -383,7 +383,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
   const permissionError =
     workspaceAccess.error ??
     (!isCheckingPermission && !workspaceAccess.canManage
-      ? `Bạn không có quyền ${isEditMode ? "chỉnh sửa" : "tạo"} KR ở mục tiêu này.`
+      ? `Bạn không có quyền ${isEditMode ? "chỉnh sửa" : "tạo"} KR ở goal này.`
       : null);
   const permissionDebug: KeyResultCreatePermissionDebug = useMemo(
     () => ({
@@ -408,7 +408,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
   useEffect(() => {
     if (!hasValidGoalId || !hasValidKeyResultId) {
       setIsLoading(false);
-      setLoadError(!hasValidGoalId ? "Thiếu mã mục tiêu." : "Thiếu mã KR.");
+      setLoadError(!hasValidGoalId ? "Thiếu mã goal." : "Thiếu mã KR.");
       return;
     }
 
@@ -489,7 +489,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
         setSupportLinkDrafts([]);
         setInitialSupportLinkIds([]);
         setSupportTargetOptions([]);
-        setLoadError(goalError?.message || "Không tải được dữ liệu mục tiêu.");
+        setLoadError(goalError?.message || "Không tải được dữ liệu goal.");
         setIsLoading(false);
         setIsLoadingSupportTargets(false);
         return;
@@ -628,7 +628,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
 
       if (departmentsError) {
         setGoalDepartments([]);
-        setLoadError("Không tải được danh sách phòng ban tham gia mục tiêu.");
+        setLoadError("Không tải được danh sách phòng ban tham gia goal.");
         setIsLoading(false);
         return;
       }
@@ -1035,7 +1035,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
 
     const relatedItems: string[] = [];
     if ((relatedTaskCount ?? 0) > 0) {
-      relatedItems.push(`${relatedTaskCount} công việc`);
+      relatedItems.push(`${relatedTaskCount} task`);
     }
     const relatedSupportLinkCount =
       (outboundSupportLinkCount ?? 0) + (inboundSupportLinkCount ?? 0);
@@ -1088,7 +1088,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
       .eq("key_result_id", keyResultId);
 
     if (deleteTasksResult.error) {
-      setSubmitError(deleteTasksResult.error.message || "Không thể xóa công việc của KR.");
+      setSubmitError(deleteTasksResult.error.message || "Không thể xóa task của KR.");
       setIsDeletingKeyResult(false);
       return;
     }
@@ -1111,12 +1111,12 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
     event.preventDefault();
 
     if (!goal?.id) {
-      setSubmitError(`Không xác định được mục tiêu để ${isEditMode ? "chỉnh sửa" : "tạo"} KR.`);
+      setSubmitError(`Không xác định được goal để ${isEditMode ? "chỉnh sửa" : "tạo"} KR.`);
       return;
     }
 
     if (!canCreateKeyResult) {
-      setSubmitError(`Bạn không có quyền ${isEditMode ? "chỉnh sửa" : "tạo"} KR cho mục tiêu này.`);
+      setSubmitError(`Bạn không có quyền ${isEditMode ? "chỉnh sửa" : "tạo"} KR cho goal này.`);
       return;
     }
 
@@ -1140,7 +1140,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
     }
     if (requiredKeyResultType && form.type !== requiredKeyResultType) {
       setSubmitError(
-        `Loại KR phải giống loại mục tiêu hiện tại: ${requiredKeyResultTypeLabel ?? requiredKeyResultType.toUpperCase()}.`,
+        `Loại KR phải giống loại goal hiện tại: ${requiredKeyResultTypeLabel ?? requiredKeyResultType.toUpperCase()}.`,
       );
       return;
     }
@@ -1156,7 +1156,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
       goalDepartments.length > 0 &&
       !goalDepartments.some((item) => item.departmentId === form.responsibleDepartmentId)
     ) {
-      setSubmitError("Phòng ban phụ trách phải nằm trong danh sách phòng ban tham gia mục tiêu.");
+      setSubmitError("Phòng ban phụ trách phải nằm trong danh sách phòng ban tham gia goal.");
       return;
     }
 
@@ -1266,7 +1266,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
           <WorkspacePageHeader
             title={isEditMode ? "Chỉnh sửa KR" : "Thêm KR"}
             items={[
-              { label: "Mục tiêu", href: "/goals" },
+              { label: "Goal", href: "/goals" },
               ...(goal ? [{ label: goal.name, href: `/goals/${goal.id}` }] : []),
               { label: isEditMode ? "Chỉnh sửa KR" : "Thêm KR" },
             ]}
@@ -1287,16 +1287,16 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
             <section className="mx-auto w-full max-w-[980px] rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_24px_50px_-40px_rgba(15,23,42,0.4)] lg:p-5">
               <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <p className="text-sm text-slate-500">
-                  Mục tiêu liên kết:{" "}
+                  Goal liên kết:{" "}
                   <span className="font-semibold text-slate-800">
-                    {goal?.name ?? "Đang tải mục tiêu"}
+                    {goal?.name ?? "Đang tải goal"}
                   </span>
                 </p>
               </div>
 
               {isLoading ? (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                  Đang tải dữ liệu mục tiêu...
+                  Đang tải dữ liệu goal...
                 </div>
               ) : null}
 

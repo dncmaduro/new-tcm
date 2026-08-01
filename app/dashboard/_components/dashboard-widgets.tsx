@@ -191,10 +191,10 @@ export function DashboardPriorityTasks({
 }) {
   return (
     <CardShell
-      title="Công việc cần ưu tiên"
+      title="Task cần ưu tiên"
       action={
         <Link href="/tasks" className="text-sm font-semibold text-blue-600 hover:text-blue-700">
-          Xem công việc
+          Xem task
         </Link>
       }
     >
@@ -268,7 +268,7 @@ export function DashboardGoalProgress({
           loading={loading}
           error={error}
           empty={items.length === 0}
-          emptyText="Chưa có KR nổi bật. Vào mục tiêu để cập nhật tiến độ hoặc nhận KR mới."
+          emptyText="Chưa có KR nổi bật. Vào goal để cập nhật tiến độ hoặc nhận KR mới."
           ctaHref={actionHref}
           ctaLabel={actionLabel}
         />
@@ -319,7 +319,7 @@ export function DashboardCompletedTrend({
   const hasData = maxValue > 0;
 
   return (
-    <CardShell title="Công việc hoàn thành 7 ngày qua">
+    <CardShell title="Task hoàn thành 7 ngày qua">
       {loading || error || !hasData ? (
         <CardState
           loading={loading}
@@ -413,7 +413,7 @@ export function DashboardUpcomingDeadlines({
       title="Task cần ưu tiên"
       action={
         <Link href="/tasks" className="text-sm font-semibold text-blue-600 hover:text-blue-700">
-          Xem công việc
+          Xem task
         </Link>
       }
     >
@@ -479,7 +479,7 @@ export function DashboardRecentActivities({
           loading={loading}
           error={error}
           empty={items.length === 0}
-          emptyText="Chưa có hoạt động mới. Khi có cập nhật task hoặc mục tiêu, phần này sẽ hiện ở đây."
+          emptyText="Chưa có hoạt động mới. Khi có cập nhật task hoặc goal, phần này sẽ hiện ở đây."
         />
       ) : (
         <div className="divide-y divide-slate-100">

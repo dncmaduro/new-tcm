@@ -21,10 +21,10 @@ export const formatGoalTypeLabel = (value: string | null | undefined) =>
 
 export const getGoalProgressHelp = (value: string | null | undefined) => {
   if (normalizeGoalTypeValue(value) === "okr") {
-    return "Mục tiêu OKR lấy tiến độ trung bình của các KR trực tiếp. KR hỗ trợ không được cộng vào tiến độ mục tiêu, và công việc chỉ dùng để theo dõi thực thi.";
+    return "Goal OKR lấy tiến độ trung bình của các KR trực tiếp. KR hỗ trợ không được cộng vào tiến độ goal, và task chỉ dùng để theo dõi thực thi.";
   }
 
-  return "Mục tiêu KPI lấy tổng giá trị hiện tại của các KR trực tiếp chia cho chỉ tiêu mục tiêu. KR hỗ trợ không được dùng để tính tiến độ mục tiêu.";
+  return "Goal KPI lấy tổng giá trị hiện tại của các KR trực tiếp chia cho chỉ tiêu goal. KR hỗ trợ không được dùng để tính tiến độ goal.";
 };
 
 export const isKeyResultWeightApplied = (
@@ -39,14 +39,14 @@ export const getKeyResultWeightHelp = (
   const normalizedGoalType = normalizeGoalTypeValue(goalType);
 
   if (normalizedGoalType === "kpi") {
-    return "Mục tiêu KPI không dùng trọng số KR để tính tiến độ. Tiến độ chỉ cộng dồn giá trị hiện tại của các KR trực tiếp.";
+    return "Goal KPI không dùng trọng số KR để tính tiến độ. Tiến độ chỉ cộng dồn giá trị hiện tại của các KR trực tiếp.";
   }
 
   if (contributionType === "support") {
-    return "KR hỗ trợ không được cộng vào tiến độ mục tiêu OKR.";
+    return "KR hỗ trợ không được cộng vào tiến độ goal OKR.";
   }
 
-  return "Tiến độ mục tiêu OKR hiện coi các KR trực tiếp như nhau.";
+  return "Tiến độ goal OKR hiện coi các KR trực tiếp như nhau.";
 };
 
 export const formatGoalParticipationRoleLabel = (value: string | null | undefined) => {

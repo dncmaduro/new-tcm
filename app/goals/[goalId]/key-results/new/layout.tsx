@@ -24,7 +24,7 @@ export async function generateMetadata({
   return buildPageMetadata({
     title: joinTitleSegments("Tạo key result", goalName) || "Tạo key result",
     description:
-      "Tạo key result mới cho mục tiêu, khai báo chỉ số, đơn vị đo và trách nhiệm thực thi.",
+      "Tạo key result mới cho goal, khai báo chỉ số, đơn vị đo và trách nhiệm thực thi.",
     path: `/goals/${goalId}/key-results/new`,
     keywords: ["tạo key result", "kr mới", "quản lý okr"],
   });

@@ -3,10 +3,10 @@ import type { ReactNode } from "react";
 import { buildPageMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Mục tiêu",
+  title: "Goal",
   description: "Xem toàn bộ goal, key result và tiến độ thực thi theo phòng ban, quý và năm.",
   path: "/goals",
-  keywords: ["mục tiêu", "goal", "key result", "okr"],
+  keywords: ["goal", "goal", "key result", "okr"],
 });
 
 export default function GoalsLayout({ children }: Readonly<{ children: ReactNode }>) {

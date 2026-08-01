@@ -24,6 +24,7 @@ import {
   type TaskTypeValue,
 } from "@/lib/constants/tasks";
 import { cn } from "@/lib/utils";
+import { OKR_FEATURE_ENABLED } from "@/lib/features";
 import type { ProfileLiteRow, TaskFormState } from "./types";
 import { getTaskPriorityBadgeClassName, getTaskPriorityLabel, getTaskTypeLabel } from "./utils";
 
@@ -117,15 +118,17 @@ export function TaskOverviewCard({
           <span className="rounded-full bg-blue-50 px-2.5 py-1 font-semibold text-blue-700">
             {getTaskTypeLabel(form.type)}
           </span>
-          <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
-            {keyResultHref && keyResultName ? (
-              <Link href={keyResultHref} className="hover:text-blue-700">
-                KR: {keyResultName}
-              </Link>
-            ) : (
-              <>KR: {keyResultName ?? "Chưa gắn KR"}</>
-            )}
-          </span>
+          {OKR_FEATURE_ENABLED ? (
+            <span className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700">
+              {keyResultHref && keyResultName ? (
+                <Link href={keyResultHref} className="hover:text-blue-700">
+                  KR: {keyResultName}
+                </Link>
+              ) : (
+                <>KR: {keyResultName ?? "Chưa gắn KR"}</>
+              )}
+            </span>
+          ) : null}
         </>
       }
       title={
@@ -148,7 +151,7 @@ export function TaskOverviewCard({
             <ActivityHistoryDialog
               entityType="task"
               entityId={taskId}
-              title="Lịch sử hoạt động của công việc"
+              title="Lịch sử hoạt động của task"
               triggerLabel="Lịch sử"
               triggerClassName="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 hover:bg-slate-50"
             />
@@ -272,7 +275,7 @@ export function TaskOverviewCard({
         <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4">
           <div className="grid gap-4 md:grid-cols-2">
             <label className="space-y-1.5">
-              <span className="text-sm font-semibold text-slate-700">Tên công việc</span>
+              <span className="text-sm font-semibold text-slate-700">Tên task</span>
               <input
                 value={form.name}
                 onChange={(event) => onNameChange(event.target.value)}
@@ -297,16 +300,16 @@ export function TaskOverviewCard({
             </label>
 
             <label className="space-y-1.5">
-              <span className="text-sm font-semibold text-slate-700">Loại công việc</span>
+              <span className="text-sm font-semibold text-slate-700">Loại task</span>
               <Select
                 value={form.type}
                 onValueChange={(value) => onTypeChange(value as TaskTypeValue)}
               >
                 <SelectTrigger className="h-10 bg-white">
-                  <SelectValue placeholder="Chọn loại công việc" />
+                  <SelectValue placeholder="Chọn loại task" />
                 </SelectTrigger>
                 <SelectContent>
-                  {TASK_TYPES.map((type) => (
+                  {TASK_TYPES.filter((type) => OKR_FEATURE_ENABLED || type.value !== "okr").map((type) => (
                     <SelectItem key={type.value} value={type.value}>
                       {type.label}
                     </SelectItem>

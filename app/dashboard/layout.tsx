@@ -4,7 +4,7 @@ import { buildPageMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = buildPageMetadata({
   title: "Bảng điều khiển",
-  description: "Theo dõi nhanh công việc, mục tiêu, chấm công, deadline và hoạt động gần đây trên TCM.",
+  description: "Theo dõi nhanh task, goal, chấm công, deadline và hoạt động gần đây trên TCM.",
   path: "/dashboard",
   keywords: ["bảng điều khiển", "dashboard", "tổng quan nội bộ"],
 });

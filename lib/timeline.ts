@@ -141,7 +141,7 @@ export const getTimelineOutsideParentWarning = (
     return null;
   }
 
-  const subjectLabel = options?.subjectLabel ?? "Công việc";
+  const subjectLabel = options?.subjectLabel ?? "Task";
   const parentLabel = options?.parentLabel ?? "KR";
   return `${subjectLabel} đang nằm ngoài khung thời gian của ${parentLabel}.`;
 };

@@ -19,7 +19,7 @@ export function KeyResultContributionInfo() {
         <div>
           <p className="font-semibold text-slate-800">Trực tiếp</p>
           <p className="mt-1">
-            KR đóng góp trực tiếp vào chỉ số hoặc kết quả kinh doanh chính của mục tiêu.
+            KR đóng góp trực tiếp vào chỉ số hoặc kết quả kinh doanh chính của goal.
           </p>
         </div>
         <div>

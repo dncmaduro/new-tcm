@@ -43,12 +43,14 @@ import { fetchITAdminAccess } from "@/lib/it-admin-client-access";
 import { supabase } from "@/lib/supabase";
 import { useWorkspaceSidebarStore } from "@/lib/stores/workspace-sidebar-store";
 import { useWorkspaceAccess, useWorkspaceAccessStore } from "@/lib/stores/workspace-access-store";
+import { OKR_FEATURE_ENABLED } from "@/lib/features";
 
 type SidebarKey =
   | "dashboard"
   | "notifications"
   | "goals"
   | "tasks"
+  | "backlog"
   | "realtimeReports"
   | "timesheet"
   | "attendanceExport"
@@ -85,8 +87,9 @@ const notificationsItem: { key: SidebarKey; label: string; href: string; icon: S
 };
 
 const workSidebarItems: SidebarItem[] = [
-  { key: "goals", label: "Mục tiêu", href: "/goals" },
-  { key: "tasks", label: "Công việc", href: "/tasks" },
+  ...(OKR_FEATURE_ENABLED ? [{ key: "goals" as const, label: "Goal", href: "/goals" }] : []),
+  { key: "tasks", label: "Task", href: "/tasks" },
+  { key: "backlog", label: "Backlog", href: "/backlog" },
   { key: "reports", label: "Báo cáo", href: "/reports" },
 ];
 
@@ -119,6 +122,7 @@ const getSidebarItemIcon = (key: SidebarKey): ComponentType<{ className?: string
   if (key === "goals") return Target;
   if (key === "notifications") return Bell;
   if (key === "tasks") return ListTodo;
+  if (key === "backlog") return ClipboardList;
   if (key === "reports") return FileText;
   if (key === "timesheet") return CalendarDays;
   if (key === "attendanceExport") return FileText;
@@ -434,13 +438,19 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
     }
     return true;
   });
+  const visibleWorkItems = workSidebarItems.filter((item) => {
+    if (item.key === "backlog") {
+      return workspaceAccess.hasDirectorRole || workspaceAccess.hasLeaderRole;
+    }
+    return true;
+  });
   const visibleTimeItems = timeSidebarItems.filter((item) => {
     if (item.key === "attendanceExport") {
       return canAccessAttendanceExport;
     }
     return true;
   });
-  const workGroupActive = workSidebarItems.some((item) => item.key === active);
+  const workGroupActive = visibleWorkItems.some((item) => item.key === active);
   const timeGroupActive = visibleTimeItems.some((item) => item.key === active);
   const managementGroupActive = visibleManagementItems.some((item) => item.key === active);
 
@@ -618,9 +628,9 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
               </SidebarTooltip>
 
               <SidebarGroup
-                label="Công việc"
+                label="Task"
                 icon={BriefcaseBusiness}
-                items={workSidebarItems}
+                items={visibleWorkItems}
                 active={active}
                 isOpen={isCollapsed ? openCollapsedGroup === "work" : isWorkMenuOpen}
                 onOpenChange={setIsWorkMenuOpen}

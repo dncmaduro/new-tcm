@@ -315,7 +315,7 @@ function GoalDetailPageContent() {
       }
 
       if (goalError) {
-        setError(goalError.message || "Không tải được chi tiết mục tiêu.");
+        setError(goalError.message || "Không tải được chi tiết goal.");
         setGoal(null);
         setDepartmentName(null);
         setGoalOwners([]);
@@ -326,7 +326,7 @@ function GoalDetailPageContent() {
       }
 
       if (!goalData) {
-        setError("Không tìm thấy mục tiêu.");
+        setError("Không tìm thấy goal.");
         setGoal(null);
         setDepartmentName(null);
         setGoalOwners([]);
@@ -700,7 +700,7 @@ function GoalDetailPageContent() {
     }
 
     if (!canCreateKeyResult) {
-      setKeyResultScaleError("Bạn không có quyền cập nhật KR ở mục tiêu này.");
+      setKeyResultScaleError("Bạn không có quyền cập nhật KR ở goal này.");
       return;
     }
 
@@ -804,10 +804,10 @@ function GoalDetailPageContent() {
     const keyResultCount = keyResults.length;
     const relatedWarning =
       keyResultCount > 0
-        ? ` Thao tác này cũng sẽ xóa ${keyResultCount} KR cùng công việc và liên kết hỗ trợ liên quan.`
+        ? ` Thao tác này cũng sẽ xóa ${keyResultCount} KR cùng task và liên kết hỗ trợ liên quan.`
         : "";
 
-    if (!window.confirm(`Xóa mục tiêu "${goal.name}"?${relatedWarning}`)) {
+    if (!window.confirm(`Xóa goal "${goal.name}"?${relatedWarning}`)) {
       return;
     }
 
@@ -819,7 +819,7 @@ function GoalDetailPageContent() {
       .eq("goal_id", goal.id);
 
     if (keyResultsError) {
-      window.alert(keyResultsError.message || "Không thể tải danh sách KR để xóa mục tiêu.");
+      window.alert(keyResultsError.message || "Không thể tải danh sách KR để xóa goal.");
       setIsDeletingGoal(false);
       return;
     }
@@ -835,7 +835,7 @@ function GoalDetailPageContent() {
       if (deleteOutboundSupportLinksError) {
         window.alert(
           deleteOutboundSupportLinksError.message ||
-            "Không thể xóa các liên kết hỗ trợ outbound của mục tiêu.",
+            "Không thể xóa các liên kết hỗ trợ outbound của goal.",
         );
         setIsDeletingGoal(false);
         return;
@@ -849,7 +849,7 @@ function GoalDetailPageContent() {
       if (deleteInboundSupportLinksError) {
         window.alert(
           deleteInboundSupportLinksError.message ||
-            "Không thể xóa các liên kết hỗ trợ inbound của mục tiêu.",
+            "Không thể xóa các liên kết hỗ trợ inbound của goal.",
         );
         setIsDeletingGoal(false);
         return;
@@ -861,7 +861,7 @@ function GoalDetailPageContent() {
         .in("key_result_id", keyResultIds);
 
       if (deleteTasksError) {
-        window.alert(deleteTasksError.message || "Không thể xóa công việc thuộc mục tiêu.");
+        window.alert(deleteTasksError.message || "Không thể xóa task thuộc goal.");
         setIsDeletingGoal(false);
         return;
       }
@@ -874,7 +874,7 @@ function GoalDetailPageContent() {
 
     if (deleteGoalDepartmentsError) {
       window.alert(
-        deleteGoalDepartmentsError.message || "Không thể xóa phòng ban tham gia của mục tiêu.",
+        deleteGoalDepartmentsError.message || "Không thể xóa phòng ban tham gia của goal.",
       );
       setIsDeletingGoal(false);
       return;
@@ -886,7 +886,7 @@ function GoalDetailPageContent() {
       .eq("goal_id", goal.id);
 
     if (deleteGoalOwnersError) {
-      window.alert(deleteGoalOwnersError.message || "Không thể xóa người phụ trách của mục tiêu.");
+      window.alert(deleteGoalOwnersError.message || "Không thể xóa người phụ trách của goal.");
       setIsDeletingGoal(false);
       return;
     }
@@ -898,7 +898,7 @@ function GoalDetailPageContent() {
         .in("id", keyResultIds);
 
       if (deleteKeyResultsError) {
-        window.alert(deleteKeyResultsError.message || "Không thể xóa KR của mục tiêu.");
+        window.alert(deleteKeyResultsError.message || "Không thể xóa KR của goal.");
         setIsDeletingGoal(false);
         return;
       }
@@ -907,7 +907,7 @@ function GoalDetailPageContent() {
     const { error: deleteGoalError } = await supabase.from("goals").delete().eq("id", goal.id);
 
     if (deleteGoalError) {
-      window.alert(deleteGoalError.message || "Không thể xóa mục tiêu.");
+      window.alert(deleteGoalError.message || "Không thể xóa goal.");
       setIsDeletingGoal(false);
       return;
     }
@@ -941,23 +941,23 @@ function GoalDetailPageContent() {
 
         <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden lg:pl-[var(--workspace-sidebar-width)]">
           <WorkspacePageHeader
-            title="Chi tiết mục tiêu"
+            title="Chi tiết goal"
             items={[
-              { label: "Mục tiêu", href: "/goals" },
-              { label: goal?.name ?? "Chi tiết mục tiêu" },
+              { label: "Goal", href: "/goals" },
+              { label: goal?.name ?? "Chi tiết goal" },
             ]}
           />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 lg:px-6">
             {!hasValidGoalId ? (
               <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-5 text-sm text-rose-700">
-                Thiếu mã mục tiêu.
+                Thiếu mã goal.
               </div>
             ) : null}
 
             {hasValidGoalId && isLoading ? (
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-sm text-slate-600">
-                Đang tải chi tiết mục tiêu...
+                Đang tải chi tiết goal...
               </div>
             ) : null}
 
@@ -997,7 +997,7 @@ function GoalDetailPageContent() {
                               <ActivityHistoryDialog
                                 entityType="goal"
                                 entityId={goal.id}
-                                title="Lịch sử hoạt động của mục tiêu"
+                                title="Lịch sử hoạt động của goal"
                                 triggerLabel="Lịch sử"
                                 triggerClassName="inline-flex h-8 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 hover:bg-slate-50"
                               />
@@ -1009,7 +1009,7 @@ function GoalDetailPageContent() {
                                     href={`/goals/new?editGoalId=${goalId}`}
                                     className="inline-flex h-8 items-center rounded-lg border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100"
                                   >
-                                    Sửa mục tiêu
+                                    Sửa goal
                                   </Link>
                                   <button
                                     type="button"
@@ -1017,7 +1017,7 @@ function GoalDetailPageContent() {
                                     disabled={isDeletingGoal}
                                     className="inline-flex h-8 items-center rounded-lg border border-rose-200 bg-white px-3 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
                                   >
-                                    {isDeletingGoal ? "Đang xóa..." : "Xóa mục tiêu"}
+                                    {isDeletingGoal ? "Đang xóa..." : "Xóa goal"}
                                   </button>
                                 </>
                               ) : null}
@@ -1097,18 +1097,18 @@ function GoalDetailPageContent() {
                             >
                               {kpiDirectSummary.safeGoalTarget !== null
                                 ? `${kpiDirectSummary.targetCoveragePercent}% độ phủ`
-                                : "Chưa có chỉ tiêu mục tiêu"}
+                                : "Chưa có chỉ tiêu goal"}
                             </span>
                           </div>
                           <p className="mt-1.5 text-xs leading-5 text-slate-600">
                             {kpiDirectSummary.safeGoalTarget === null
-                              ? "Mục tiêu KPI chưa có chỉ tiêu để đối chiếu tổng KPI từ các KR trực tiếp."
+                              ? "Goal KPI chưa có chỉ tiêu để đối chiếu tổng KPI từ các KR trực tiếp."
                               : kpiDirectSummary.targetGap && kpiDirectSummary.targetGap > 0
                                 ? `Còn thiếu ${formatKeyResultMetric(
                                     kpiDirectSummary.targetGap,
                                     goalMetricUnit,
-                                  )} để phủ đủ KPI mục tiêu.`
-                                : `Các KR trực tiếp đã phủ đủ KPI của mục tiêu${
+                                  )} để phủ đủ KPI goal.`
+                                : `Các KR trực tiếp đã phủ đủ KPI của goal${
                                     (kpiDirectSummary.targetOver ?? 0) > 0
                                       ? ` và dư ${formatKeyResultMetric(
                                           kpiDirectSummary.targetOver ?? 0,
@@ -1120,7 +1120,7 @@ function GoalDetailPageContent() {
                           {kpiDirectSummary.mismatchedUnitCount > 0 ? (
                             <p className="mt-2 text-xs font-medium text-amber-800">
                               Có {kpiDirectSummary.mismatchedUnitCount} KR trực tiếp khác đơn vị với
-                              mục tiêu, nên cần kiểm tra lại trước khi ra quyết định.
+                              goal, nên cần kiểm tra lại trước khi ra quyết định.
                             </p>
                           ) : null}
                         </div>
@@ -1139,7 +1139,7 @@ function GoalDetailPageContent() {
 
                       {keyResults.length === 0 ? (
                         <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3.5 py-3 text-sm text-slate-500">
-                          Mục tiêu chưa có KR nên chưa có đủ dữ liệu để tính tiến độ chi tiết.
+                          Goal chưa có KR nên chưa có đủ dữ liệu để tính tiến độ chi tiết.
                         </div>
                       ) : null}
                     </article>
@@ -1188,7 +1188,7 @@ function GoalDetailPageContent() {
                         <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-7 text-center">
                           <p className="text-base font-semibold text-slate-900">Chưa có KR.</p>
                           <p className="mt-1.5 text-sm text-slate-500">
-                            Hãy tạo KR để bắt đầu theo dõi mục tiêu.
+                            Hãy tạo KR để bắt đầu theo dõi goal.
                           </p>
                         </div>
                       ) : null}
@@ -1505,7 +1505,7 @@ function GoalDetailPageContent() {
                         )
                       ) : (
                         <p className="mt-3 text-sm text-slate-500">
-                          Chưa có cấu hình phòng ban tham gia cho mục tiêu này.
+                          Chưa có cấu hình phòng ban tham gia cho goal này.
                         </p>
                       )}
                     </article>
@@ -1524,7 +1524,7 @@ function GoalDetailPageContent() {
                       <div className="mt-2.5 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
-                            Tiến độ mục tiêu
+                            Tiến độ goal
                           </span>
                           <span className="text-lg font-semibold text-slate-900">
                             {goalProgress}%
@@ -1541,7 +1541,7 @@ function GoalDetailPageContent() {
                           value={`${goalDepartmentCount}`}
                         />
                         <DetailInfoRow label="Người phụ trách" value={goalOwnerSummary} />
-                        <DetailInfoRow label="Loại mục tiêu" value={goalTypeLabel} />
+                        <DetailInfoRow label="Loại goal" value={goalTypeLabel} />
                         <DetailInfoRow label="Quý / Năm" value={`${quarterLabel} / ${yearLabel}`} />
                         <DetailInfoRow label="Thời gian" value={goalTimelineLabel} />
                       </div>

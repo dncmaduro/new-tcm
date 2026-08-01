@@ -8,6 +8,7 @@ import {
   DashboardUpcomingDeadlines,
 } from "@/app/dashboard/_components/dashboard-widgets";
 import { useDashboardData } from "@/app/dashboard/use-dashboard-data";
+import { OKR_FEATURE_ENABLED } from "@/lib/features";
 
 export default function DashboardPage() {
   const { data, isLoading, error } = useDashboardData();
@@ -25,7 +26,14 @@ export default function DashboardPage() {
               </section>
             ) : null}
 
-            <DashboardSummaryCards cards={data.summaryCards} loading={isLoading} />
+            <DashboardSummaryCards
+              cards={
+                OKR_FEATURE_ENABLED
+                  ? data.summaryCards
+                  : data.summaryCards.filter((card) => !card.title.toLowerCase().includes("kr"))
+              }
+              loading={isLoading}
+            />
 
             <section className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.9fr)]">
               <div className="space-y-4">
@@ -37,14 +45,16 @@ export default function DashboardPage() {
               </div>
 
               <div className="space-y-4">
-                <DashboardGoalProgress
-                  title={data.profile?.roleScope === "member" ? "KR của tôi" : "Mục tiêu của tôi"}
-                  actionHref="/goals"
-                  actionLabel="Xem mục tiêu"
-                  items={data.goalProgress}
-                  loading={isLoading}
-                  error={error}
-                />
+                {OKR_FEATURE_ENABLED ? (
+                  <DashboardGoalProgress
+                    title={data.profile?.roleScope === "member" ? "KR của tôi" : "Goal của tôi"}
+                    actionHref="/goals"
+                    actionLabel="Xem goal"
+                    items={data.goalProgress}
+                    loading={isLoading}
+                    error={error}
+                  />
+                ) : null}
                 <DashboardRecentActivities
                   items={data.recentActivities}
                   loading={isLoading}

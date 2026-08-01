@@ -71,7 +71,7 @@ export function TaskExecutionSection({
     fallback: "KR chưa có timeline",
   });
   const goalTimelineLabel = formatTimelineRangeVi(keyResult?.goal?.start_date ?? null, keyResult?.goal?.end_date ?? null, {
-    fallback: "Mục tiêu chưa có timeline",
+    fallback: "Goal chưa có timeline",
   });
   const executionFormula = "Nhập trực tiếp % hoàn thành của task.";
   const totalPoints = getTaskPriorityScore(form.priority);
@@ -216,7 +216,7 @@ export function TaskExecutionSection({
                   ) ?? "Mốc tham chiếu cho task."
                 }
               />
-              <StatItem label="Timeline mục tiêu" value={goalTimelineLabel} />
+              <StatItem label="Timeline goal" value={goalTimelineLabel} />
               <StatItem
                 label="Cảnh báo"
                 value={taskTimelineAlignmentWarning ?? "Đang nằm trong khung KR"}

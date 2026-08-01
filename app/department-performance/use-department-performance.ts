@@ -780,7 +780,7 @@ const getGoalMetricSummary = ({
   return {
     currentValue: null,
     currentUnit: null,
-    metricSummary: "Tiến độ được tổng hợp từ các KR thuộc mục tiêu",
+    metricSummary: "Tiến độ được tổng hợp từ các KR thuộc goal",
   };
 };
 
@@ -808,7 +808,7 @@ const getGoalRiskNote = ({
   if (supportKrRiskCount > 0) {
     return `${supportKrRiskCount} KR hỗ trợ cần theo dõi thêm.`;
   }
-  return progress >= 75 ? "Tiến độ đang ổn định trong phạm vi hiện tại." : "Tiến độ còn thấp so với mục tiêu kỳ này.";
+  return progress >= 75 ? "Tiến độ đang ổn định trong phạm vi hiện tại." : "Tiến độ còn thấp so với goal kỳ này.";
 };
 
 const getGoalActionText = ({
@@ -829,11 +829,11 @@ const getGoalActionText = ({
   inactivityDays: number | null;
 }) => {
   if (progress >= 100) {
-    return "Mục tiêu đã đạt. Chuyển sang theo dõi tính bền vững và giữ nhịp cập nhật.";
+    return "Goal đã đạt. Chuyển sang theo dõi tính bền vững và giữ nhịp cập nhật.";
   }
 
   if (directKrRiskCount > 0) {
-    return `Ưu tiên xử lý ${directKrRiskCount} KR trực tiếp đang kéo tiến độ mục tiêu xuống.`;
+    return `Ưu tiên xử lý ${directKrRiskCount} KR trực tiếp đang kéo tiến độ goal xuống.`;
   }
 
   if (scheduleGap !== null && scheduleGap <= -15) {
@@ -850,11 +850,11 @@ const getGoalActionText = ({
   }
 
   if (inactivityDays !== null && inactivityDays >= 7) {
-    return `Mục tiêu đã ${inactivityDays} ngày chưa có cập nhật mới. Cần rà lại tiến độ thực tế.`;
+    return `Goal đã ${inactivityDays} ngày chưa có cập nhật mới. Cần rà lại tiến độ thực tế.`;
   }
 
   if (supportKrRiskCount > 0) {
-    return `Có ${supportKrRiskCount} KR hỗ trợ cần gỡ vướng để giữ nhịp cho mục tiêu này.`;
+    return `Có ${supportKrRiskCount} KR hỗ trợ cần gỡ vướng để giữ nhịp cho goal này.`;
   }
 
   return "Tiến độ hiện còn trong tầm kiểm soát. Tiếp tục giữ nhịp cập nhật đều và theo dõi KR chính.";
@@ -946,16 +946,16 @@ const getMemberSignalText = ({
   blockedTasks: number;
 }) => {
   if (overdueTasks > 0) {
-    return `${overdueTasks} công việc quá hạn đang ảnh hưởng KR theo dõi.`;
+    return `${overdueTasks} task quá hạn đang ảnh hưởng KR theo dõi.`;
   }
   if (blockedTasks > 0) {
-    return `${blockedTasks} công việc bị chặn cần tháo gỡ.`;
+    return `${blockedTasks} task bị chặn cần tháo gỡ.`;
   }
   if (performanceScore !== null && performanceScore < 50) {
     return "Điểm đóng góp hiện ở mức thấp so với phạm vi lọc.";
   }
   if (performanceScore !== null && performanceScore >= 80) {
-    return "Đóng góp ổn định trên các mục tiêu và KR đang tham gia.";
+    return "Đóng góp ổn định trên các goal và KR đang tham gia.";
   }
   return "Cần theo dõi thêm nhịp cải thiện trên các KR đang tham gia.";
 };
@@ -1074,10 +1074,10 @@ export function useDepartmentPerformance(filters: FilterParams) {
           throw new Error(memberRoleError.message || "Không tải được vai trò thành viên của phòng ban.");
         }
         if (ownedGoalError) {
-          throw new Error(ownedGoalError.message || "Không tải được danh sách mục tiêu của phòng ban.");
+          throw new Error(ownedGoalError.message || "Không tải được danh sách goal của phòng ban.");
         }
         if (linkedGoalError) {
-          throw new Error(linkedGoalError.message || "Không tải được danh sách mục tiêu liên quan.");
+          throw new Error(linkedGoalError.message || "Không tải được danh sách goal liên quan.");
         }
         if (departmentKeyResultError) {
           throw new Error(departmentKeyResultError.message || "Không tải được danh sách KR của phòng ban.");
@@ -1170,7 +1170,7 @@ export function useDepartmentPerformance(filters: FilterParams) {
             : { data: [] as KeyResultGoalRefRow[], error: null };
 
         if (relatedKeyResultGoalError) {
-          throw new Error(relatedKeyResultGoalError.message || "Không tải được mục tiêu liên quan qua liên kết hỗ trợ.");
+          throw new Error(relatedKeyResultGoalError.message || "Không tải được goal liên quan qua liên kết hỗ trợ.");
         }
         if (!isActive) {
           return;
@@ -1203,7 +1203,7 @@ export function useDepartmentPerformance(filters: FilterParams) {
             : { data: [] as GoalRow[], error: null };
 
         if (goalRowsError) {
-          throw new Error(goalRowsError.message || "Không tải được danh sách mục tiêu trong phạm vi phòng ban.");
+          throw new Error(goalRowsError.message || "Không tải được danh sách goal trong phạm vi phòng ban.");
         }
         if (!isActive) {
           return;
@@ -1237,10 +1237,10 @@ export function useDepartmentPerformance(filters: FilterParams) {
         ]);
 
         if (primaryKeyResultError) {
-          throw new Error(primaryKeyResultError.message || "Không tải được danh sách KR trong phạm vi mục tiêu.");
+          throw new Error(primaryKeyResultError.message || "Không tải được danh sách KR trong phạm vi goal.");
         }
         if (goalLogResult.error) {
-          throw new Error(goalLogResult.error.message || "Không tải được lịch sử cập nhật mục tiêu.");
+          throw new Error(goalLogResult.error.message || "Không tải được lịch sử cập nhật goal.");
         }
         if (!isActive) {
           return;
@@ -1389,7 +1389,7 @@ export function useDepartmentPerformance(filters: FilterParams) {
         ]);
 
         if (extraGoalResult.error) {
-          throw new Error(extraGoalResult.error.message || "Không tải được mục tiêu liên kết hỗ trợ.");
+          throw new Error(extraGoalResult.error.message || "Không tải được goal liên kết hỗ trợ.");
         }
         if (extraProfilesResult.error) {
           throw new Error(extraProfilesResult.error.message || "Không tải được hồ sơ người tham gia thực thi.");
@@ -1832,7 +1832,7 @@ export function useDepartmentPerformance(filters: FilterParams) {
         return {
           id: keyResult.id,
           goalId: keyResult.goal_id,
-          goalName: allGoalsById[keyResult.goal_id ?? ""]?.name ?? "Chưa có mục tiêu",
+          goalName: allGoalsById[keyResult.goal_id ?? ""]?.name ?? "Chưa có goal",
           name: keyResult.name,
           type: keyResult.type,
           typeLabel: formatKeyResultTypeLabel(keyResult.type),
@@ -1858,7 +1858,7 @@ export function useDepartmentPerformance(filters: FilterParams) {
                 ? allKeyResultsById[link.support_key_result_id] ?? null
                 : null;
               const supportGoalName =
-                supportKeyResult?.goal_id ? allGoalsById[supportKeyResult.goal_id]?.name ?? "Chưa có mục tiêu" : "Chưa có mục tiêu";
+                supportKeyResult?.goal_id ? allGoalsById[supportKeyResult.goal_id]?.name ?? "Chưa có goal" : "Chưa có goal";
               if (!supportKeyResult) {
                 return null;
               }
@@ -1904,7 +1904,7 @@ export function useDepartmentPerformance(filters: FilterParams) {
         return {
           id: keyResult.id,
           goalId: keyResult.goal_id,
-          goalName: allGoalsById[keyResult.goal_id ?? ""]?.name ?? "Chưa có mục tiêu",
+          goalName: allGoalsById[keyResult.goal_id ?? ""]?.name ?? "Chưa có goal",
           name: keyResult.name,
           type: keyResult.type,
           typeLabel: formatKeyResultTypeLabel(keyResult.type),
@@ -1935,8 +1935,8 @@ export function useDepartmentPerformance(filters: FilterParams) {
                 id: targetKeyResult.id,
                 name: targetKeyResult.name,
                 goalName: targetKeyResult.goal_id
-                  ? allGoalsById[targetKeyResult.goal_id]?.name ?? "Chưa có mục tiêu"
-                  : "Chưa có mục tiêu",
+                  ? allGoalsById[targetKeyResult.goal_id]?.name ?? "Chưa có goal"
+                  : "Chưa có goal",
                 allocationLabel: getSupportAllocationLabel({
                   allocatedValue: link.allocated_value,
                   allocatedPercent: link.allocated_percent,
@@ -2043,7 +2043,7 @@ export function useDepartmentPerformance(filters: FilterParams) {
         return {
           keyResultId: keyResult.id,
           keyResultName: keyResult.name,
-          goalName: keyResult.goal_id ? allGoalsById[keyResult.goal_id]?.name ?? "Chưa có mục tiêu" : "Chưa có mục tiêu",
+          goalName: keyResult.goal_id ? allGoalsById[keyResult.goal_id]?.name ?? "Chưa có goal" : "Chưa có goal",
           overdueTasks,
           blockedTasks,
           openTasks,
@@ -2069,7 +2069,7 @@ export function useDepartmentPerformance(filters: FilterParams) {
           id: goal.id,
           entityType: "goal" as const,
           name: goal.name,
-          parentName: "Mục tiêu",
+          parentName: "Goal",
           endDate: goal.endDate as string,
           progress: goal.progress,
           health: goal.health,

@@ -420,7 +420,7 @@ function NewGoalPageContent() {
   const permissionError =
     workspaceAccess.error ??
     (!isCheckingPermission && !workspaceAccess.canManage
-      ? "Bạn không có quyền tạo mục tiêu ở phòng ban cấp gốc."
+      ? "Bạn không có quyền tạo goal ở phòng ban cấp gốc."
       : null);
   const permissionDebug: GoalCreatePermissionDebug = useMemo(
     () => ({
@@ -522,7 +522,7 @@ function NewGoalPageContent() {
         }
 
         if (goalError || !goalData) {
-          setSubmitError(goalError?.message || "Không tải được dữ liệu mục tiêu để chỉnh sửa.");
+          setSubmitError(goalError?.message || "Không tải được dữ liệu goal để chỉnh sửa.");
           return;
         }
 
@@ -795,7 +795,7 @@ function NewGoalPageContent() {
     event.preventDefault();
 
     if (!canCreateGoal) {
-      setSubmitError("Bạn không có quyền tạo mục tiêu.");
+      setSubmitError("Bạn không có quyền tạo goal.");
       return;
     }
 
@@ -859,17 +859,17 @@ function NewGoalPageContent() {
         if (error) {
           if (error.code === "42501") {
             setSubmitError(
-              "Bạn không có quyền cập nhật mục tiêu (RLS). Vui lòng kiểm tra lại policy UPDATE bảng goals.",
+              "Bạn không có quyền cập nhật goal (RLS). Vui lòng kiểm tra lại policy UPDATE bảng goals.",
             );
           } else {
-            setSubmitError(error.message || "Không thể cập nhật mục tiêu.");
+            setSubmitError(error.message || "Không thể cập nhật goal.");
           }
           return;
         }
 
         if (!data) {
           setSubmitError(
-            "Không cập nhật được mục tiêu. DB trả về 0 dòng, nhiều khả năng do RLS hoặc policy UPDATE của bảng goals.",
+            "Không cập nhật được goal. DB trả về 0 dòng, nhiều khả năng do RLS hoặc policy UPDATE của bảng goals.",
           );
           return;
         }
@@ -898,10 +898,10 @@ function NewGoalPageContent() {
         if (error || !createdGoal) {
           if (error?.code === "42501") {
             setSubmitError(
-              "Bạn không có quyền tạo mục tiêu (RLS). Vui lòng kiểm tra lại policy INSERT bảng goals.",
+              "Bạn không có quyền tạo goal (RLS). Vui lòng kiểm tra lại policy INSERT bảng goals.",
             );
           } else {
-            setSubmitError(error?.message || "Không thể tạo mục tiêu.");
+            setSubmitError(error?.message || "Không thể tạo goal.");
           }
           return;
         }
@@ -921,7 +921,7 @@ function NewGoalPageContent() {
       }
 
       if (!savedGoalId) {
-        setSubmitError("Không xác định được mục tiêu cần lưu.");
+        setSubmitError("Không xác định được goal cần lưu.");
         return;
       }
 
@@ -932,7 +932,7 @@ function NewGoalPageContent() {
           !isSameGoalTargetValue(savedGoalSnapshot.target, payload.target))
       ) {
         setSubmitError(
-          `DB không lưu đúng dữ liệu mục tiêu. Name hiện tại trong DB là "${
+          `DB không lưu đúng dữ liệu goal. Name hiện tại trong DB là "${
             savedGoalSnapshot.name || "null"
           }", unit là "${savedGoalSnapshot.unit ?? "null"}", target là "${
             savedGoalSnapshot.target ?? "null"
@@ -948,8 +948,8 @@ function NewGoalPageContent() {
       } catch (ownerSyncError) {
         setSubmitError(
           ownerSyncError instanceof Error
-            ? `${isEditMode ? "Đã lưu mục tiêu" : "Đã tạo mục tiêu"} nhưng chưa đồng bộ được Owners: ${ownerSyncError.message}`
-            : `${isEditMode ? "Đã lưu mục tiêu" : "Đã tạo mục tiêu"} nhưng chưa đồng bộ được Owners.`,
+            ? `${isEditMode ? "Đã lưu goal" : "Đã tạo goal"} nhưng chưa đồng bộ được Owners: ${ownerSyncError.message}`
+            : `${isEditMode ? "Đã lưu goal" : "Đã tạo goal"} nhưng chưa đồng bộ được Owners.`,
         );
         return;
       }
@@ -966,8 +966,8 @@ function NewGoalPageContent() {
         if (goalDepartmentsError) {
           setSubmitError(
             goalDepartmentsError.message
-              ? `${isEditMode ? "Mục tiêu đã được cập nhật" : "Mục tiêu đã được tạo"} nhưng chưa lưu được danh sách team phối hợp: ${goalDepartmentsError.message}`
-              : `${isEditMode ? "Mục tiêu đã được cập nhật" : "Mục tiêu đã được tạo"} nhưng chưa lưu được danh sách team phối hợp. Mở chi tiết mục tiêu để kiểm tra lại.`,
+              ? `${isEditMode ? "Goal đã được cập nhật" : "Goal đã được tạo"} nhưng chưa lưu được danh sách team phối hợp: ${goalDepartmentsError.message}`
+              : `${isEditMode ? "Goal đã được cập nhật" : "Goal đã được tạo"} nhưng chưa lưu được danh sách team phối hợp. Mở chi tiết goal để kiểm tra lại.`,
           );
           return;
         }
@@ -981,8 +981,8 @@ function NewGoalPageContent() {
       if (currentGoalDepartmentsError) {
         setSubmitError(
           currentGoalDepartmentsError.message
-            ? `Đã lưu mục tiêu nhưng chưa kiểm tra lại được danh sách team phối hợp: ${currentGoalDepartmentsError.message}`
-            : "Đã lưu mục tiêu nhưng chưa kiểm tra lại được danh sách team phối hợp.",
+            ? `Đã lưu goal nhưng chưa kiểm tra lại được danh sách team phối hợp: ${currentGoalDepartmentsError.message}`
+            : "Đã lưu goal nhưng chưa kiểm tra lại được danh sách team phối hợp.",
         );
         return;
       }
@@ -1006,8 +1006,8 @@ function NewGoalPageContent() {
         if (deleteStaleGoalDepartmentsError) {
           setSubmitError(
             deleteStaleGoalDepartmentsError.message
-              ? `Đã lưu mục tiêu nhưng chưa xóa được team phối hợp cũ: ${deleteStaleGoalDepartmentsError.message}`
-              : "Đã lưu mục tiêu nhưng chưa xóa được team phối hợp cũ.",
+              ? `Đã lưu goal nhưng chưa xóa được team phối hợp cũ: ${deleteStaleGoalDepartmentsError.message}`
+              : "Đã lưu goal nhưng chưa xóa được team phối hợp cũ.",
           );
           return;
         }
@@ -1021,8 +1021,8 @@ function NewGoalPageContent() {
       if (finalGoalDepartmentsError) {
         setSubmitError(
           finalGoalDepartmentsError.message
-            ? `Đã lưu mục tiêu nhưng chưa xác nhận được danh sách team phối hợp cuối cùng: ${finalGoalDepartmentsError.message}`
-            : "Đã lưu mục tiêu nhưng chưa xác nhận được danh sách team phối hợp cuối cùng.",
+            ? `Đã lưu goal nhưng chưa xác nhận được danh sách team phối hợp cuối cùng: ${finalGoalDepartmentsError.message}`
+            : "Đã lưu goal nhưng chưa xác nhận được danh sách team phối hợp cuối cùng.",
         );
         return;
       }
@@ -1037,7 +1037,7 @@ function NewGoalPageContent() {
 
       if (JSON.stringify(finalDepartmentIds) !== JSON.stringify(expectedDepartmentIds)) {
         setSubmitError(
-          "Mục tiêu đã được cập nhật nhưng danh sách team phối hợp chưa đồng bộ hoàn toàn. DB có thể đang thiếu quyền DELETE cho bảng goal_departments.",
+          "Goal đã được cập nhật nhưng danh sách team phối hợp chưa đồng bộ hoàn toàn. DB có thể đang thiếu quyền DELETE cho bảng goal_departments.",
         );
         return;
       }
@@ -1047,7 +1047,7 @@ function NewGoalPageContent() {
         router.refresh();
       });
     } catch {
-      setSubmitError(`Có lỗi xảy ra khi ${isEditMode ? "cập nhật" : "tạo"} mục tiêu.`);
+      setSubmitError(`Có lỗi xảy ra khi ${isEditMode ? "cập nhật" : "tạo"} goal.`);
     } finally {
       setIsSubmitting(false);
     }
@@ -1057,16 +1057,16 @@ function NewGoalPageContent() {
     <>
       <CreateFormPage
         sidebarActive="goals"
-        title={isEditMode ? "Chỉnh sửa mục tiêu" : "Tạo mục tiêu mới"}
+        title={isEditMode ? "Chỉnh sửa goal" : "Tạo goal mới"}
         items={[
-          { label: "Mục tiêu", href: "/goals" },
-          { label: isEditMode ? "Chỉnh sửa mục tiêu" : "Tạo mục tiêu mới" },
+          { label: "Goal", href: "/goals" },
+          { label: isEditMode ? "Chỉnh sửa goal" : "Tạo goal mới" },
         ]}
         topSlot={
           showPermissionDebug && permissionDebug ? (
             <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-950 px-4 py-3 text-xs text-slate-100">
               <p className="mb-2 font-semibold text-sky-300">
-                Debug quyền tạo mục tiêu (debugPermission=1)
+                Debug quyền tạo goal (debugPermission=1)
               </p>
               <pre className="whitespace-pre-wrap break-words text-[11px] leading-relaxed">
                 {JSON.stringify(permissionDebug, null, 2)}
@@ -1076,7 +1076,7 @@ function NewGoalPageContent() {
         }
       >
         <CreateFormShell
-          title={isEditMode ? "Chỉnh sửa mục tiêu" : "Thêm mục tiêu mới"}
+          title={isEditMode ? "Chỉnh sửa goal" : "Thêm goal mới"}
           contextBar={
             !isEditMode && defaultDepartmentName ? (
               <FormContextBar>
@@ -1088,7 +1088,7 @@ function NewGoalPageContent() {
         >
           {isCheckingPermission ? (
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              Đang kiểm tra quyền tạo mục tiêu...
+              Đang kiểm tra quyền tạo goal...
             </div>
           ) : null}
 
@@ -1109,7 +1109,7 @@ function NewGoalPageContent() {
               <FormSection title="Thông tin cơ bản">
                 <FormFieldGrid>
                   <div className="space-y-1.5 md:col-span-2">
-                    <FieldLabel htmlFor="goal-name">Tên mục tiêu *</FieldLabel>
+                    <FieldLabel htmlFor="goal-name">Tên goal *</FieldLabel>
                     <input
                       id="goal-name"
                       value={form.name}
@@ -1120,7 +1120,7 @@ function NewGoalPageContent() {
                         }))
                       }
                       className={inputClassName}
-                      placeholder="Nhập tên mục tiêu"
+                      placeholder="Nhập tên goal"
                     />
                   </div>
 
@@ -1136,7 +1136,7 @@ function NewGoalPageContent() {
                       }
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Chọn loại mục tiêu" />
+                        <SelectValue placeholder="Chọn loại goal" />
                       </SelectTrigger>
                       <SelectContent>
                         {GOAL_TYPES.map((goalType) => (
@@ -1174,7 +1174,7 @@ function NewGoalPageContent() {
               <FormSection title="Kỳ & chỉ tiêu" actions={<QuarterDateInfo />}>
                 <FormFieldGrid>
                   <div className="space-y-1.5">
-                    <FieldLabel>Đơn vị đo mục tiêu</FieldLabel>
+                    <FieldLabel>Đơn vị đo goal</FieldLabel>
                     <Select
                       value={form.unit}
                       disabled={isOkrGoal}
@@ -1365,7 +1365,7 @@ function NewGoalPageContent() {
                       }))
                     }
                     className={textareaClassName}
-                    placeholder="Mô tả mục tiêu"
+                    placeholder="Mô tả goal"
                   />
                 </div>
               </FormSection>
@@ -1389,7 +1389,7 @@ function NewGoalPageContent() {
                       : "Đang tạo..."
                     : isEditMode
                       ? "Lưu thay đổi"
-                      : "Tạo mục tiêu"}
+                      : "Tạo goal"}
                 </button>
               </FormFooterActions>
             </form>

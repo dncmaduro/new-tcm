@@ -644,8 +644,8 @@ export default function RealtimeReportsPage() {
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <WorkspacePageHeader
-            title="Hiệu suất công việc"
-            items={[{ label: "Hiệu suất công việc" }]}
+            title="Hiệu suất task"
+            items={[{ label: "Hiệu suất task" }]}
           />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-7">

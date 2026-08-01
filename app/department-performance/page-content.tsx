@@ -115,7 +115,7 @@ export default function DepartmentPerformancePage() {
               <section className="rounded-3xl border border-rose-200 bg-rose-50 px-6 py-8">
                 <h2 className="text-xl font-semibold text-rose-900">Bạn không có quyền truy cập trang này.</h2>
                 <p className="mt-2 text-sm leading-6 text-rose-700">
-                  Trang hiệu suất phòng ban chỉ dành cho người có quyền quản lý tương ứng để theo dõi mục tiêu, KR và phân tích đóng góp theo phòng ban.
+                  Trang hiệu suất phòng ban chỉ dành cho người có quyền quản lý tương ứng để theo dõi goal, KR và phân tích đóng góp theo phòng ban.
                 </p>
                 {permissionError ? <p className="mt-2 text-sm text-rose-600">{permissionError}</p> : null}
               </section>
@@ -142,7 +142,7 @@ export default function DepartmentPerformancePage() {
                         <p className="mt-2 text-lg font-semibold text-slate-950">{formatPeriodLabel(quarterFilter, yearFilter)}</p>
                       </div>
                       <div className="rounded-3xl border border-white bg-white/90 px-4 py-4 shadow-sm">
-                        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Mục tiêu đang theo dõi</p>
+                        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Goal đang theo dõi</p>
                         <p className="mt-2 text-[28px] font-semibold leading-none tracking-[-0.03em] text-slate-950">
                           {isLoading ? "..." : summary.trackedGoals}
                         </p>

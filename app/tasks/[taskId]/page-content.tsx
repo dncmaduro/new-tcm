@@ -29,6 +29,7 @@ import { normalizeKeyResultUnitForType } from "@/lib/constants/key-results";
 import { useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
 import { formatTimelineRangeVi } from "@/lib/timeline";
+import { OKR_FEATURE_ENABLED } from "@/lib/features";
 
 const DEFAULT_FORM: TaskFormState = {
   name: "",
@@ -187,7 +188,7 @@ export default function TaskDetailPage() {
       setCreatorName("Chưa rõ");
       setAssigneeName("Chưa gán");
       setAssigneeOptions([]);
-      setLoadError("Liên kết công việc không hợp lệ.");
+      setLoadError("Liên kết task không hợp lệ.");
       setIsLoading(false);
       return;
     }
@@ -261,14 +262,14 @@ export default function TaskDetailPage() {
 
         if (taskError) {
           if (taskError.code === "42501") {
-            throw new Error("Bạn không có quyền xem công việc này.");
+            throw new Error("Bạn không có quyền xem task này.");
           }
 
-          throw new Error(taskError.message || "Không tải được chi tiết công việc.");
+          throw new Error(taskError.message || "Không tải được chi tiết task.");
         }
 
         if (!taskData) {
-          throw new Error("Không tìm thấy công việc.");
+          throw new Error("Không tìm thấy task.");
         }
 
         const normalizedTask = normalizeTaskRecord(taskData as unknown as TaskRow);
@@ -337,7 +338,7 @@ export default function TaskDetailPage() {
         setCreatorName("Chưa rõ");
         setAssigneeName("Chưa gán");
         setAssigneeOptions([]);
-        setLoadError(error instanceof Error ? error.message : "Không tải được chi tiết công việc.");
+        setLoadError(error instanceof Error ? error.message : "Không tải được chi tiết task.");
       } finally {
         if (isActive) {
           setIsLoading(false);
@@ -352,7 +353,7 @@ export default function TaskDetailPage() {
     };
   }, [taskId]);
 
-  const goalName = keyResult?.goal?.name ?? "Chưa có mục tiêu";
+  const goalName = keyResult?.goal?.name ?? "Chưa có goal";
   const goalHref = keyResult?.goal_id ? `/goals/${keyResult.goal_id}` : null;
   const keyResultHref =
     keyResult?.id && keyResult.goal_id
@@ -406,10 +407,10 @@ export default function TaskDetailPage() {
     (workspaceAccess.profileId === effectiveAssigneeId || workspaceAccess.hasRootLeaderAccess);
 
   const breadcrumbs: TaskDetailBreadcrumb[] = [
-    { label: "Công việc", href: "/tasks" },
-    ...(goalHref ? [{ label: goalName, href: goalHref }] : []),
-    ...(keyResultHref && keyResult ? [{ label: keyResult.name, href: keyResultHref }] : []),
-    { label: task?.name ?? "Chi tiết công việc" },
+    { label: "Task", href: "/tasks" },
+    ...(OKR_FEATURE_ENABLED && goalHref ? [{ label: goalName, href: goalHref }] : []),
+    ...(OKR_FEATURE_ENABLED && keyResultHref && keyResult ? [{ label: keyResult.name, href: keyResultHref }] : []),
+    { label: task?.name ?? "Chi tiết task" },
   ];
 
   const resetTaskInfoDraft = () => {
@@ -466,7 +467,7 @@ export default function TaskDetailPage() {
     }
 
     if (!form.name.trim()) {
-      setActionError("Tên công việc không được để trống.");
+      setActionError("Tên task không được để trống.");
       setNotice(null);
       return;
     }
@@ -511,10 +512,10 @@ export default function TaskDetailPage() {
 
       if (error || !updatedTask) {
         if (error?.code === "42501") {
-          throw new Error("Bạn không có quyền chỉnh sửa công việc này.");
+          throw new Error("Bạn không có quyền chỉnh sửa task này.");
         }
 
-        throw new Error(error?.message || "Không thể lưu thay đổi công việc.");
+        throw new Error(error?.message || "Không thể lưu thay đổi task.");
       }
 
       const nextTask = normalizeTaskRecord(updatedTask as TaskRow, {
@@ -532,9 +533,9 @@ export default function TaskDetailPage() {
           "Chưa gán",
       );
       setIsEditingTaskInfo(false);
-      setNotice("Đã lưu thông tin công việc.");
+      setNotice("Đã lưu thông tin task.");
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Không thể lưu thông tin công việc.");
+      setActionError(error instanceof Error ? error.message : "Không thể lưu thông tin task.");
     } finally {
       setIsSavingTaskInfo(false);
     }
@@ -565,10 +566,10 @@ export default function TaskDetailPage() {
 
       if (error || !updatedTask) {
         if (error?.code === "42501") {
-          throw new Error("Bạn không có quyền cập nhật tiến độ công việc.");
+          throw new Error("Bạn không có quyền cập nhật tiến độ task.");
         }
 
-        throw new Error(error?.message || "Không thể cập nhật tiến độ công việc.");
+        throw new Error(error?.message || "Không thể cập nhật tiến độ task.");
       }
 
       const nextTask = normalizeTaskRecord(updatedTask as TaskRow, {
@@ -581,9 +582,9 @@ export default function TaskDetailPage() {
       setForm(nextForm);
       setProgressInput(String(nextForm.progress));
       setIsEditingTaskProgress(false);
-      setNotice("Đã cập nhật tiến độ công việc.");
+      setNotice("Đã cập nhật tiến độ task.");
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Không thể cập nhật tiến độ công việc.");
+      setActionError(error instanceof Error ? error.message : "Không thể cập nhật tiến độ task.");
     } finally {
       setIsSavingTaskProgress(false);
     }
@@ -594,7 +595,7 @@ export default function TaskDetailPage() {
       return;
     }
 
-    const confirmed = window.confirm(`Xóa công việc "${task.name}"?`);
+    const confirmed = window.confirm(`Xóa task "${task.name}"?`);
     if (!confirmed) {
       return;
     }
@@ -608,15 +609,15 @@ export default function TaskDetailPage() {
 
       if (error) {
         if (error.code === "42501") {
-          throw new Error("Bạn không có quyền xóa công việc này.");
+          throw new Error("Bạn không có quyền xóa task này.");
         }
 
-        throw new Error(error.message || "Không thể xóa công việc.");
+        throw new Error(error.message || "Không thể xóa task.");
       }
 
       router.push("/tasks");
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Không thể xóa công việc.");
+      setActionError(error instanceof Error ? error.message : "Không thể xóa task.");
       setIsDeletingTask(false);
     }
   };
@@ -628,14 +629,14 @@ export default function TaskDetailPage() {
 
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <DetailPageHeader
-            title="Chi tiết công việc"
+            title="Chi tiết task"
             items={breadcrumbs.map((item) => ({ label: item.label, href: item.href }))}
           />
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 lg:px-6">
             {isLoading ? (
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 text-sm text-slate-600">
-                Đang tải chi tiết công việc...
+                Đang tải chi tiết task...
               </div>
             ) : null}
 

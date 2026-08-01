@@ -107,11 +107,11 @@ export const formatKeyResultMetric = (value: number | null, unit: string | null)
 export const getKeyResultProgressHint = (unit: string | null) => {
   // const unitLabel = formatKeyResultUnit(unit);
   // if (unit === "percent") {
-  //   return `Tiến độ KR được tính trực tiếp từ giá trị hiện tại so với chỉ tiêu, theo đơn vị ${unitLabel}. Công việc chỉ dùng để theo dõi phần thực hiện.`;
+  //   return `Tiến độ KR được tính trực tiếp từ giá trị hiện tại so với chỉ tiêu, theo đơn vị ${unitLabel}. Task chỉ dùng để theo dõi phần thực hiện.`;
   // }
   // if (unit === "currency") {
-  //   return `Giá trị hiện tại của KR là nguồn đo chính theo đơn vị ${unitLabel}. Công việc không được cộng dồn vào chỉ số kinh doanh của KR.`;
+  //   return `Giá trị hiện tại của KR là nguồn đo chính theo đơn vị ${unitLabel}. Task không được cộng dồn vào chỉ số kinh doanh của KR.`;
   // }
-  // return `Tiến độ KR được hiển thị theo giá trị hiện tại so với chỉ tiêu, với đơn vị ${unitLabel}. Công việc chỉ phản ánh mức độ thực hiện.`;
+  // return `Tiến độ KR được hiển thị theo giá trị hiện tại so với chỉ tiêu, với đơn vị ${unitLabel}. Task chỉ phản ánh mức độ thực hiện.`;
   return ""
 };

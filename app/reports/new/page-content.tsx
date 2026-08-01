@@ -404,7 +404,7 @@ export default function CreatePerformanceReportPage() {
                           className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                         />
                         <p className="text-xs text-slate-500">
-                          Sau khi dữ liệu kỳ này được tổng hợp, hệ thống sẽ bổ sung mục tiêu, KR và điểm chi tiết cho báo cáo.
+                          Sau khi dữ liệu kỳ này được tổng hợp, hệ thống sẽ bổ sung goal, KR và điểm chi tiết cho báo cáo.
                         </p>
                       </div>
 
@@ -437,7 +437,7 @@ export default function CreatePerformanceReportPage() {
                   <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Trước khi tạo báo cáo</p>
                   <div className="mt-4 space-y-3 text-sm text-slate-600">
                     <p>Báo cáo mới chỉ áp dụng cho một nhân sự trong một kỳ đánh giá cụ thể.</p>
-                    <p>Khi dữ liệu đã sẵn sàng, trang chi tiết sẽ hiển thị mục tiêu, KR trực tiếp, KR hỗ trợ và phần thực thi.</p>
+                    <p>Khi dữ liệu đã sẵn sàng, trang chi tiết sẽ hiển thị goal, KR trực tiếp, KR hỗ trợ và phần thực thi.</p>
                     <p>Hệ thống không cho tạo trùng báo cáo của cùng một nhân sự trong cùng một kỳ.</p>
                   </div>
                 </article>

@@ -36,6 +36,7 @@ import {
   isDateRangeOrdered,
 } from "@/lib/timeline";
 import { cn } from "@/lib/utils";
+import { OKR_FEATURE_ENABLED } from "@/lib/features";
 
 type GoalOption = {
   id: string;
@@ -227,7 +228,7 @@ const resolveTaskPrefill = ({
     const resolvedGoalId = resolvedKeyResult?.goalId ?? queryGoalId ?? null;
     const warning =
       queryGoalId && resolvedKeyResult?.goalId && queryGoalId !== resolvedKeyResult.goalId
-        ? "Key Result không thuộc mục tiêu trên URL. Hệ thống đã ưu tiên mục tiêu thật của Key Result."
+        ? "Key Result không thuộc goal trên URL. Hệ thống đã ưu tiên goal thật của Key Result."
         : null;
     return {
       resolvedGoalId,
@@ -333,7 +334,7 @@ function NewTaskPageContent() {
   const permissionError =
     workspaceAccess.error ??
     (!isCheckingPermission && !workspaceAccess.canManage
-      ? "Bạn chưa có quyền tạo công việc ở phòng ban gốc."
+      ? "Bạn chưa có quyền tạo task ở phòng ban gốc."
       : null);
 
   useEffect(() => {
@@ -436,7 +437,7 @@ function NewTaskPageContent() {
             return {
               id: String(keyResult.id),
               goalId: keyResult.goal_id ? String(keyResult.goal_id) : null,
-              goalName: goalRow?.name ? String(goalRow.name) : "Chưa có mục tiêu",
+              goalName: goalRow?.name ? String(goalRow.name) : "Chưa có goal",
               goalType: goalRow?.type ? String(goalRow.type) : null,
               name: String(keyResult.name),
               type: keyResult.type ? String(keyResult.type) : null,
@@ -524,7 +525,7 @@ function NewTaskPageContent() {
             keyResultFromQuery = {
               id: String(directKeyResultRow.id),
               goalId: directKeyResultRow.goal_id ? String(directKeyResultRow.goal_id) : null,
-              goalName: directGoal?.name ? String(directGoal.name) : "Chưa có mục tiêu",
+              goalName: directGoal?.name ? String(directGoal.name) : "Chưa có goal",
               goalType: directGoal?.type ? String(directGoal.type) : null,
               name: String(directKeyResultRow.name),
               type: directKeyResultRow.type ? String(directKeyResultRow.type) : null,
@@ -635,7 +636,7 @@ function NewTaskPageContent() {
             const extraKeyResultOption: KeyResultOption = {
               id: String(extraKeyResultRow.id),
               goalId: extraKeyResultRow.goal_id ? String(extraKeyResultRow.goal_id) : null,
-              goalName: extraGoal?.name ? String(extraGoal.name) : "Chưa có mục tiêu",
+              goalName: extraGoal?.name ? String(extraGoal.name) : "Chưa có goal",
               goalType: extraGoal?.type ? String(extraGoal.type) : null,
               name: String(extraKeyResultRow.name),
               type: extraKeyResultRow.type ? String(extraKeyResultRow.type) : null,
@@ -674,7 +675,7 @@ function NewTaskPageContent() {
                 : null;
               upsertGoalOption({
                 id: extraGoalId,
-                name: extraGoal?.name ? String(extraGoal.name) : "Chưa có mục tiêu",
+                name: extraGoal?.name ? String(extraGoal.name) : "Chưa có goal",
                 departmentId,
                 departmentName: departmentId ? (departmentsById[departmentId] ?? null) : null,
                 startDate: extraGoal?.start_date ? String(extraGoal.start_date) : null,
@@ -700,7 +701,7 @@ function NewTaskPageContent() {
 
         const loadErrorMessages: string[] = [];
         if (goalsError) {
-          loadErrorMessages.push("Không tải được danh sách mục tiêu.");
+          loadErrorMessages.push("Không tải được danh sách goal.");
         }
         if (keyResultsError) {
           loadErrorMessages.push("Không tải được danh sách key result.");
@@ -747,7 +748,7 @@ function NewTaskPageContent() {
           setProfileOptions([]);
           setDepartmentOptions([]);
           setPrefillWarning(null);
-          setDataLoadError("Có lỗi khi tải dữ liệu tạo công việc.");
+          setDataLoadError("Có lỗi khi tải dữ liệu tạo task.");
         }
       } finally {
         if (isActive) {
@@ -766,7 +767,6 @@ function NewTaskPageContent() {
   const isFormValid = useMemo(
     () =>
       form.name.trim().length > 0 &&
-      form.keyResultId.trim().length > 0 &&
       form.profileId.trim().length > 0 &&
       form.unit.trim().length > 0 &&
       Number.isFinite(Number(form.target)) &&
@@ -809,7 +809,7 @@ function NewTaskPageContent() {
     return [
       {
         id: form.goalId,
-        name: "Mục tiêu đã chọn",
+        name: "Goal đã chọn",
         departmentId: null,
         departmentName: null,
         startDate: null,
@@ -831,7 +831,7 @@ function NewTaskPageContent() {
       {
         id: form.keyResultId,
         goalId: form.goalId || null,
-        goalName: form.goalId ? "Mục tiêu đã chọn" : "Chưa có mục tiêu",
+        goalName: form.goalId ? "Goal đã chọn" : "Chưa có goal",
         goalType: null,
         name: "Key Result đã chọn",
         type: null,
@@ -881,7 +881,7 @@ function NewTaskPageContent() {
         selectedKeyResult?.startDate ?? null,
         selectedKeyResult?.endDate ?? null,
         {
-          subjectLabel: "Thời gian công việc",
+          subjectLabel: "Thời gian task",
           parentLabel: "KR",
         },
       ),
@@ -939,7 +939,7 @@ function NewTaskPageContent() {
     setSubmitSuccess(null);
 
     if (!canCreateTask) {
-      setSubmitError("Bạn không có quyền tạo công việc.");
+      setSubmitError("Bạn không có quyền tạo task.");
       return;
     }
 
@@ -948,7 +948,7 @@ function NewTaskPageContent() {
       return;
     }
     if (!creatorProfileId) {
-      setSubmitError("Không xác định được người tạo công việc hiện tại.");
+      setSubmitError("Không xác định được người tạo task hiện tại.");
       return;
     }
     if (taskTimelineInputError) {
@@ -984,7 +984,7 @@ function NewTaskPageContent() {
       const currentPerTask = shouldBulkCreateByTarget ? 0 : safeCurrent;
 
       const payload = {
-        key_result_id: form.keyResultId.trim(),
+        key_result_id: OKR_FEATURE_ENABLED ? form.keyResultId.trim() || null : null,
         assignee_id: form.profileId,
         profile_id: form.profileId,
         creator_profile_id: creatorProfileId,
@@ -1032,10 +1032,10 @@ function NewTaskPageContent() {
       if (error) {
         if (error.code === "42501") {
           setSubmitError(
-            "Bạn không có quyền tạo công việc (RLS). Vui lòng kiểm tra lại policy INSERT bảng tasks.",
+            "Bạn không có quyền tạo task (RLS). Vui lòng kiểm tra lại policy INSERT bảng tasks.",
           );
         } else {
-          setSubmitError(error.message || "Không thể tạo công việc.");
+          setSubmitError(error.message || "Không thể tạo task.");
         }
         return;
       }
@@ -1051,8 +1051,8 @@ function NewTaskPageContent() {
         setSubmitError(null);
         setSubmitSuccess(
           effectiveCreateCount > 1
-            ? `Đã tạo ${effectiveCreateCount} công việc thành công. Biểu mẫu đã được làm mới để tạo tiếp.`
-            : "Đã tạo công việc thành công. Biểu mẫu đã được làm mới để tạo tiếp.",
+            ? `Đã tạo ${effectiveCreateCount} task thành công. Biểu mẫu đã được làm mới để tạo tiếp.`
+            : "Đã tạo task thành công. Biểu mẫu đã được làm mới để tạo tiếp.",
         );
         return;
       }
@@ -1072,7 +1072,7 @@ function NewTaskPageContent() {
         router.refresh();
       });
     } catch {
-      setSubmitError("Có lỗi xảy ra khi tạo công việc.");
+      setSubmitError("Có lỗi xảy ra khi tạo task.");
     } finally {
       setIsSubmitting(false);
     }
@@ -1085,8 +1085,8 @@ function NewTaskPageContent() {
 
         <div className="flex h-screen w-full flex-1 flex-col overflow-hidden lg:pl-[var(--workspace-sidebar-width)]">
           <WorkspacePageHeader
-            title="Tạo công việc mới"
-            items={[{ label: "Quản lý công việc", href: "/tasks" }, { label: "Tạo công việc mới" }]}
+            title="Tạo task mới"
+            items={[{ label: "Quản lý task", href: "/tasks" }, { label: "Tạo task mới" }]}
           />
 
           <main className="min-h-0 flex-1 overflow-y-auto bg-[#f3f5fa] px-4 py-5 lg:px-7">
@@ -1094,7 +1094,7 @@ function NewTaskPageContent() {
               <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <div className="flex flex-col gap-2 text-sm text-slate-500 md:flex-row md:flex-wrap md:items-center md:gap-4">
                   <span className="min-w-0 md:max-w-[32%]">
-                    Mục tiêu:{" "}
+                    Goal:{" "}
                     <span className="font-semibold text-slate-800" title={goalContextValue}>
                       <span className="inline-block max-w-full truncate align-bottom">
                         {goalContextValue}
@@ -1122,7 +1122,7 @@ function NewTaskPageContent() {
 
               {isLoadingFormData ? (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                  Đang tải dữ liệu công việc...
+                  Đang tải dữ liệu task...
                 </div>
               ) : null}
 
@@ -1134,7 +1134,7 @@ function NewTaskPageContent() {
 
               {isCheckingPermission ? (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                  Đang kiểm tra quyền tạo công việc...
+                  Đang kiểm tra quyền tạo task...
                 </div>
               ) : null}
 
@@ -1173,7 +1173,7 @@ function NewTaskPageContent() {
                   <FormSection title="Thông tin cơ bản">
                     <div className="grid gap-4 md:grid-cols-2">
                       <div className="space-y-1.5 md:col-span-2">
-                        <FieldLabel htmlFor="task-name">Tên công việc *</FieldLabel>
+                        <FieldLabel htmlFor="task-name">Tên task *</FieldLabel>
                         <input
                           id="task-name"
                           value={form.name}
@@ -1181,12 +1181,12 @@ function NewTaskPageContent() {
                             setForm((prev) => ({ ...prev, name: event.target.value }))
                           }
                           className={inputClassName}
-                          placeholder="Nhập tên công việc"
+                          placeholder="Nhập tên task"
                         />
                       </div>
 
-                      <div className="space-y-1.5">
-                        <FieldLabel>Mục tiêu</FieldLabel>
+                      {OKR_FEATURE_ENABLED ? <div className="space-y-1.5">
+                        <FieldLabel>Goal</FieldLabel>
                         <Select
                           disabled={isLoadingFormData}
                           value={form.goalId || undefined}
@@ -1235,7 +1235,7 @@ function NewTaskPageContent() {
                             ) : (
                               <SelectValue
                                 placeholder={
-                                  isLoadingFormData ? "Đang tải mục tiêu..." : "Chọn mục tiêu"
+                                  isLoadingFormData ? "Đang tải goal..." : "Chọn goal"
                                 }
                               />
                             )}
@@ -1249,9 +1249,9 @@ function NewTaskPageContent() {
                             ))}
                           </SelectContent>
                         </Select>
-                      </div>
+                      </div> : null}
 
-                      <div className="space-y-1.5">
+                      {OKR_FEATURE_ENABLED ? <div className="space-y-1.5">
                         <FieldLabel>Key Result</FieldLabel>
                         <Select
                           disabled={isLoadingFormData}
@@ -1296,7 +1296,7 @@ function NewTaskPageContent() {
                             ))}
                           </SelectContent>
                         </Select>
-                      </div>
+                      </div> : null}
 
                       <div className="space-y-1.5 md:col-span-2">
                         <FieldLabel>Người phụ trách *</FieldLabel>
@@ -1394,7 +1394,7 @@ function NewTaskPageContent() {
                       </div>
 
                       <div className="space-y-1.5">
-                        <FieldLabel>Loại công việc</FieldLabel>
+                        <FieldLabel>Loại task</FieldLabel>
                         <Select
                           value={form.type}
                           onValueChange={(value: TaskTypeValue) =>
@@ -1407,10 +1407,10 @@ function NewTaskPageContent() {
                           }
                         >
                           <SelectTrigger>
-                            <SelectValue placeholder="Chọn loại công việc" />
+                            <SelectValue placeholder="Chọn loại task" />
                           </SelectTrigger>
                           <SelectContent>
-                            {TASK_TYPES.map((type) => (
+                            {TASK_TYPES.filter((type) => OKR_FEATURE_ENABLED || type.value !== "okr").map((type) => (
                               <SelectItem key={type.value} value={type.value}>
                                 {type.label}
                               </SelectItem>
@@ -1523,7 +1523,7 @@ function NewTaskPageContent() {
                             setForm((prev) => ({ ...prev, description: event.target.value }))
                           }
                           className={textareaClassName}
-                          placeholder="Mô tả mục tiêu hoặc phạm vi công việc"
+                          placeholder="Mô tả goal hoặc phạm vi task"
                         />
                       </label>
 
@@ -1579,14 +1579,14 @@ function NewTaskPageContent() {
                               <div>
                                 <p className="font-semibold text-slate-800">Khi nào dùng được</p>
                                 <p className="mt-1">
-                                  Chỉ khả dụng khi loại công việc là <strong>KPI</strong> và phân
+                                  Chỉ khả dụng khi loại task là <strong>KPI</strong> và phân
                                   loại chỉ tiêu là <strong>Số lượng</strong>.
                                 </p>
                               </div>
                               <div>
                                 <p className="font-semibold text-slate-800">Khi nào không dùng được</p>
                                 <p className="mt-1">
-                                  Nếu công việc là <strong>OKR</strong> hoặc chỉ tiêu là{" "}
+                                  Nếu task là <strong>OKR</strong> hoặc chỉ tiêu là{" "}
                                   <strong>Doanh thu</strong>, tuỳ chọn này sẽ bị tắt.
                                 </p>
                               </div>
@@ -1594,7 +1594,7 @@ function NewTaskPageContent() {
                                 <p className="font-semibold text-slate-800">Cách hoạt động</p>
                                 <p className="mt-1">
                                   Khi bật, trường <strong>Chỉ tiêu cần đạt</strong> sẽ được hiểu là
-                                  số lượng công việc cần tạo, từ 1 đến{" "}
+                                  số lượng task cần tạo, từ 1 đến{" "}
                                   <strong>{MAX_BULK_TASK_CREATE_COUNT}</strong>.
                                 </p>
                               </div>
@@ -1628,7 +1628,7 @@ function NewTaskPageContent() {
                         disabled={isSubmitting || !isFormValid}
                         className="h-10 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
                       >
-                        {isSubmitting ? "Đang tạo..." : "Tạo công việc"}
+                        {isSubmitting ? "Đang tạo..." : "Tạo task"}
                       </button>
                     </div>
                   </div>
