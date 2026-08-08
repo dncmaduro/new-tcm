@@ -17,11 +17,9 @@ export async function generateMetadata({
     description: null,
     openGraph: {
       title: "Yêu cầu thời gian",
-      description: null,
     },
     twitter: {
       title: "Yêu cầu thời gian",
-      description: null,
     },
   };
 }
