@@ -77,7 +77,7 @@ export default function Home() {
         }
       }
 
-      router.push("/dashboard");
+      router.replace("/timesheet");
     } catch {
       setError("Không thể kết nối tới dịch vụ xác thực. Vui lòng thử lại.");
     } finally {

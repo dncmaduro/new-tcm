@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
+import { redirect } from "next/navigation";
 import { buildPageMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = buildPageMetadata({
@@ -10,6 +10,6 @@ export const metadata: Metadata = buildPageMetadata({
   keywords: ["task", "task", "timeline", "gantt"],
 });
 
-export default function TasksLayout({ children }: Readonly<{ children: ReactNode }>) {
-  return children;
+export default function TasksLayout() {
+  redirect("/timesheet");
 }

@@ -74,13 +74,6 @@ type SidebarIcon = ComponentType<{ className?: string }>;
 type SidebarItem = { key: SidebarKey; label: string; href: string };
 type CollapsedGroupKey = "work" | "time" | "management";
 
-const dashboardItem: { key: SidebarKey; label: string; href: string; icon: SidebarIcon } = {
-  key: "dashboard",
-  label: "Bảng điều khiển",
-  href: "/dashboard",
-  icon: LayoutDashboard,
-};
-
 const notificationsItem: { key: SidebarKey; label: string; href: string; icon: SidebarIcon } = {
   key: "notifications",
   label: "Thông báo",
@@ -90,7 +83,6 @@ const notificationsItem: { key: SidebarKey; label: string; href: string; icon: S
 
 const workSidebarItems: SidebarItem[] = [
   ...(OKR_FEATURE_ENABLED ? [{ key: "goals" as const, label: "Goal", href: "/goals" }] : []),
-  { key: "tasks", label: "Task", href: "/tasks" },
   { key: "backlog", label: "Backlog", href: "/backlog" },
   { key: "reports", label: "Báo cáo", href: "/reports" },
 ];
@@ -612,27 +604,8 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
 
           <div className="scrollbar-none min-h-0 flex-1 overflow-y-auto overflow-x-visible">
             <nav className="space-y-2">
-              <SidebarTooltip label={dashboardItem.label} enabled={isCollapsed}>
-                <Link
-                  href={dashboardItem.href}
-                  title={dashboardItem.label}
-                  className={`flex w-full items-center rounded-xl text-left transition ${
-                    isCollapsed
-                      ? "justify-center px-0 py-3"
-                      : `gap-3 px-4 py-3 ${PRIMARY_ITEM_TEXT_CLASS}`
-                  } ${
-                    dashboardItem.key === active
-                      ? "bg-[#1e62d8] text-white"
-                      : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
-                  }`}
-                >
-                  <LayoutDashboard className={PRIMARY_ITEM_ICON_CLASS} />
-                  {!isCollapsed ? dashboardItem.label : null}
-                </Link>
-              </SidebarTooltip>
-
               <SidebarGroup
-                label="Task"
+                label="Công việc"
                 icon={BriefcaseBusiness}
                 items={visibleWorkItems}
                 active={active}

@@ -23,7 +23,7 @@ export function WorkspacePageHeader({
   actions,
 }: WorkspacePageHeaderProps) {
   const breadcrumbs: WorkspacePageHeaderItem[] = [
-    { label: "Bảng điều khiển", href: "/dashboard" },
+    { label: "Chấm công", href: "/timesheet" },
     ...items,
   ];
 

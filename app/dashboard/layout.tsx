@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
+import { redirect } from "next/navigation";
 import { buildPageMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = buildPageMetadata({
@@ -9,6 +9,6 @@ export const metadata: Metadata = buildPageMetadata({
   keywords: ["bảng điều khiển", "dashboard", "tổng quan nội bộ"],
 });
 
-export default function DashboardLayout({ children }: Readonly<{ children: ReactNode }>) {
-  return children;
+export default function DashboardLayout() {
+  redirect("/timesheet");
 }
