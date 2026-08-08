@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
+import { redirect } from "next/navigation";
 import { buildPageMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = buildPageMetadata({
@@ -9,7 +9,6 @@ export const metadata: Metadata = buildPageMetadata({
   keywords: ["backlog", "task", "phân công"],
 });
 
-export default function BacklogLayout({ children }: Readonly<{ children: ReactNode }>) {
-  return children;
+export default function BacklogLayout() {
+  redirect("/timesheet");
 }
-

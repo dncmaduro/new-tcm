@@ -167,7 +167,7 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "Nhân sự là bắt buộc." }, { status: 400 });
   }
 
-  const update: Record<string, string | boolean> = {};
+  const update: Record<string, string | boolean | null> = {};
   if (typeof payload.name === "string") {
     const name = normalizeString(payload.name);
     if (!name) {
@@ -175,11 +175,17 @@ export async function PATCH(request: Request) {
     }
     update.name = name;
   }
+  const shouldUnlinkAttendance =
+    payload.isActive === false || payload.isTimekeepingEnabled === false;
+
   if (typeof payload.isActive === "boolean") {
     update.is_active = payload.isActive;
   }
   if (typeof payload.isTimekeepingEnabled === "boolean") {
     update.is_timekeeping_enabled = payload.isTimekeepingEnabled;
+  }
+  if (shouldUnlinkAttendance) {
+    update.attendance_id = null;
   }
   if (typeof payload.isParttime === "boolean") {
     update.is_parttime = payload.isParttime;
@@ -190,11 +196,22 @@ export async function PATCH(request: Request) {
 
   try {
     const supabase = createServerSupabaseServiceRoleClient();
+
+    if (shouldUnlinkAttendance) {
+      const { error: unlinkAttendanceError } = await supabase
+        .from("times_profiles")
+        .update({ profile_id: null })
+        .eq("profile_id", profileId);
+      if (unlinkAttendanceError) {
+        throw unlinkAttendanceError;
+      }
+    }
+
     const { data, error } = await supabase
       .from("profiles")
       .update(update)
       .eq("id", profileId)
-      .select("id,user_id,name,email,is_active,is_timekeeping_enabled,is_parttime")
+      .select("id,user_id,name,email,attendance_id,is_active,is_timekeeping_enabled,is_parttime")
       .maybeSingle();
     if (error) throw error;
     if (!data) {

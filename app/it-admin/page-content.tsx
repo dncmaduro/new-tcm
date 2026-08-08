@@ -104,6 +104,10 @@ export default function ITAdminPageContent() {
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isSavingAssignment, setIsSavingAssignment] = useState(false);
   const [savingProfileId, setSavingProfileId] = useState<string | null>(null);
+  const [timekeepingDisableConfirmation, setTimekeepingDisableConfirmation] = useState<{
+    profile: Profile;
+    source: "edit" | "quick";
+  } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -204,8 +208,7 @@ export default function ITAdminPageContent() {
     setEditForm({ name: profile.name || "", isActive: profile.is_active !== false, isTimekeepingEnabled: profile.is_timekeeping_enabled === true, isParttime: profile.is_parttime === true });
   };
 
-  const handleSaveEdit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const saveEdit = async () => {
     if (!editProfile) return;
     resetMessages();
     setIsSavingEdit(true);
@@ -224,6 +227,18 @@ export default function ITAdminPageContent() {
     }
   };
 
+  const handleSaveEdit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editProfile) return;
+
+    if (editProfile.is_timekeeping_enabled === true && !editForm.isTimekeepingEnabled) {
+      setTimekeepingDisableConfirmation({ profile: editProfile, source: "edit" });
+      return;
+    }
+
+    void saveEdit();
+  };
+
   const updateProfileFlag = async (profile: Profile, updates: Record<string, boolean>, successMessage: string) => {
     resetMessages();
     setSavingProfileId(profile.id);
@@ -236,6 +251,32 @@ export default function ITAdminPageContent() {
     } finally {
       setSavingProfileId(null);
     }
+  };
+
+  const handleTimekeepingToggle = (profile: Profile) => {
+    if (profile.is_timekeeping_enabled === true) {
+      setTimekeepingDisableConfirmation({ profile, source: "quick" });
+      return;
+    }
+
+    void updateProfileFlag(profile, { isTimekeepingEnabled: true }, "Đã bật quyền chấm công.");
+  };
+
+  const confirmTimekeepingDisable = () => {
+    const pending = timekeepingDisableConfirmation;
+    if (!pending) return;
+
+    setTimekeepingDisableConfirmation(null);
+    if (pending.source === "edit") {
+      void saveEdit();
+      return;
+    }
+
+    void updateProfileFlag(
+      pending.profile,
+      { isTimekeepingEnabled: false },
+      "Đã tắt chấm công và ngắt liên kết chấm công.",
+    );
   };
 
   const openAssignment = (profile: Profile) => {
@@ -320,7 +361,7 @@ export default function ITAdminPageContent() {
                           <td className="max-w-[330px] px-5 py-4 text-slate-600">{memberships.length ? <div className="space-y-1">{memberships.map((membership) => <p key={`${membership.department_id}-${membership.role_id}`} className="truncate">{membershipLabel(membership)}</p>)}</div> : <span className="text-slate-400">Chưa phân quyền</span>}</td>
                           <td className="px-5 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${isActive ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>{isActive ? "Đang hoạt động" : "Đã khóa"}</span></td>
                           <td className="px-5 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${isTimekeepingEnabled ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-600"}`}>{isTimekeepingEnabled ? "Đã bật" : "Đang tắt"}</span></td>
-                          <td className="px-5 py-4 text-right"><Popover><PopoverTrigger asChild><button type="button" aria-label={`Thao tác với ${profile.name || profile.email || "nhân sự"}`} className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"><MoreHorizontal className="h-5 w-5" /></button></PopoverTrigger><PopoverContent align="end" className="w-56 p-1.5"><div className="space-y-0.5"><button type="button" onClick={() => openEdit(profile)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100"><Pencil className="h-4 w-4 text-slate-500" />Chỉnh sửa</button><button type="button" onClick={() => openAssignment(profile)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100"><ShieldCheck className="h-4 w-4 text-slate-500" />Phân quyền</button><div className="my-1 border-t border-slate-100" /><button type="button" disabled={isSaving} onClick={() => void updateProfileFlag(profile, { isActive: !isActive }, isActive ? "Đã khóa trạng thái hoạt động của nhân sự." : "Đã mở lại trạng thái hoạt động của nhân sự.")} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-wait disabled:opacity-60">{isActive ? <LockKeyhole className="h-4 w-4 text-rose-600" /> : <UnlockKeyhole className="h-4 w-4 text-emerald-600" />}{isActive ? "Khóa hoạt động" : "Mở khóa hoạt động"}</button><button type="button" disabled={isSaving} onClick={() => void updateProfileFlag(profile, { isTimekeepingEnabled: !isTimekeepingEnabled }, isTimekeepingEnabled ? "Đã tắt quyền chấm công." : "Đã bật quyền chấm công.")} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-wait disabled:opacity-60"><Clock3 className="h-4 w-4 text-blue-600" />{isTimekeepingEnabled ? "Tắt chấm công" : "Bật chấm công"}</button></div></PopoverContent></Popover></td>
+                          <td className="px-5 py-4 text-right"><Popover><PopoverTrigger asChild><button type="button" aria-label={`Thao tác với ${profile.name || profile.email || "nhân sự"}`} className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"><MoreHorizontal className="h-5 w-5" /></button></PopoverTrigger><PopoverContent align="end" className="w-56 p-1.5"><div className="space-y-0.5"><button type="button" onClick={() => openEdit(profile)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100"><Pencil className="h-4 w-4 text-slate-500" />Chỉnh sửa</button><button type="button" onClick={() => openAssignment(profile)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100"><ShieldCheck className="h-4 w-4 text-slate-500" />Phân quyền</button><div className="my-1 border-t border-slate-100" /><button type="button" disabled={isSaving} onClick={() => void updateProfileFlag(profile, { isActive: !isActive }, isActive ? "Đã khóa nhân sự và ngắt liên kết chấm công." : "Đã mở lại trạng thái hoạt động của nhân sự.")} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-wait disabled:opacity-60">{isActive ? <LockKeyhole className="h-4 w-4 text-rose-600" /> : <UnlockKeyhole className="h-4 w-4 text-emerald-600" />}{isActive ? "Khóa hoạt động" : "Mở khóa hoạt động"}</button><button type="button" disabled={isSaving} onClick={() => handleTimekeepingToggle(profile)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-wait disabled:opacity-60"><Clock3 className="h-4 w-4 text-blue-600" />{isTimekeepingEnabled ? "Tắt chấm công" : "Bật chấm công"}</button></div></PopoverContent></Popover></td>
                         </tr>;
                       })}
                       {filteredProfiles.length === 0 ? <tr><td colSpan={5} className="px-6 py-14 text-center"><UsersRound className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 font-semibold text-slate-700">Không tìm thấy nhân sự phù hợp</p><p className="mt-1 text-slate-500">Thử thay đổi từ khóa hoặc bộ lọc.</p></td></tr> : null}
@@ -348,7 +389,32 @@ export default function ITAdminPageContent() {
       <Dialog open={Boolean(editProfile)} onOpenChange={(open) => !open && setEditProfile(null)}>
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>Chỉnh sửa nhân sự</DialogTitle></DialogHeader>
-          <form onSubmit={handleSaveEdit} className="space-y-4"><label className="block text-sm font-semibold text-slate-700">Họ và tên<input required value={editForm.name} onChange={(event) => setEditForm((current) => ({ ...current, name: event.target.value }))} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 font-normal outline-none focus:border-blue-500" /></label><div className="space-y-3"><ToggleField checked={editForm.isActive} onChange={(checked) => setEditForm((current) => ({ ...current, isActive: checked }))} label="Cho phép hoạt động" /><ToggleField checked={editForm.isTimekeepingEnabled} onChange={(checked) => setEditForm((current) => ({ ...current, isTimekeepingEnabled: checked }))} label="Cho phép chấm công" /><ToggleField checked={editForm.isParttime} onChange={(checked) => setEditForm((current) => ({ ...current, isParttime: checked }))} label="Nhân viên part-time" /></div><DialogFooter><button type="button" onClick={() => setEditProfile(null)} className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">Hủy</button><button disabled={isSavingEdit} className="h-10 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:bg-blue-300">{isSavingEdit ? "Đang lưu..." : "Lưu thay đổi"}</button></DialogFooter></form>
+          <form onSubmit={handleSaveEdit} className="space-y-4"><label className="block text-sm font-semibold text-slate-700">Họ và tên<input required value={editForm.name} onChange={(event) => setEditForm((current) => ({ ...current, name: event.target.value }))} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 px-3 font-normal outline-none focus:border-blue-500" /></label><div className="space-y-3"><ToggleField checked={editForm.isActive} onChange={(checked) => setEditForm((current) => ({ ...current, isActive: checked }))} label="Cho phép hoạt động" /><ToggleField checked={editForm.isTimekeepingEnabled} onChange={(checked) => setEditForm((current) => ({ ...current, isTimekeepingEnabled: checked }))} label="Cho phép chấm công" description="Tắt chấm công sẽ ngắt liên kết mã chấm công của nhân sự này." /><ToggleField checked={editForm.isParttime} onChange={(checked) => setEditForm((current) => ({ ...current, isParttime: checked }))} label="Nhân viên part-time" /></div><DialogFooter><button type="button" onClick={() => setEditProfile(null)} className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">Hủy</button><button disabled={isSavingEdit} className="h-10 rounded-xl bg-blue-600 px-4 text-sm font-bold text-white disabled:bg-blue-300">{isSavingEdit ? "Đang lưu..." : "Lưu thay đổi"}</button></DialogFooter></form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(timekeepingDisableConfirmation)}
+        onOpenChange={(open) => !open && setTimekeepingDisableConfirmation(null)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Tắt chấm công?</DialogTitle>
+            <DialogDescription>
+              Bạn sắp tắt chấm công cho {timekeepingDisableConfirmation?.profile.name || timekeepingDisableConfirmation?.profile.email || "nhân sự này"}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+            Liên kết mã chấm công hiện tại sẽ bị ngắt và cần gán lại nếu muốn bật chấm công sau này. Lịch sử quẹt công cũ vẫn được giữ nguyên.
+          </div>
+          <DialogFooter>
+            <button type="button" onClick={() => setTimekeepingDisableConfirmation(null)} className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">
+              Hủy
+            </button>
+            <button type="button" onClick={confirmTimekeepingDisable} className="h-10 rounded-xl bg-rose-600 px-4 text-sm font-bold text-white hover:bg-rose-700">
+              Vẫn tắt chấm công
+            </button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

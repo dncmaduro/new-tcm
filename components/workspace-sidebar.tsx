@@ -11,7 +11,6 @@ import {
 import {
   Activity,
   Bell,
-  BriefcaseBusiness,
   Building2,
   CalendarDays,
   ClipboardList,
@@ -21,7 +20,6 @@ import {
   ListTodo,
   Settings2,
   ShieldCheck,
-  Target,
   Timer,
   UserCircle2,
   WalletCards,
@@ -44,7 +42,6 @@ import { fetchITAdminAccess } from "@/lib/it-admin-client-access";
 import { supabase } from "@/lib/supabase";
 import { useWorkspaceSidebarStore } from "@/lib/stores/workspace-sidebar-store";
 import { useWorkspaceAccess, useWorkspaceAccessStore } from "@/lib/stores/workspace-access-store";
-import { OKR_FEATURE_ENABLED } from "@/lib/features";
 
 type SidebarKey =
   | "dashboard"
@@ -72,7 +69,7 @@ type WorkspaceSidebarProps = {
 
 type SidebarIcon = ComponentType<{ className?: string }>;
 type SidebarItem = { key: SidebarKey; label: string; href: string };
-type CollapsedGroupKey = "work" | "time" | "management";
+type CollapsedGroupKey = "time" | "management";
 
 const notificationsItem: { key: SidebarKey; label: string; href: string; icon: SidebarIcon } = {
   key: "notifications",
@@ -80,12 +77,6 @@ const notificationsItem: { key: SidebarKey; label: string; href: string; icon: S
   href: "/notifications",
   icon: Bell,
 };
-
-const workSidebarItems: SidebarItem[] = [
-  ...(OKR_FEATURE_ENABLED ? [{ key: "goals" as const, label: "Goal", href: "/goals" }] : []),
-  { key: "backlog", label: "Backlog", href: "/backlog" },
-  { key: "reports", label: "Báo cáo", href: "/reports" },
-];
 
 const departmentsItem: SidebarItem = { key: "departments", label: "Phòng ban", href: "/departments" };
 
@@ -99,7 +90,6 @@ const timeSidebarItems: SidebarItem[] = [
 
 const managementSidebarItems: SidebarItem[] = [
   { key: "itAdmin", label: "Quản trị IT", href: "/it-admin" },
-  { key: "realtimeReports", label: "Quản lý hiệu suất", href: "/reports/realtime" },
   { key: "attendanceManagement", label: "Quản lý chấm công", href: "/attendance-management" },
   {
     key: "timeRequestManagement",
@@ -114,7 +104,6 @@ const PRIMARY_ITEM_ICON_CLASS = "h-[18px] w-[18px] shrink-0";
 const PRIMARY_ITEM_TEXT_CLASS = "text-[17px] font-semibold tracking-[-0.01em]";
 
 const getSidebarItemIcon = (key: SidebarKey): ComponentType<{ className?: string }> => {
-  if (key === "goals") return Target;
   if (key === "notifications") return Bell;
   if (key === "tasks") return ListTodo;
   if (key === "backlog") return ClipboardList;
@@ -329,7 +318,6 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   const router = useRouter();
   const workspaceAccess = useWorkspaceAccess();
   const userMenuRef = useRef<HTMLDivElement | null>(null);
-  const workMenuRef = useRef<HTMLDivElement | null>(null);
   const timeMenuRef = useRef<HTMLDivElement | null>(null);
   const managementMenuRef = useRef<HTMLDivElement | null>(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
@@ -338,7 +326,6 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   const isCollapsed = useWorkspaceSidebarStore((state) => state.isCollapsed);
   const hydrateSidebarFromStorage = useWorkspaceSidebarStore((state) => state.hydrateFromStorage);
   const toggleSidebarCollapsed = useWorkspaceSidebarStore((state) => state.toggleCollapsed);
-  const [isWorkMenuOpen, setIsWorkMenuOpen] = useState(false);
   const [isTimeMenuOpen, setIsTimeMenuOpen] = useState(false);
   const [isManagementMenuOpen, setIsManagementMenuOpen] = useState(false);
   const [openCollapsedGroup, setOpenCollapsedGroup] = useState<CollapsedGroupKey | null>(null);
@@ -407,7 +394,6 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
       }
 
       const clickedInsideGroupMenu =
-        workMenuRef.current?.contains(target) ||
         timeMenuRef.current?.contains(target) ||
         managementMenuRef.current?.contains(target);
 
@@ -426,17 +412,8 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
     if (item.key === "itAdmin") {
       return canAccessITAdmin;
     }
-    if (item.key === "realtimeReports") {
-      return workspaceAccess.hasDirectorRole || workspaceAccess.hasRootLeaderAccess;
-    }
     if (item.key === "attendanceManagement") {
       return workspaceAccess.canManageAttendance;
-    }
-    return true;
-  });
-  const visibleWorkItems = workSidebarItems.filter((item) => {
-    if (item.key === "backlog") {
-      return workspaceAccess.hasDirectorRole || workspaceAccess.hasLeaderRole;
     }
     return true;
   });
@@ -446,7 +423,6 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
     }
     return true;
   });
-  const workGroupActive = visibleWorkItems.some((item) => item.key === active);
   const timeGroupActive = visibleTimeItems.some((item) => item.key === active);
   const managementGroupActive = visibleManagementItems.some((item) => item.key === active);
 
@@ -529,10 +505,9 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   );
 
   useEffect(() => {
-    setIsWorkMenuOpen(workGroupActive);
     setIsTimeMenuOpen(timeGroupActive);
     setIsManagementMenuOpen(managementGroupActive);
-  }, [managementGroupActive, timeGroupActive, workGroupActive]);
+  }, [managementGroupActive, timeGroupActive]);
 
   useEffect(() => {
     setOpenCollapsedGroup(null);
@@ -604,22 +579,6 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
 
           <div className="scrollbar-none min-h-0 flex-1 overflow-y-auto overflow-x-visible">
             <nav className="space-y-2">
-              <SidebarGroup
-                label="Công việc"
-                icon={BriefcaseBusiness}
-                items={visibleWorkItems}
-                active={active}
-                isOpen={isCollapsed ? openCollapsedGroup === "work" : isWorkMenuOpen}
-                onOpenChange={setIsWorkMenuOpen}
-                onCollapsedOpen={(open) => {
-                  setOpenCollapsedGroup(open ? "work" : null);
-                }}
-                menuRef={workMenuRef}
-                isCollapsed={isCollapsed}
-                isGroupActive={workGroupActive}
-                onParentClick={() => setIsUserMenuOpen(false)}
-              />
-
               <SidebarGroup
                 label="Thời gian"
                 icon={Clock3}
