@@ -24,6 +24,7 @@ import {
   Target,
   Timer,
   UserCircle2,
+  WalletCards,
   Clock3,
 } from "lucide-react";
 import {
@@ -55,6 +56,7 @@ type SidebarKey =
   | "timesheet"
   | "attendanceExport"
   | "timeRequestForms"
+  | "leaveBalance"
   | "parttimeSchedule"
   | "attendanceManagement"
   | "timeRequestManagement"
@@ -99,6 +101,7 @@ const timeSidebarItems: SidebarItem[] = [
   { key: "timesheet", label: "Chấm công", href: "/timesheet" },
   { key: "attendanceExport", label: "Xuất chấm công", href: "/attendance-export" },
   { key: "timeRequestForms", label: "Yêu cầu thời gian", href: "/timesheet/requests" },
+  { key: "leaveBalance", label: "Quỹ phép", href: "/leave-balance" },
   { key: "parttimeSchedule", label: "Lịch part-time", href: "/parttime-schedule" },
 ];
 
@@ -127,6 +130,7 @@ const getSidebarItemIcon = (key: SidebarKey): ComponentType<{ className?: string
   if (key === "timesheet") return CalendarDays;
   if (key === "attendanceExport") return FileText;
   if (key === "timeRequestForms") return ClipboardList;
+  if (key === "leaveBalance") return WalletCards;
   if (key === "parttimeSchedule") return Clock3;
   if (key === "realtimeReports") return Activity;
   if (key === "attendanceManagement") return ShieldCheck;

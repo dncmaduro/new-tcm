@@ -117,10 +117,6 @@ const sanitizeReturnPath = (value: string | null) => {
   return value;
 };
 
-const CREATE_TIME_REQUEST_TYPE_OPTIONS = TIME_REQUEST_TYPES.filter(
-  (option) => option.value !== "approved_leave",
-);
-
 const combineDateAndTimeToIso = (date: Date, timeValue: string) => {
   if (!timeValue || !isValid24HourTimeValue(timeValue)) {
     return null;
@@ -329,12 +325,6 @@ function CreateTimeRequestPageContent() {
 
     setCorrectionDate(parsedQueryDate);
   }, [queryCorrectionDate]);
-
-  useEffect(() => {
-    if (requestType === "approved_leave") {
-      setRequestType("");
-    }
-  }, [requestType]);
 
   useEffect(() => {
     if (isRemoteRequest) {
@@ -667,7 +657,7 @@ function CreateTimeRequestPageContent() {
                       <SelectValue placeholder="Chọn loại yêu cầu" />
                     </SelectTrigger>
                     <SelectContent>
-                      {CREATE_TIME_REQUEST_TYPE_OPTIONS.map((option) => (
+                      {TIME_REQUEST_TYPES.map((option) => (
                         <SelectItem key={option.value} value={option.value}>
                           {option.label}
                         </SelectItem>
