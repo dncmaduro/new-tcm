@@ -30,7 +30,7 @@ export function WorkspacePageHeader({
   return (
     <header
       className={`sticky top-0 z-10 border-b border-slate-200 bg-[#f3f5fa]/95 backdrop-blur ${
-        compact ? "px-4 py-3 lg:px-6" : "px-4 py-5 lg:px-7"
+        compact ? "py-3 pl-16 pr-4 lg:px-6" : "py-5 pl-16 pr-4 lg:px-7"
       }`}
     >
       <div className="flex items-start justify-between gap-4">

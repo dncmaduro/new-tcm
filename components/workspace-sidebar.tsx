@@ -18,6 +18,7 @@ import {
   Gauge,
   LayoutDashboard,
   ListTodo,
+  Menu,
   Settings2,
   ShieldCheck,
   Timer,
@@ -35,6 +36,7 @@ import {
   useState,
 } from "react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AppBrandMark } from "@/components/app-brand-mark";
 import { fetchAttendanceExportAccess } from "@/lib/attendance-export-client-access";
@@ -166,6 +168,7 @@ function SidebarGroup({
   isGroupActive,
   active,
   onParentClick,
+  onItemClick,
 }: {
   label: string;
   icon: SidebarIcon;
@@ -178,6 +181,7 @@ function SidebarGroup({
   isGroupActive: boolean;
   active: SidebarKey;
   onParentClick?: () => void;
+  onItemClick?: () => void;
 }) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [flyoutTop, setFlyoutTop] = useState(0);
@@ -228,7 +232,10 @@ function SidebarGroup({
                 <Link
                   key={item.key}
                   href={item.href}
-                  onClick={() => onCollapsedOpen(false)}
+                  onClick={() => {
+                    onCollapsedOpen(false);
+                    onItemClick?.();
+                  }}
                   className={`mb-1 flex min-h-9 items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition last:mb-0 ${
                     item.key === active
                       ? "bg-[#1e62d8] text-white"
@@ -275,6 +282,7 @@ function SidebarGroup({
           <Link
             key={item.key}
             href={item.href}
+            onClick={onItemClick}
             className={`ml-5 flex w-[calc(100%-1.25rem)] items-center rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
               item.key === active
                 ? "bg-[#1e62d8] text-white"
@@ -321,6 +329,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   const timeMenuRef = useRef<HTMLDivElement | null>(null);
   const managementMenuRef = useRef<HTMLDivElement | null>(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const isCollapsed = useWorkspaceSidebarStore((state) => state.isCollapsed);
@@ -513,6 +522,19 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
     setOpenCollapsedGroup(null);
   }, [isCollapsed]);
 
+  useEffect(() => {
+    const desktopMediaQuery = window.matchMedia("(min-width: 1024px)");
+    const closeMobileMenuOnDesktop = () => {
+      if (desktopMediaQuery.matches) {
+        setIsMobileMenuOpen(false);
+      }
+    };
+
+    closeMobileMenuOnDesktop();
+    desktopMediaQuery.addEventListener("change", closeMobileMenuOnDesktop);
+    return () => desktopMediaQuery.removeEventListener("change", closeMobileMenuOnDesktop);
+  }, []);
+
   const handleLogout = async () => {
     setIsLoggingOut(true);
     setLogoutError(null);
@@ -526,6 +548,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
 
       useWorkspaceAccessStore.getState().reset();
       setIsUserMenuOpen(false);
+      setIsMobileMenuOpen(false);
       router.replace("/");
       router.refresh();
     } catch {
@@ -537,6 +560,107 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
 
   return (
     <TooltipProvider>
+      <Dialog open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
+        <DialogTrigger asChild>
+          <button
+            type="button"
+            aria-label="Mở menu điều hướng"
+            className="fixed left-3 top-3 z-20 grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 lg:hidden"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+        </DialogTrigger>
+        <DialogContent className="left-0 top-0 flex h-[100dvh] w-[min(20rem,calc(100vw-2.5rem))] max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-[#081633] p-5 pr-4 text-slate-100 shadow-2xl">
+          <DialogTitle className="sr-only">Menu điều hướng</DialogTitle>
+          <div className="mb-7 flex items-center gap-3 pr-10">
+            <SidebarBadge />
+            <p className="text-2xl font-semibold tracking-[-0.02em]">TCM</p>
+          </div>
+
+          <div className="scrollbar-none min-h-0 flex-1 overflow-y-auto">
+            <nav className="space-y-2">
+              <SidebarGroup
+                label="Thời gian"
+                icon={Clock3}
+                items={visibleTimeItems}
+                active={active}
+                isOpen={isTimeMenuOpen}
+                onOpenChange={setIsTimeMenuOpen}
+                onCollapsedOpen={() => undefined}
+                isCollapsed={false}
+                isGroupActive={timeGroupActive}
+                onParentClick={() => setIsUserMenuOpen(false)}
+                onItemClick={() => setIsMobileMenuOpen(false)}
+              />
+
+              {visibleManagementItems.length > 0 ? (
+                <SidebarGroup
+                  label="Quản lý"
+                  icon={Settings2}
+                  items={visibleManagementItems}
+                  active={active}
+                  isOpen={isManagementMenuOpen}
+                  onOpenChange={setIsManagementMenuOpen}
+                  onCollapsedOpen={() => undefined}
+                  isCollapsed={false}
+                  isGroupActive={managementGroupActive}
+                  onParentClick={() => setIsUserMenuOpen(false)}
+                  onItemClick={() => setIsMobileMenuOpen(false)}
+                />
+              ) : null}
+
+              <Link
+                href={departmentsItem.href}
+                onClick={() => setIsMobileMenuOpen(false)}
+                className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left ${PRIMARY_ITEM_TEXT_CLASS} transition ${
+                  departmentsItem.key === active
+                    ? "bg-[#1e62d8] text-white"
+                    : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
+                }`}
+              >
+                <Building2 className={PRIMARY_ITEM_ICON_CLASS} />
+                {departmentsItem.label}
+              </Link>
+            </nav>
+          </div>
+
+          <div className="mt-4 space-y-3 border-t border-slate-700 pt-4">
+            <Link
+              href={notificationsItem.href}
+              onClick={() => setIsMobileMenuOpen(false)}
+              className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left ${PRIMARY_ITEM_TEXT_CLASS} transition ${
+                notificationsItem.key === active
+                  ? "bg-[#1e62d8] text-white"
+                  : "text-slate-300 hover:bg-[#0b1e43] hover:text-white"
+              }`}
+            >
+              <Bell className={PRIMARY_ITEM_ICON_CLASS} />
+              {notificationsItem.label}
+            </Link>
+            <Link
+              href="/profile"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="flex w-full items-center gap-3 rounded-xl bg-[#0d234f] p-3 text-left transition hover:bg-[#12306b]"
+            >
+              {avatarNode}
+              <div className="min-w-0">
+                <p className="truncate text-base font-semibold">{sidebarName}</p>
+                <p className="truncate text-sm text-slate-400">{sidebarRole} · {sidebarDepartment}</p>
+              </div>
+            </Link>
+            <button
+              type="button"
+              onClick={handleLogout}
+              disabled={isLoggingOut}
+              className="flex h-10 w-full items-center justify-center rounded-xl border border-rose-300/30 text-sm font-semibold text-rose-200 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {isLoggingOut ? "Đang đăng xuất..." : "Đăng xuất"}
+            </button>
+            {logoutError ? <p className="text-xs text-rose-200">{logoutError}</p> : null}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <aside
         className="fixed inset-y-0 left-0 z-40 hidden flex-col overflow-visible bg-[#081633] text-slate-100 transition-[width,padding] duration-200 lg:flex"
         style={{
