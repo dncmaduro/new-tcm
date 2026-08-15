@@ -108,6 +108,15 @@ button:disabled {
   }
 }
 
+@keyframes mobile-attendance-drawer-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
 [class*="uppercase"][class*="text-slate-4"],
 [class*="uppercase"][class*="text-slate-5"] {
   text-transform: none !important;

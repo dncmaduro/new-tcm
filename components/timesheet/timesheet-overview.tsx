@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ActionIcon, Tooltip } from "@mantine/core";
-import { FileText, Plus } from "lucide-react";
+import { FileText, Plus, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   getLeaveRequestSubtypeLabel,
@@ -404,6 +404,7 @@ export function TimesheetOverview({
   const [attendanceBinding, setAttendanceBinding] = useState<AttendanceBinding | null>(null);
   const [correctionRequests, setCorrectionRequests] = useState<CorrectionRequest[]>([]);
   const [openedFormDateIso, setOpenedFormDateIso] = useState<string | null>(null);
+  const [openedMobileDateIso, setOpenedMobileDateIso] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
 
   const setSelectedMonth = (value: Date | ((current: Date) => Date)) => {
@@ -423,6 +424,7 @@ export function TimesheetOverview({
 
   useEffect(() => {
     setOpenedFormDateIso(null);
+    setOpenedMobileDateIso(null);
   }, [profileId]);
 
   useEffect(() => {
@@ -998,6 +1000,44 @@ export function TimesheetOverview({
   const todayDateIso = toIsoDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
   const earliestAllowedRequestDateIso =
     getEarliestAllowedTimeRequestDateIso(now) ?? todayDateIso;
+  const openedMobileDay = openedMobileDateIso
+    ? dayMap[Number(openedMobileDateIso.slice(-2))]
+    : undefined;
+  const openedMobileDayRequests = openedMobileDateIso
+    ? correctionRequests.filter((item) => item.correctionDateISO === openedMobileDateIso)
+    : [];
+  const openedMobileHoliday = openedMobileDateIso
+    ? openedMobileDay?.holiday ?? holidayByDate.get(openedMobileDateIso) ?? null
+    : null;
+  const openedMobileDate = openedMobileDateIso ? new Date(`${openedMobileDateIso}T00:00:00`) : null;
+  const openedMobileIsSunday = openedMobileDate?.getDay() === 0;
+  const openedMobileHasMissingHours =
+    typeof openedMobileDay?.missingMinutes === "number" && openedMobileDay.missingMinutes > 0;
+  const openedMobileHasSameCheckInAndCheckOut =
+    Boolean(openedMobileDay?.checkIn) &&
+    Boolean(openedMobileDay?.checkOut) &&
+    openedMobileDay?.checkIn !== "--:--" &&
+    openedMobileDay?.checkOut !== "--:--" &&
+    openedMobileDay?.checkIn === openedMobileDay?.checkOut;
+  const openedMobileIsTodaySinglePunch =
+    openedMobileDateIso === todayDateIso && openedMobileHasSameCheckInAndCheckOut;
+  const openedMobileShouldHighlightMissing =
+    openedMobileHasMissingHours && !openedMobileIsTodaySinglePunch;
+  const openedMobileTimeClass = openedMobileIsSunday
+    ? "border-slate-200 bg-slate-100 text-slate-400"
+    : openedMobileDay?.sourceType === "remote"
+      ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+      : openedMobileShouldHighlightMissing
+        ? "border-rose-200 bg-rose-50 text-rose-700"
+        : openedMobileHoliday
+          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+          : "border-slate-200 bg-slate-50 text-slate-700";
+
+  const openMobileDayDrawer = (dateIso: string) => {
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      setOpenedMobileDateIso(dateIso);
+    }
+  };
 
   const activeRequests = openedFormDateIso
     ? correctionRequests.filter((item) => item.correctionDateISO === openedFormDateIso)
@@ -1313,7 +1353,7 @@ export function TimesheetOverview({
               return (
                 <div
                   key={`empty-${index}`}
-                  className={`h-28 border-l border-t first:border-l-0 ${
+                  className={`h-36 border-l border-t first:border-l-0 md:h-28 ${
                     isSundayColumn ? "border-slate-200 bg-slate-50" : "border-slate-100"
                   }`}
                 />
@@ -1349,7 +1389,8 @@ export function TimesheetOverview({
             return (
               <div
                 key={`day-${cell.day}`}
-                className={`relative h-28 border-l border-t px-2.5 py-2 first:border-l-0 ${
+                onClick={() => openMobileDayDrawer(dateIso)}
+                className={`relative h-36 cursor-pointer border-l border-t px-1.5 py-2 first:border-l-0 md:h-28 md:cursor-default md:px-2.5 ${
                   isSundayColumn ? "border-slate-200 bg-slate-50" : "border-slate-100"
                 }`}
               >
@@ -1371,7 +1412,14 @@ export function TimesheetOverview({
                       >
                         <ActionIcon
                           type="button"
-                          onClick={() => setOpenedFormDateIso(dateIso)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (window.matchMedia("(max-width: 767px)").matches) {
+                              setOpenedMobileDateIso(dateIso);
+                              return;
+                            }
+                            setOpenedFormDateIso(dateIso);
+                          }}
                           variant="light"
                           color="blue"
                           size="sm"
@@ -1408,6 +1456,7 @@ export function TimesheetOverview({
                       <ActionIcon
                         component={Link}
                         href={appendQueryParams(createRequestHref, { date: dateIso })}
+                        onClick={(event) => event.stopPropagation()}
                         variant="light"
                         color="blue"
                         size="sm"
@@ -1423,7 +1472,7 @@ export function TimesheetOverview({
                 </div>
 
                 <div className="mt-3 space-y-1 pr-0">
-                  <div className="grid grid-cols-2 gap-1">
+                  <div className="grid grid-cols-1 gap-1 md:grid-cols-2">
                     <p
                       className={`rounded-md border px-1.5 py-0.5 text-center text-[11px] leading-4 font-semibold ${
                         isSundayColumn
@@ -1478,6 +1527,106 @@ export function TimesheetOverview({
           })}
         </div>
       </section>
+
+      {openedMobileDateIso ? (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/45 md:hidden"
+          onClick={() => setOpenedMobileDateIso(null)}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Chi tiết chấm công ngày ${formatDateVi(openedMobileDateIso)}`}
+            className="fixed inset-x-0 bottom-0 max-h-[82dvh] overflow-y-auto rounded-t-[28px] border-t border-slate-200 bg-white px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3 shadow-2xl animate-[mobile-attendance-drawer-in_180ms_ease-out]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mx-auto mb-4 h-1.5 w-10 rounded-full bg-slate-200" />
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold tracking-[0.08em] text-slate-400 uppercase">
+                  Chi tiết chấm công
+                </p>
+                <h3 className="mt-1 text-xl font-semibold text-slate-900">
+                  {formatDateVi(openedMobileDateIso)}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpenedMobileDateIso(null)}
+                className="grid h-9 w-9 place-items-center rounded-full border border-slate-200 text-slate-600 hover:bg-slate-50"
+                aria-label="Đóng chi tiết chấm công"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {openedMobileHoliday ? (
+              <p className="mt-3 inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                Ngày nghỉ{openedMobileHoliday.name?.trim() ? ` · ${openedMobileHoliday.name.trim()}` : ""}
+              </p>
+            ) : null}
+
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <div className={`rounded-xl border p-3 ${openedMobileTimeClass}`}>
+                <p className="text-xs font-semibold opacity-75">Check-in</p>
+                <p className="mt-1 text-xl font-bold">{openedMobileDay?.checkIn ?? "--:--"}</p>
+              </div>
+              <div className={`rounded-xl border p-3 ${openedMobileTimeClass}`}>
+                <p className="text-xs font-semibold opacity-75">Check-out</p>
+                <p className="mt-1 text-xl font-bold">
+                  {openedMobileHasSameCheckInAndCheckOut ? "--:--" : (openedMobileDay?.checkOut ?? "--:--")}
+                </p>
+              </div>
+            </div>
+
+            {openedMobileDay?.sourceType === "remote" ? (
+              <p className="mt-3 text-sm font-semibold text-indigo-600">Làm việc từ xa</p>
+            ) : null}
+            {openedMobileShouldHighlightMissing && !openedMobileIsSunday && !openedMobileHoliday ? (
+              <p className="mt-3 text-sm font-semibold text-rose-600">
+                Thiếu giờ: {formatDurationLabel(openedMobileDay?.missingMinutes ?? 0)}
+              </p>
+            ) : null}
+
+            {createRequestHref &&
+            openedMobileHasMissingHours &&
+            !openedMobileIsSunday &&
+            openedMobileDateIso >= earliestAllowedRequestDateIso ? (
+              <Link
+                href={appendQueryParams(createRequestHref, { date: openedMobileDateIso })}
+                className="mt-4 flex h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700"
+              >
+                <Plus className="h-4 w-4" />Tạo yêu cầu điều chỉnh
+              </Link>
+            ) : null}
+
+            {openedMobileDayRequests.length > 0 ? (
+              <div className="mt-5 border-t border-slate-100 pt-4">
+                <h4 className="text-sm font-semibold text-slate-900">Form điều chỉnh công</h4>
+                <div className="mt-3 space-y-3">
+                  {openedMobileDayRequests.map((item) => (
+                    <article key={item.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-800">{item.type}</p>
+                          <p className="mt-0.5 text-xs text-slate-500">Ngày gửi: {formatDateVi(item.requestDateISO)}</p>
+                        </div>
+                        <RequestStatus status={item.status} />
+                      </div>
+                      {item.typeValue === "remote" && hasValidRemoteWindow(item.remoteCheckIn, item.remoteCheckOut) ? (
+                        <p className="mt-2 text-xs font-medium text-indigo-600">
+                          Làm việc từ xa: {toLocalTimeHHmm(item.remoteCheckIn)} - {toLocalTimeHHmm(item.remoteCheckOut)}
+                        </p>
+                      ) : null}
+                      <p className="mt-2 text-sm text-slate-700">{item.reason}</p>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
 
       {openedFormDateIso ? (
         <div
