@@ -18,9 +18,9 @@ const VIETNAM_DATE_FORMATTER = new Intl.DateTimeFormat("en-CA", {
 
 export const TIMEKEEPING_DISABLED_MESSAGE =
   "Nhân sự này không còn hoạt động hoặc không được bật tính công.";
-export const TIME_REQUEST_BACKDATE_LIMIT_DAYS = 2;
+export const TIME_REQUEST_BACKDATE_LIMIT_DAYS = 7;
 export const TIME_REQUEST_DATE_WINDOW_MESSAGE =
-  "Chỉ có thể tạo yêu cầu từ 2 ngày trước đến các ngày sau đó.";
+  "Chỉ có thể tạo yêu cầu từ 7 ngày trước đến các ngày sau đó.";
 
 function pad2(value: number) {
   return String(value).padStart(2, "0");
