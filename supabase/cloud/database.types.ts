@@ -1339,6 +1339,42 @@ export type Database = {
           },
         ]
       }
+      time_request_reviewer_overrides: {
+        Row: {
+          created_at: string
+          requester_profile_id: string
+          reviewer_profile_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          requester_profile_id: string
+          reviewer_profile_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          requester_profile_id?: string
+          reviewer_profile_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "time_request_reviewer_overrides_requester_profile_id_fkey"
+            columns: ["requester_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "time_request_reviewer_overrides_reviewer_profile_id_fkey"
+            columns: ["reviewer_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       time_requests: {
         Row: {
           created_at: string | null

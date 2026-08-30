@@ -30,7 +30,7 @@ export async function GET(request: Request) {
 
   try {
     const supabase = createServerSupabaseServiceRoleClient();
-    const [profilesResult, departmentsResult, rolesResult, membershipsResult, authEmailByUserId] = await Promise.all([
+    const [profilesResult, departmentsResult, rolesResult, membershipsResult, reviewerOverridesResult, authEmailByUserId] = await Promise.all([
       supabase
         .from("profiles")
         .select("id,user_id,name,email,is_active,is_timekeeping_enabled,is_parttime")
@@ -38,10 +38,11 @@ export async function GET(request: Request) {
       supabase.from("departments").select("id,name").order("name", { ascending: true }),
       supabase.from("roles").select("id,name").order("name", { ascending: true }),
       supabase.from("user_role_in_department").select("profile_id,department_id,role_id"),
+      supabase.from("time_request_reviewer_overrides").select("requester_profile_id,reviewer_profile_id"),
       getAuthEmailByUserId(supabase),
     ]);
 
-    const error = profilesResult.error || departmentsResult.error || rolesResult.error || membershipsResult.error;
+    const error = profilesResult.error || departmentsResult.error || rolesResult.error || membershipsResult.error || reviewerOverridesResult.error;
     if (error) {
       throw error;
     }
@@ -54,6 +55,7 @@ export async function GET(request: Request) {
       departments: departmentsResult.data ?? [],
       roles: rolesResult.data ?? [],
       memberships: membershipsResult.data ?? [],
+      reviewerOverrides: reviewerOverridesResult.data ?? [],
     });
   } catch (error) {
     return NextResponse.json(

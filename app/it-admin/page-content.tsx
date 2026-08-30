@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
+  ClipboardCheck,
   Clock3,
   KeyRound,
   LoaderCircle,
@@ -35,10 +36,11 @@ type Profile = {
 type Department = { id: string; name: string };
 type Role = { id: string; name: string | null };
 type Membership = { profile_id: string | null; department_id: string | null; role_id: string | null };
-type Directory = { profiles: Profile[]; departments: Department[]; roles: Role[]; memberships: Membership[] };
+type ReviewerOverride = { requester_profile_id: string; reviewer_profile_id: string };
+type Directory = { profiles: Profile[]; departments: Department[]; roles: Role[]; memberships: Membership[]; reviewerOverrides: ReviewerOverride[] };
 type StatusFilter = "all" | "active" | "inactive";
 
-const initialDirectory: Directory = { profiles: [], departments: [], roles: [], memberships: [] };
+const initialDirectory: Directory = { profiles: [], departments: [], roles: [], memberships: [], reviewerOverrides: [] };
 const emptyCreateForm = { name: "", email: "", password: "", departmentId: "", roleId: "" };
 
 async function getAccessToken() {
@@ -97,12 +99,15 @@ export default function ITAdminPageContent() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editProfile, setEditProfile] = useState<Profile | null>(null);
   const [assignmentProfile, setAssignmentProfile] = useState<Profile | null>(null);
+  const [reviewerOverrideProfile, setReviewerOverrideProfile] = useState<Profile | null>(null);
   const [createForm, setCreateForm] = useState(emptyCreateForm);
   const [editForm, setEditForm] = useState({ name: "", isActive: true, isTimekeepingEnabled: false, isParttime: false });
   const [assignment, setAssignment] = useState({ departmentId: "", roleId: "" });
+  const [reviewerProfileIds, setReviewerProfileIds] = useState<string[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [isSavingAssignment, setIsSavingAssignment] = useState(false);
+  const [isSavingReviewerOverrides, setIsSavingReviewerOverrides] = useState(false);
   const [savingProfileId, setSavingProfileId] = useState<string | null>(null);
   const [timekeepingDisableConfirmation, setTimekeepingDisableConfirmation] = useState<{
     profile: Profile;
@@ -118,6 +123,7 @@ export default function ITAdminPageContent() {
       departments: Array.isArray(data.departments) ? (data.departments as Department[]) : [],
       roles: Array.isArray(data.roles) ? (data.roles as Role[]) : [],
       memberships: Array.isArray(data.memberships) ? (data.memberships as Membership[]) : [],
+      reviewerOverrides: Array.isArray(data.reviewerOverrides) ? (data.reviewerOverrides as ReviewerOverride[]) : [],
     });
   }, []);
 
@@ -160,6 +166,12 @@ export default function ITAdminPageContent() {
     () => Object.fromEntries(directory.roles.map((role) => [role.id, role.name || "Chưa gán vai trò"])),
     [directory.roles],
   );
+  const reviewerProfileIdsByRequesterId = useMemo(() => {
+    return directory.reviewerOverrides.reduce<Record<string, string[]>>((result, item) => {
+      (result[item.requester_profile_id] ??= []).push(item.reviewer_profile_id);
+      return result;
+    }, {});
+  }, [directory.reviewerOverrides]);
   const filteredProfiles = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase();
     return directory.profiles.filter((profile) => {
@@ -309,6 +321,46 @@ export default function ITAdminPageContent() {
     }
   };
 
+  const openReviewerOverride = (profile: Profile) => {
+    resetMessages();
+    setReviewerOverrideProfile(profile);
+    setReviewerProfileIds(reviewerProfileIdsByRequesterId[profile.id] ?? []);
+  };
+
+  const toggleReviewer = (profileId: string, checked: boolean) => {
+    setReviewerProfileIds((current) =>
+      checked ? [...new Set([...current, profileId])] : current.filter((id) => id !== profileId),
+    );
+  };
+
+  const saveReviewerOverride = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!reviewerOverrideProfile) return;
+
+    resetMessages();
+    setIsSavingReviewerOverrides(true);
+    try {
+      await itAdminFetch("/api/it-admin/time-request-reviewer-overrides", {
+        method: "PUT",
+        body: JSON.stringify({
+          requesterProfileId: reviewerOverrideProfile.id,
+          reviewerProfileIds,
+        }),
+      });
+      setReviewerOverrideProfile(null);
+      setNotice(
+        reviewerProfileIds.length
+          ? "Đã lưu người duyệt form riêng cho nhân sự."
+          : "Đã bỏ cấu hình riêng; form mới sẽ quay về người duyệt theo vai trò.",
+      );
+      await loadDirectory();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Không thể lưu người duyệt form.");
+    } finally {
+      setIsSavingReviewerOverrides(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
       <WorkspaceSidebar active="itAdmin" />
@@ -349,22 +401,28 @@ export default function ITAdminPageContent() {
                 <div className="flex items-center justify-between px-5 py-3 text-sm text-slate-500 sm:px-6"><span><strong className="font-semibold text-slate-700">{filteredProfiles.length}</strong> / {directory.profiles.length} nhân sự</span><span className="hidden sm:inline">Thao tác nhanh ở cuối mỗi dòng</span></div>
                 <div className="overflow-x-auto">
                   <table className="min-w-[900px] w-full text-left text-sm">
-                    <thead className="border-y border-slate-100 bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3.5 font-semibold sm:px-6">Nhân sự</th><th className="px-5 py-3.5 font-semibold">Phòng ban & vai trò</th><th className="px-5 py-3.5 font-semibold">Hoạt động</th><th className="px-5 py-3.5 font-semibold">Chấm công</th><th className="w-14 px-5 py-3.5"><span className="sr-only">Thao tác</span></th></tr></thead>
+                    <thead className="border-y border-slate-100 bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th className="px-5 py-3.5 font-semibold sm:px-6">Nhân sự</th><th className="px-5 py-3.5 font-semibold">Phòng ban & vai trò</th><th className="px-5 py-3.5 font-semibold">Người duyệt form</th><th className="px-5 py-3.5 font-semibold">Hoạt động</th><th className="px-5 py-3.5 font-semibold">Chấm công</th><th className="w-14 px-5 py-3.5"><span className="sr-only">Thao tác</span></th></tr></thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredProfiles.map((profile) => {
                         const memberships = membershipsByProfileId[profile.id] ?? [];
                         const isActive = profile.is_active !== false;
                         const isTimekeepingEnabled = profile.is_timekeeping_enabled === true;
                         const isSaving = savingProfileId === profile.id;
+                        const overrideReviewerIds = reviewerProfileIdsByRequesterId[profile.id] ?? [];
+                        const overrideReviewerNames = overrideReviewerIds.map((id) => {
+                          const reviewer = directory.profiles.find((item) => item.id === id);
+                          return reviewer?.name || reviewer?.email || "Không rõ";
+                        });
                         return <tr key={profile.id} className="transition hover:bg-slate-50/80">
                           <td className="px-5 py-4 sm:px-6"><div className="flex items-center gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-100 text-slate-500"><UserRound className="h-4 w-4" /></span><div className="min-w-0"><p className="truncate font-semibold text-slate-800">{profile.name || "Chưa đặt tên"}</p><p className="mt-0.5 truncate text-slate-500">{profile.email || "Chưa có email"}</p></div></div></td>
                           <td className="max-w-[330px] px-5 py-4 text-slate-600">{memberships.length ? <div className="space-y-1">{memberships.map((membership) => <p key={`${membership.department_id}-${membership.role_id}`} className="truncate">{membershipLabel(membership)}</p>)}</div> : <span className="text-slate-400">Chưa phân quyền</span>}</td>
+                          <td className="max-w-[260px] px-5 py-4 text-slate-600">{overrideReviewerNames.length ? <div><p className="truncate font-medium text-violet-700">{overrideReviewerNames.join(", ")}</p><p className="mt-0.5 text-xs text-violet-600">Cấu hình riêng</p></div> : <span className="text-slate-400">Theo vai trò</span>}</td>
                           <td className="px-5 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${isActive ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>{isActive ? "Đang hoạt động" : "Đã khóa"}</span></td>
                           <td className="px-5 py-4"><span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${isTimekeepingEnabled ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-600"}`}>{isTimekeepingEnabled ? "Đã bật" : "Đang tắt"}</span></td>
-                          <td className="px-5 py-4 text-right"><Popover><PopoverTrigger asChild><button type="button" aria-label={`Thao tác với ${profile.name || profile.email || "nhân sự"}`} className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"><MoreHorizontal className="h-5 w-5" /></button></PopoverTrigger><PopoverContent align="end" className="w-56 p-1.5"><div className="space-y-0.5"><button type="button" onClick={() => openEdit(profile)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100"><Pencil className="h-4 w-4 text-slate-500" />Chỉnh sửa</button><button type="button" onClick={() => openAssignment(profile)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100"><ShieldCheck className="h-4 w-4 text-slate-500" />Phân quyền</button><div className="my-1 border-t border-slate-100" /><button type="button" disabled={isSaving} onClick={() => void updateProfileFlag(profile, { isActive: !isActive }, isActive ? "Đã khóa nhân sự và ngắt liên kết chấm công." : "Đã mở lại trạng thái hoạt động của nhân sự.")} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-wait disabled:opacity-60">{isActive ? <LockKeyhole className="h-4 w-4 text-rose-600" /> : <UnlockKeyhole className="h-4 w-4 text-emerald-600" />}{isActive ? "Khóa hoạt động" : "Mở khóa hoạt động"}</button><button type="button" disabled={isSaving} onClick={() => handleTimekeepingToggle(profile)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-wait disabled:opacity-60"><Clock3 className="h-4 w-4 text-blue-600" />{isTimekeepingEnabled ? "Tắt chấm công" : "Bật chấm công"}</button></div></PopoverContent></Popover></td>
+                          <td className="px-5 py-4 text-right"><Popover><PopoverTrigger asChild><button type="button" aria-label={`Thao tác với ${profile.name || profile.email || "nhân sự"}`} className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"><MoreHorizontal className="h-5 w-5" /></button></PopoverTrigger><PopoverContent align="end" className="w-56 p-1.5"><div className="space-y-0.5"><button type="button" onClick={() => openEdit(profile)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100"><Pencil className="h-4 w-4 text-slate-500" />Chỉnh sửa</button><button type="button" onClick={() => openAssignment(profile)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100"><ShieldCheck className="h-4 w-4 text-slate-500" />Phân quyền</button><button type="button" onClick={() => openReviewerOverride(profile)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100"><ClipboardCheck className="h-4 w-4 text-violet-600" />Người duyệt form</button><div className="my-1 border-t border-slate-100" /><button type="button" disabled={isSaving} onClick={() => void updateProfileFlag(profile, { isActive: !isActive }, isActive ? "Đã khóa nhân sự và ngắt liên kết chấm công." : "Đã mở lại trạng thái hoạt động của nhân sự.")} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-wait disabled:opacity-60">{isActive ? <LockKeyhole className="h-4 w-4 text-rose-600" /> : <UnlockKeyhole className="h-4 w-4 text-emerald-600" />}{isActive ? "Khóa hoạt động" : "Mở khóa hoạt động"}</button><button type="button" disabled={isSaving} onClick={() => handleTimekeepingToggle(profile)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-wait disabled:opacity-60"><Clock3 className="h-4 w-4 text-blue-600" />{isTimekeepingEnabled ? "Tắt chấm công" : "Bật chấm công"}</button></div></PopoverContent></Popover></td>
                         </tr>;
                       })}
-                      {filteredProfiles.length === 0 ? <tr><td colSpan={5} className="px-6 py-14 text-center"><UsersRound className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 font-semibold text-slate-700">Không tìm thấy nhân sự phù hợp</p><p className="mt-1 text-slate-500">Thử thay đổi từ khóa hoặc bộ lọc.</p></td></tr> : null}
+                      {filteredProfiles.length === 0 ? <tr><td colSpan={6} className="px-6 py-14 text-center"><UsersRound className="mx-auto h-8 w-8 text-slate-300" /><p className="mt-3 font-semibold text-slate-700">Không tìm thấy nhân sự phù hợp</p><p className="mt-1 text-slate-500">Thử thay đổi từ khóa hoặc bộ lọc.</p></td></tr> : null}
                     </tbody>
                   </table>
                 </div>
@@ -422,6 +480,31 @@ export default function ITAdminPageContent() {
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>Phân quyền nhân sự</DialogTitle><DialogDescription>Gán vai trò cho {assignmentProfile?.name || assignmentProfile?.email}. Chọn lại cùng phòng ban để thay vai trò hiện có.</DialogDescription></DialogHeader>
           <form onSubmit={handleSaveAssignment} className="space-y-4"><div className="rounded-xl bg-slate-50 px-3.5 py-3 text-sm text-slate-600"><p className="font-semibold text-slate-700">Phân quyền hiện tại</p><div className="mt-1.5 space-y-1">{assignmentProfile && (membershipsByProfileId[assignmentProfile.id] ?? []).length ? (membershipsByProfileId[assignmentProfile.id] ?? []).map((membership) => <p key={`${membership.department_id}-${membership.role_id}`}>{membershipLabel(membership)}</p>) : <p>Chưa gán phòng ban.</p>}</div></div><div className="grid gap-4 sm:grid-cols-2"><label className="text-sm font-semibold text-slate-700">Phòng ban<select required value={assignment.departmentId} onChange={(event) => setAssignment((current) => ({ ...current, departmentId: event.target.value }))} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 font-normal outline-none focus:border-blue-500"><option value="">Chọn phòng ban</option>{directory.departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select></label><label className="text-sm font-semibold text-slate-700">Vai trò<select required value={assignment.roleId} onChange={(event) => setAssignment((current) => ({ ...current, roleId: event.target.value }))} className="mt-1.5 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 font-normal outline-none focus:border-blue-500"><option value="">Chọn vai trò</option>{directory.roles.map((role) => <option key={role.id} value={role.id}>{role.name || "Chưa đặt tên"}</option>)}</select></label></div><DialogFooter><button type="button" onClick={() => setAssignmentProfile(null)} className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">Hủy</button><button disabled={isSavingAssignment} className="h-10 rounded-xl bg-violet-600 px-4 text-sm font-bold text-white disabled:bg-violet-300">{isSavingAssignment ? "Đang lưu..." : "Lưu phân quyền"}</button></DialogFooter></form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(reviewerOverrideProfile)} onOpenChange={(open) => !open && setReviewerOverrideProfile(null)}>
+        <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Người duyệt form riêng</DialogTitle>
+            <DialogDescription>
+              Chọn người sẽ duyệt form điều chỉnh công của {reviewerOverrideProfile?.name || reviewerOverrideProfile?.email}. Cấu hình này thay hoàn toàn rule theo vai trò, chỉ áp dụng cho form tạo mới.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={saveReviewerOverride} className="space-y-4">
+            <div className="rounded-xl border border-violet-200 bg-violet-50 px-3.5 py-3 text-sm leading-6 text-violet-900">
+              Không chọn ai để quay về người duyệt mặc định theo phòng ban/vai trò. Không thể chọn chính nhân sự này hoặc người đã bị khóa.
+            </div>
+            <div className="max-h-72 space-y-2 overflow-y-auto rounded-xl border border-slate-200 p-2">
+              {directory.profiles
+                .filter((profile) => profile.id !== reviewerOverrideProfile?.id && profile.is_active === true)
+                .map((profile) => {
+                  const checked = reviewerProfileIds.includes(profile.id);
+                  return <label key={profile.id} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-slate-50"><input type="checkbox" checked={checked} onChange={(event) => toggleReviewer(profile.id, event.target.checked)} className="h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500" /><span className="min-w-0"><span className="block truncate text-sm font-semibold text-slate-800">{profile.name || "Chưa đặt tên"}</span><span className="block truncate text-xs text-slate-500">{profile.email || "Chưa có email"}</span></span></label>;
+                })}
+            </div>
+            <DialogFooter><button type="button" onClick={() => setReviewerOverrideProfile(null)} className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">Hủy</button><button disabled={isSavingReviewerOverrides} className="h-10 rounded-xl bg-violet-600 px-4 text-sm font-bold text-white disabled:bg-violet-300">{isSavingReviewerOverrides ? "Đang lưu..." : "Lưu người duyệt"}</button></DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

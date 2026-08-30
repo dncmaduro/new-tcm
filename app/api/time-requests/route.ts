@@ -155,6 +155,46 @@ async function resolveReviewerProfileIds(
   serviceRoleClient: ReturnType<typeof createServerSupabaseServiceRoleClient>,
   requesterProfileId: string,
 ) {
+  const { data: overrideRows, error: overrideError } = await serviceRoleClient
+    .from("time_request_reviewer_overrides")
+    .select("reviewer_profile_id")
+    .eq("requester_profile_id", requesterProfileId);
+
+  if (overrideError) {
+    throw new Error(overrideError.message || "Không tải được cấu hình người duyệt form.");
+  }
+
+  const overrideReviewerProfileIds = [
+    ...new Set(
+      (overrideRows ?? [])
+        .map((row) => row.reviewer_profile_id)
+        .filter(Boolean)
+        .map((item) => String(item))
+        .filter((item) => item !== requesterProfileId),
+    ),
+  ];
+
+  if (overrideReviewerProfileIds.length > 0) {
+    const { data: activeReviewerRows, error: activeReviewerError } = await serviceRoleClient
+      .from("profiles")
+      .select("id")
+      .in("id", overrideReviewerProfileIds)
+      .eq("is_active", true);
+    if (activeReviewerError) {
+      throw new Error(activeReviewerError.message || "Không thể kiểm tra người duyệt được cấu hình.");
+    }
+
+    const activeReviewerProfileIds = (activeReviewerRows ?? [])
+      .map((row) => row.id)
+      .filter(Boolean)
+      .map((item) => String(item));
+    if (activeReviewerProfileIds.length !== overrideReviewerProfileIds.length) {
+      throw new Error("Có người duyệt form được cấu hình không còn hoạt động. Hãy nhờ IT cập nhật lại cấu hình.");
+    }
+
+    return activeReviewerProfileIds;
+  }
+
   const [
     { data: rolesData, error: rolesError },
     { data: requesterRolesData, error: requesterRolesError },
