@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Check,
   CheckCircle2,
   ClipboardCheck,
   Clock3,
@@ -500,7 +501,7 @@ export default function ITAdminPageContent() {
                 .filter((profile) => profile.id !== reviewerOverrideProfile?.id && profile.is_active === true)
                 .map((profile) => {
                   const checked = reviewerProfileIds.includes(profile.id);
-                  return <label key={profile.id} className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-slate-50"><input type="checkbox" checked={checked} onChange={(event) => toggleReviewer(profile.id, event.target.checked)} className="h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500" /><span className="min-w-0"><span className="block truncate text-sm font-semibold text-slate-800">{profile.name || "Chưa đặt tên"}</span><span className="block truncate text-xs text-slate-500">{profile.email || "Chưa có email"}</span></span></label>;
+                  return <button key={profile.id} type="button" aria-pressed={checked} onClick={() => toggleReviewer(profile.id, !checked)} className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition ${checked ? "bg-violet-50 ring-1 ring-violet-200" : "hover:bg-slate-50"}`}><span aria-hidden="true" className={`grid h-5 w-5 shrink-0 place-items-center rounded border transition ${checked ? "border-violet-600 bg-violet-600 text-white" : "border-slate-300 bg-white text-transparent"}`}><Check className="h-3.5 w-3.5" /></span><span className="min-w-0"><span className="block truncate text-sm font-semibold text-slate-800">{profile.name || "Chưa đặt tên"}</span><span className="block truncate text-xs text-slate-500">{profile.email || "Chưa có email"}</span></span></button>;
                 })}
             </div>
             <DialogFooter><button type="button" onClick={() => setReviewerOverrideProfile(null)} className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">Hủy</button><button disabled={isSavingReviewerOverrides} className="h-10 rounded-xl bg-violet-600 px-4 text-sm font-bold text-white disabled:bg-violet-300">{isSavingReviewerOverrides ? "Đang lưu..." : "Lưu người duyệt"}</button></DialogFooter>
