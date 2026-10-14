@@ -112,6 +112,30 @@ const getDescendantDepartmentIds = (
   return Array.from(scopedDepartmentIds);
 };
 
+async function loadAdminViewableProfiles() {
+  const { data, error: sessionError } = await supabase.auth.getSession();
+  const accessToken = data.session?.access_token;
+  if (sessionError || !accessToken) {
+    throw new Error("Không xác thực được phiên đăng nhập để tải dữ liệu xuất chấm công.");
+  }
+
+  const response = await fetch("/api/attendance-export/profiles", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
+  });
+  const payload = (await response.json()) as {
+    profiles?: ViewableProfile[];
+    error?: string;
+  };
+
+  if (!response.ok) {
+    throw new Error(payload.error || "Không tải được dữ liệu xuất chấm công.");
+  }
+
+  return Array.isArray(payload.profiles) ? payload.profiles : [];
+}
+
 export function ManagedAttendancePageContent({
   pageTitle = "Quản lý chấm công",
   breadcrumbLabel = "Quản lý chấm công",
@@ -179,8 +203,25 @@ export function ManagedAttendancePageContent({
       setLoadError(null);
 
       try {
-        if (!workspaceAccess.profileId) {
+        if (!workspaceAccess.profileId && !forceAdminAccess) {
           throw new Error("Không xác định được hồ sơ người dùng hiện tại.");
+        }
+
+        if (forceAdminAccess) {
+          const adminProfiles = await loadAdminViewableProfiles();
+          if (!isActive) {
+            return;
+          }
+
+          setViewableProfiles(adminProfiles);
+          setSelectedProfileId((prev) => {
+            if (prev && adminProfiles.some((item) => item.id === prev)) {
+              return prev;
+            }
+            return adminProfiles[0]?.id ?? null;
+          });
+          setIsLoadingProfiles(false);
+          return;
         }
 
         let nextRoleScope: "director" | "leader" | "member" = "member";
@@ -648,6 +689,7 @@ export function ManagedAttendancePageContent({
                       <div className="mt-5">
                         <TimesheetOverview
                           profileId={selectedProfile.id}
+                          dataSource={forceAdminAccess ? "attendanceExportAdmin" : "client"}
                           showExportButton={showExportButton}
                           exportFileLabel={selectedProfile.name}
                           exportButtonLabel={exportButtonLabel}

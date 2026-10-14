@@ -152,6 +152,7 @@ type TimesheetOverviewProps = {
   isProfileLoading?: boolean;
   profileError?: string | null;
   canReadTimekeepingData?: boolean;
+  dataSource?: "client" | "attendanceExportAdmin";
   createRequestHref?: string | null;
   showExportButton?: boolean;
   exportFileLabel?: string | null;
@@ -353,6 +354,45 @@ function toRequestStatus(
   return getTimeRequestReviewStatus(reviewers);
 }
 
+async function loadAttendanceExportTimesheetData(
+  profileId: string,
+  selectedMonth: Date,
+) {
+  const { data, error: sessionError } = await supabase.auth.getSession();
+  const accessToken = data.session?.access_token;
+  if (sessionError || !accessToken) {
+    throw new Error("Không xác thực được phiên đăng nhập để tải lịch chấm công.");
+  }
+
+  const selectedMonthToken = `${selectedMonth.getFullYear()}-${String(
+    selectedMonth.getMonth() + 1,
+  ).padStart(2, "0")}`;
+  const params = new URLSearchParams({ profileId, selectedMonth: selectedMonthToken });
+  const response = await fetch(`/api/attendance-export/timesheet?${params.toString()}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
+  });
+  const payload = (await response.json()) as {
+    profile?: ProfileAttendanceRow;
+    attendanceLinks?: TimesProfileLinkRow[];
+    times?: AttendanceTimeRow[];
+    timeRequests?: TimeRequestRow[];
+    error?: string;
+  };
+
+  if (!response.ok) {
+    throw new Error(payload.error || "Không thể tải lịch chấm công.");
+  }
+
+  return {
+    profile: payload.profile ?? null,
+    attendanceLinks: payload.attendanceLinks ?? [],
+    times: payload.times ?? [],
+    timeRequests: payload.timeRequests ?? [],
+  };
+}
+
 function RequestStatus({ status }: { status: CorrectionRequest["status"] }) {
   if (status === "approved") {
     return (
@@ -383,6 +423,7 @@ export function TimesheetOverview({
   isProfileLoading = false,
   profileError = null,
   canReadTimekeepingData = true,
+  dataSource = "client",
   createRequestHref = null,
   showExportButton = false,
   exportFileLabel = null,
@@ -463,25 +504,33 @@ export function TimesheetOverview({
         const startIso = toIsoDate(start.getFullYear(), start.getMonth() + 1, start.getDate());
         const endIso = toIsoDate(end.getFullYear(), end.getMonth() + 1, end.getDate());
 
-        const { data, error } = await supabase
-          .from("time_requests")
-          .select(
-            "id,date,type,leave_subtype,leave_session,requested_hours,minutes,reason,remote_check_in,remote_check_out,created_at,time_request_reviewers(is_approved,reviewed_at,created_at)",
-          )
-          .eq("profile_id", profileId)
-          .gte("date", startIso)
-          .lt("date", endIso)
-          .order("created_at", { ascending: false });
+        let requestRows: TimeRequestRow[];
+        if (dataSource === "attendanceExportAdmin") {
+          requestRows = (
+            await loadAttendanceExportTimesheetData(profileId, selectedMonth)
+          ).timeRequests;
+        } else {
+          const { data, error } = await supabase
+            .from("time_requests")
+            .select(
+              "id,date,type,leave_subtype,leave_session,requested_hours,minutes,reason,remote_check_in,remote_check_out,created_at,time_request_reviewers(is_approved,reviewed_at,created_at)",
+            )
+            .eq("profile_id", profileId)
+            .gte("date", startIso)
+            .lt("date", endIso)
+            .order("created_at", { ascending: false });
 
-        if (error) {
-          throw error;
+          if (error) {
+            throw error;
+          }
+          requestRows = (data ?? []) as TimeRequestRow[];
         }
 
         if (!isActive) {
           return;
         }
 
-        const mapped = ((data ?? []) as TimeRequestRow[]).map((item) => {
+        const mapped = requestRows.map((item) => {
           const resolvedMinutes = resolveRequestMinutes(item);
 
           return {
@@ -524,7 +573,7 @@ export function TimesheetOverview({
     return () => {
       isActive = false;
     };
-  }, [canReadTimekeepingData, profileError, profileId, selectedMonth]);
+  }, [canReadTimekeepingData, dataSource, profileError, profileId, selectedMonth]);
 
   useEffect(() => {
     if (!profileId || !canReadTimekeepingData) {
@@ -546,31 +595,45 @@ export function TimesheetOverview({
         const startIso = toIsoDate(start.getFullYear(), start.getMonth() + 1, start.getDate());
         const endIso = toIsoDate(end.getFullYear(), end.getMonth() + 1, end.getDate());
 
-        const [
-          { data: profileAttendanceData, error: profileAttendanceError },
-          { data: attendanceLinkRows, error: attendanceLinkError },
-        ] = await Promise.all([
-          supabase
-            .from("profiles")
-            .select("id,attendance_id,is_timekeeping_enabled")
-            .eq("id", profileId)
-            .maybeSingle(),
-          supabase
-            .from("times_profiles")
-            .select("attendance_id,device_id,created_at")
-            .eq("profile_id", profileId),
-        ]);
+        let profileAttendanceData: ProfileAttendanceRow | null;
+        let attendanceLinkRows: TimesProfileLinkRow[];
+        let serverTimeRows: AttendanceTimeRow[] | null = null;
 
-        if (profileAttendanceError) {
-          throw profileAttendanceError;
-        }
+        if (dataSource === "attendanceExportAdmin") {
+          const adminData = await loadAttendanceExportTimesheetData(profileId, selectedMonth);
+          profileAttendanceData = adminData.profile;
+          attendanceLinkRows = adminData.attendanceLinks;
+          serverTimeRows = adminData.times;
+        } else {
+          const [
+            { data: nextProfileAttendanceData, error: profileAttendanceError },
+            { data: nextAttendanceLinkRows, error: attendanceLinkError },
+          ] = await Promise.all([
+            supabase
+              .from("profiles")
+              .select("id,attendance_id,is_timekeeping_enabled")
+              .eq("id", profileId)
+              .maybeSingle(),
+            supabase
+              .from("times_profiles")
+              .select("attendance_id,device_id,created_at")
+              .eq("profile_id", profileId),
+          ]);
 
-        if (attendanceLinkError) {
-          throw attendanceLinkError;
+          if (profileAttendanceError) {
+            throw profileAttendanceError;
+          }
+
+          if (attendanceLinkError) {
+            throw attendanceLinkError;
+          }
+
+          profileAttendanceData = nextProfileAttendanceData as ProfileAttendanceRow | null;
+          attendanceLinkRows = (nextAttendanceLinkRows ?? []) as TimesProfileLinkRow[];
         }
 
         if (
-          !canReadTimekeepingProfileData(profileAttendanceData as ProfileAttendanceRow | null)
+          !canReadTimekeepingProfileData(profileAttendanceData)
         ) {
           if (!isActive) {
             return;
@@ -583,17 +646,17 @@ export function TimesheetOverview({
         }
 
         const directAttendanceId = normalizeAttendanceId(
-          (profileAttendanceData as ProfileAttendanceRow | null)?.attendance_id,
+          profileAttendanceData?.attendance_id,
         );
         const linkedDeviceBindings = collectAttendanceDeviceLinks(
-          (attendanceLinkRows ?? []) as TimesProfileLinkRow[],
+          attendanceLinkRows,
         );
         const linkedAttendanceIds = collectAttendanceIds(
-          (attendanceLinkRows ?? []) as TimesProfileLinkRow[],
+          attendanceLinkRows,
         );
         const attendanceIds = collectAttendanceIds([
           directAttendanceId,
-          ...((attendanceLinkRows ?? []) as TimesProfileLinkRow[]),
+          ...attendanceLinkRows,
         ]);
 
         if (!isActive) {
@@ -625,14 +688,14 @@ export function TimesheetOverview({
           timeQuery = timeQuery.eq("attendance_id", directAttendanceId);
         }
 
-        const { data, error } = await timeQuery
-          .order("date", { ascending: true })
-          .order("updated_at", { ascending: false })
-          .order("created_at", { ascending: false });
-
-        if (error) {
-          throw error;
-        }
+        const data = serverTimeRows
+          ? serverTimeRows
+          : (
+              await timeQuery
+                .order("date", { ascending: true })
+                .order("updated_at", { ascending: false })
+                .order("created_at", { ascending: false })
+            ).data;
 
         if (!isActive) {
           return;
@@ -779,7 +842,7 @@ export function TimesheetOverview({
     return () => {
       isActive = false;
     };
-  }, [canReadTimekeepingData, holidays, profileError, profileId, selectedMonth]);
+  }, [canReadTimekeepingData, dataSource, holidays, profileError, profileId, selectedMonth]);
 
   const calendarYear = selectedMonth.getFullYear();
   const calendarMonth = selectedMonth.getMonth() + 1;
