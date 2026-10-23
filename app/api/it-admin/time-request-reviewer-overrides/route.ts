@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { authorizeITAdmin } from "@/lib/it-admin-access";
 import { createServerSupabaseServiceRoleClient } from "@/lib/supabase-server";
+import { syncPendingTimeRequestReviewers } from "@/lib/time-request-reviewer-sync";
 
 type OverridePayload = {
   requesterProfileId?: string;
@@ -78,7 +79,17 @@ export async function PUT(request: Request) {
       if (insertError) throw insertError;
     }
 
-    return NextResponse.json({ requesterProfileId, reviewerProfileIds });
+    const syncedPendingRequestCount = await syncPendingTimeRequestReviewers(
+      supabase,
+      requesterProfileId,
+      reviewerProfileIds,
+    );
+
+    return NextResponse.json({
+      requesterProfileId,
+      reviewerProfileIds,
+      syncedPendingRequestCount,
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Không thể lưu cấu hình người duyệt form." },

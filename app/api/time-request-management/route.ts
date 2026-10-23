@@ -5,6 +5,7 @@ import {
   createServerSupabaseServiceRoleClient,
 } from "@/lib/supabase-server";
 import { canReadTimekeepingData } from "@/lib/timekeeping-access";
+import { syncPendingTimeRequestReviewers } from "@/lib/time-request-reviewer-sync";
 
 type RequestProfileRow = {
   id: string;
@@ -60,6 +61,40 @@ function getBearerToken(request: Request) {
 
 function getRequestId(request: Request) {
   return new URL(request.url).searchParams.get("requestId")?.trim() ?? "";
+}
+
+async function syncRequesterOverride(
+  serviceRoleClient: ReturnType<typeof createServerSupabaseServiceRoleClient>,
+  requesterProfileId: string | null,
+) {
+  if (!requesterProfileId) {
+    return;
+  }
+
+  const { data: overrideRows, error: overrideError } = await serviceRoleClient
+    .from("time_request_reviewer_overrides")
+    .select("reviewer_profile_id")
+    .eq("requester_profile_id", requesterProfileId);
+
+  if (overrideError) {
+    throw new Error(overrideError.message || "Không tải được cấu hình người duyệt form.");
+  }
+
+  const reviewerProfileIds = [
+    ...new Set(
+      (overrideRows ?? [])
+        .map((row) => row.reviewer_profile_id)
+        .filter(Boolean)
+        .map((item) => String(item))
+        .filter((item) => item !== requesterProfileId),
+    ),
+  ];
+
+  await syncPendingTimeRequestReviewers(
+    serviceRoleClient,
+    requesterProfileId,
+    reviewerProfileIds,
+  );
 }
 
 async function authenticate(request: Request) {
@@ -148,6 +183,10 @@ export async function GET(request: Request) {
       }
 
       const timeRequest = requestData as TimeRequestRow;
+      await syncRequesterOverride(
+        serviceRoleClient,
+        timeRequest.profile_id ? String(timeRequest.profile_id) : null,
+      );
       const { data: reviewerData, error: reviewerError } = await serviceRoleClient
         .from("time_request_reviewers")
         .select("id")
@@ -187,13 +226,46 @@ export async function GET(request: Request) {
       });
     }
 
-    const { data: reviewerLinksData, error: reviewerLinksError } = await serviceRoleClient
-      .from("time_request_reviewers")
-      .select("time_request_id")
-      .eq("profile_id", viewerProfileId);
+    const { data: overrideRows, error: overrideError } = await serviceRoleClient
+      .from("time_request_reviewer_overrides")
+      .select("requester_profile_id,reviewer_profile_id");
+
+    if (overrideError) {
+      throw new Error(overrideError.message || "Không tải được cấu hình người duyệt form.");
+    }
+
+    const overrideReviewerIdsByRequester = (overrideRows ?? []).reduce<
+      Record<string, string[]>
+    >((result, row) => {
+      if (!row.requester_profile_id || !row.reviewer_profile_id) {
+        return result;
+      }
+
+      const requesterProfileId = String(row.requester_profile_id);
+      (result[requesterProfileId] ??= []).push(String(row.reviewer_profile_id));
+      return result;
+    }, {});
+
+    for (const [requesterProfileId, reviewerProfileIds] of Object.entries(
+      overrideReviewerIdsByRequester,
+    )) {
+      await syncPendingTimeRequestReviewers(
+        serviceRoleClient,
+        requesterProfileId,
+        [...new Set(reviewerProfileIds)],
+      );
+    }
+
+    const { data: reviewerLinksData, error: reviewerLinksError } =
+      await serviceRoleClient
+        .from("time_request_reviewers")
+        .select("time_request_id")
+        .eq("profile_id", viewerProfileId);
 
     if (reviewerLinksError) {
-      throw new Error(reviewerLinksError.message || "Không tải được phạm vi duyệt yêu cầu.");
+      throw new Error(
+        reviewerLinksError.message || "Không tải được phạm vi duyệt yêu cầu.",
+      );
     }
 
     const authorizedRequestIds = [

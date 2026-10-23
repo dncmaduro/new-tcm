@@ -341,7 +341,7 @@ export default function ITAdminPageContent() {
     resetMessages();
     setIsSavingReviewerOverrides(true);
     try {
-      await itAdminFetch("/api/it-admin/time-request-reviewer-overrides", {
+      const response = await itAdminFetch("/api/it-admin/time-request-reviewer-overrides", {
         method: "PUT",
         body: JSON.stringify({
           requesterProfileId: reviewerOverrideProfile.id,
@@ -349,10 +349,14 @@ export default function ITAdminPageContent() {
         }),
       });
       setReviewerOverrideProfile(null);
+      const syncedPendingRequestCount =
+        typeof response.syncedPendingRequestCount === "number"
+          ? response.syncedPendingRequestCount
+          : 0;
       setNotice(
         reviewerProfileIds.length
-          ? "Đã lưu người duyệt form riêng cho nhân sự."
-          : "Đã bỏ cấu hình riêng; form mới sẽ quay về người duyệt theo vai trò.",
+          ? `Đã lưu người duyệt form riêng cho nhân sự và cập nhật ${syncedPendingRequestCount} form đang chờ duyệt.`
+          : "Đã bỏ cấu hình riêng; form mới sẽ quay về người duyệt theo vai trò. Các form đang chờ duyệt giữ người duyệt hiện tại.",
       );
       await loadDirectory();
     } catch (error) {
@@ -489,12 +493,12 @@ export default function ITAdminPageContent() {
           <DialogHeader>
             <DialogTitle>Người duyệt form riêng</DialogTitle>
             <DialogDescription>
-              Chọn người sẽ duyệt form điều chỉnh công của {reviewerOverrideProfile?.name || reviewerOverrideProfile?.email}. Cấu hình này thay hoàn toàn rule theo vai trò, chỉ áp dụng cho form tạo mới.
+              Chọn người sẽ duyệt form điều chỉnh công của {reviewerOverrideProfile?.name || reviewerOverrideProfile?.email}. Cấu hình này thay hoàn toàn rule theo vai trò cho form mới và các form đang chờ duyệt.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={saveReviewerOverride} className="space-y-4">
             <div className="rounded-xl border border-violet-200 bg-violet-50 px-3.5 py-3 text-sm leading-6 text-violet-900">
-              Không chọn ai để quay về người duyệt mặc định theo phòng ban/vai trò. Không thể chọn chính nhân sự này hoặc người đã bị khóa.
+              Không chọn ai để form mới quay về người duyệt mặc định theo phòng ban/vai trò. Các form đang chờ duyệt giữ người duyệt hiện tại. Không thể chọn chính nhân sự này hoặc người đã bị khóa.
             </div>
             <div className="max-h-72 space-y-2 overflow-y-auto rounded-xl border border-slate-200 p-2">
               {directory.profiles
