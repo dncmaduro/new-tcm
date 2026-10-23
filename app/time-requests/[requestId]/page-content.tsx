@@ -7,6 +7,7 @@ import {
   resolveCurrentViewerProfileId,
   resolveTimeRequestManagementScope,
 } from "@/lib/time-request-access";
+import { fetchTimeRequestManagement } from "@/lib/time-request-management-client";
 import { supabase } from "@/lib/supabase";
 import { canReadTimekeepingData } from "@/lib/timekeeping-access";
 
@@ -28,6 +29,20 @@ export default function SharedTimeRequestEntryPage() {
         const requestId = typeof params?.requestId === "string" ? params.requestId : "";
         if (!requestId) {
           throw new Error("Link yêu cầu không hợp lệ.");
+        }
+
+        try {
+          const managementAccess = await fetchTimeRequestManagement(requestId);
+          if (managementAccess.isOwner) {
+            router.replace(`/timesheet/requests?request=${encodeURIComponent(requestId)}`);
+            return;
+          }
+          if (managementAccess.isReviewer) {
+            router.replace(`/time-request-management?request=${encodeURIComponent(requestId)}`);
+            return;
+          }
+        } catch {
+          // Fall back to the role-based access check below for legacy/default requests.
         }
 
         const viewerProfileId = await resolveCurrentViewerProfileId();

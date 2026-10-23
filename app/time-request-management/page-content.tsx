@@ -41,7 +41,10 @@ import { formatDateDdMmYyyy, formatDateTimeDdMmYyyy } from "@/lib/date-format";
 import { buildHolidayMap, fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
 import { canReadTimekeepingData } from "@/lib/timekeeping-access";
-import { resolveCurrentViewerProfileId } from "@/lib/time-request-access";
+import {
+  fetchTimeRequestManagement,
+  updateTimeRequestReview,
+} from "@/lib/time-request-management-client";
 import { cn } from "@/lib/utils";
 import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
 
@@ -62,10 +65,6 @@ type TimeRequestReviewerRow = {
   comment: string | null;
   reviewed_at: string | null;
   created_at: string;
-};
-
-type TimeRequestReviewerLinkRow = {
-  time_request_id: string | null;
 };
 
 type TimeRequestRow = {
@@ -444,49 +443,14 @@ function TimeRequestManagementPageContent() {
       setActionError(null);
 
       try {
-        const viewerProfileId = await resolveCurrentViewerProfileId();
+        const managementData = await fetchTimeRequestManagement();
+        const viewerProfileId = managementData.currentProfileId?.trim() || null;
+        const requestRows = (managementData.requests ?? []) as TimeRequestRow[];
 
         if (!isActive) {
           return;
         }
         setCurrentProfileId(viewerProfileId);
-        const { data: reviewerLinksData, error: reviewerLinksError } = await supabase
-          .from("time_request_reviewers")
-          .select("time_request_id")
-          .eq("profile_id", viewerProfileId);
-
-        if (reviewerLinksError) {
-          throw new Error(reviewerLinksError.message || "Không tải được phạm vi duyệt yêu cầu.");
-        }
-
-        const authorizedRequestIds = [
-          ...new Set(
-            ((reviewerLinksData ?? []) as TimeRequestReviewerLinkRow[])
-              .map((row) => row.time_request_id)
-              .filter((requestId): requestId is string => Boolean(requestId)),
-          ),
-        ];
-
-        let requestRows: TimeRequestRow[] = [];
-        if (authorizedRequestIds.length > 0) {
-          const { data, error } = await supabase
-            .from("time_requests")
-            .select(
-              "id,profile_id,date,type,leave_subtype,leave_session,requested_hours,minutes,reason,remote_check_in,remote_check_out,created_at,updated_at,time_request_reviewers(id,profile_id,is_approved,comment,reviewed_at,created_at)",
-            )
-            .in("id", authorizedRequestIds)
-            .order("created_at", { ascending: false });
-
-          if (error) {
-            throw new Error(error.message || "Không tải được yêu cầu thời gian.");
-          }
-
-          requestRows = (data ?? []) as TimeRequestRow[];
-        }
-
-        if (!isActive) {
-          return;
-        }
         const requestDateValues = requestRows
           .map((item) => item.date)
           .filter((value): value is string => Boolean(value))
@@ -507,34 +471,13 @@ function TimeRequestManagementPageContent() {
           setHolidaysByDate(new Map());
         }
 
-        const requestProfileIds = [
-          ...new Set(
-            requestRows
-              .map((request) => request.profile_id)
-              .filter((profileId): profileId is string => Boolean(profileId)),
-          ),
-        ];
-
-        if (requestProfileIds.length === 0) {
+        const requestProfilesData = (managementData.profiles ?? []) as ProfileRow[];
+        if (requestRows.length === 0 || requestProfilesData.length === 0) {
           setRequests([]);
           setProfileNameById({});
           return;
         }
-
-        const { data: requestProfilesData, error: requestProfilesError } = await supabase
-          .from("profiles")
-          .select("id,name,email,is_timekeeping_enabled")
-          .in("id", requestProfileIds);
-
-        if (requestProfilesError) {
-          throw new Error(requestProfilesError.message || "Không tải được thông tin nhân sự.");
-        }
-
-        if (!isActive) {
-          return;
-        }
-
-        const eligibleProfiles = ((requestProfilesData ?? []) as ProfileRow[]).filter((profile) =>
+        const eligibleProfiles = requestProfilesData.filter((profile) =>
           canReadTimekeepingData(profile),
         );
         const eligibleProfileIds = new Set(eligibleProfiles.map((profile) => String(profile.id)));
@@ -664,36 +607,7 @@ function TimeRequestManagementPageContent() {
     setActionError(null);
 
     try {
-      const { data: existingRows, error: existingError } = await supabase
-        .from("time_request_reviewers")
-        .select("id")
-        .eq("time_request_id", requestId)
-        .eq("profile_id", currentProfileId)
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-      if (existingError) {
-        throw new Error(existingError.message || "Không thể kiểm tra lịch sử duyệt.");
-      }
-
-      const reviewedAt = new Date().toISOString();
-      const existingId = existingRows?.[0]?.id ? String(existingRows[0].id) : null;
-
-      if (!existingId) {
-        throw new Error("Bạn không có quyền duyệt yêu cầu này.");
-      }
-
-      const { error: updateError } = await supabase
-        .from("time_request_reviewers")
-        .update({
-          is_approved: isApproved,
-          reviewed_at: reviewedAt,
-        })
-        .eq("id", existingId);
-
-      if (updateError) {
-        throw new Error(updateError.message || "Không thể cập nhật quyết định duyệt.");
-      }
+      await updateTimeRequestReview(requestId, isApproved);
 
       setReloadSeed((prev) => prev + 1);
     } catch (error) {
@@ -712,34 +626,7 @@ function TimeRequestManagementPageContent() {
     setActionError(null);
 
     try {
-      const { data: existingRows, error: existingError } = await supabase
-        .from("time_request_reviewers")
-        .select("id")
-        .eq("time_request_id", requestId)
-        .eq("profile_id", currentProfileId)
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-      if (existingError) {
-        throw new Error(existingError.message || "Không thể kiểm tra lịch sử duyệt.");
-      }
-
-      const existingId = existingRows?.[0]?.id ? String(existingRows[0].id) : null;
-      if (!existingId) {
-        throw new Error("Không tìm thấy quyết định duyệt để hoàn tác.");
-      }
-
-      const { error: updateError } = await supabase
-        .from("time_request_reviewers")
-        .update({
-          is_approved: null,
-          reviewed_at: null,
-        })
-        .eq("id", existingId);
-
-      if (updateError) {
-        throw new Error(updateError.message || "Không thể hoàn tác quyết định duyệt.");
-      }
+      await updateTimeRequestReview(requestId, null);
 
       setReloadSeed((prev) => prev + 1);
     } catch (error) {
