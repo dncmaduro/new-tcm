@@ -669,7 +669,7 @@ export function ManagedAttendancePageContent({
                                 className="rounded-full bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                               >
                                 {isExportingAllProfiles
-                                  ? "Đang xuất tổng..."
+                                  ? "Đang chuẩn bị..."
                                   : exportAllButtonLabel}
                               </button>
                             ) : null}

@@ -19,10 +19,8 @@ import {
   buildTimesDeviceFilter,
   buildTimesProfileFilter,
   collectAttendanceDeviceLinks,
-  collectAttendanceIds,
   mergeAttendanceRowsByDate,
   normalizeAttendanceId,
-  type AttendanceDeviceLink,
   type AttendanceTimeRow,
 } from "@/lib/attendance";
 import {
@@ -108,13 +106,6 @@ export type AttendanceStats = {
   absentDays: number;
   missingMinutes: number;
   overtimeMinutes: number;
-};
-
-type AttendanceBinding = {
-  directAttendanceId: number | null;
-  attendanceIds: number[];
-  linkedAttendanceIds: number[];
-  linkedDeviceBindings: AttendanceDeviceLink[];
 };
 
 export type TimesheetRequestDurationSummary = {
@@ -437,7 +428,6 @@ export function TimesheetOverview({
   const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
   const [isLoadingAttendance, setIsLoadingAttendance] = useState<boolean>(false);
   const [attendanceError, setAttendanceError] = useState<string>("");
-  const [attendanceBinding, setAttendanceBinding] = useState<AttendanceBinding | null>(null);
   const [correctionRequests, setCorrectionRequests] = useState<CorrectionRequest[]>([]);
   const [openedFormDateIso, setOpenedFormDateIso] = useState<string | null>(null);
   const [openedMobileDateIso, setOpenedMobileDateIso] = useState<string | null>(null);
@@ -574,7 +564,6 @@ export function TimesheetOverview({
     if (!profileId) {
       setIsLoadingAttendance(false);
       setAttendanceError(profileError ?? "");
-      setAttendanceBinding(null);
       setCalendarDays([]);
       return;
     }
@@ -633,24 +622,10 @@ export function TimesheetOverview({
         const linkedDeviceBindings = collectAttendanceDeviceLinks(
           attendanceLinkRows,
         );
-        const linkedAttendanceIds = collectAttendanceIds(
-          attendanceLinkRows,
-        );
-        const attendanceIds = collectAttendanceIds([
-          directAttendanceId,
-          ...attendanceLinkRows,
-        ]);
 
         if (!isActive) {
           return;
         }
-
-        setAttendanceBinding({
-          directAttendanceId,
-          attendanceIds,
-          linkedAttendanceIds,
-          linkedDeviceBindings,
-        });
 
         let timeQuery = supabase
           .from("times")
@@ -813,7 +788,6 @@ export function TimesheetOverview({
         }
         const message = error instanceof Error ? error.message : "Không thể tải dữ liệu chấm công.";
         setAttendanceError(message);
-        setAttendanceBinding(null);
         setCalendarDays([]);
       } finally {
         if (isActive) {
@@ -1368,8 +1342,7 @@ export function TimesheetOverview({
                   isExporting ||
                   isProfileLoading ||
                   isLoadingAttendance ||
-                  !profileId ||
-                  attendanceBinding?.attendanceIds.length === 0
+                  !profileId
                 }
                 className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
               >
