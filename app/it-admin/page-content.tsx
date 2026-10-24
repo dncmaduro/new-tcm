@@ -1,7 +1,9 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
+  CalendarDays,
   Check,
   CheckCircle2,
   ClipboardCheck,
@@ -371,7 +373,19 @@ export default function ITAdminPageContent() {
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
       <WorkspaceSidebar active="itAdmin" />
       <main className="min-h-screen lg:pl-[var(--workspace-sidebar-width)]">
-        <WorkspacePageHeader title="Quản trị IT" items={[{ label: "Quản trị IT" }]} />
+        <WorkspacePageHeader
+          title="Quản trị IT"
+          items={[{ label: "Quản trị IT" }]}
+          actions={
+            <Link
+              href="/it-admin/holidays"
+              className="hidden h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-blue-300 hover:text-blue-700 sm:inline-flex"
+            >
+              <CalendarDays className="h-4 w-4" />
+              Quản lý ngày nghỉ
+            </Link>
+          }
+        />
         <div className="mx-auto w-full max-w-[1600px] px-4 pb-10 pt-5 sm:px-6 lg:px-8">
           {accessState === "loading" ? <div className="flex min-h-60 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-500"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" />Đang kiểm tra quyền truy cập...</div> : null}
 

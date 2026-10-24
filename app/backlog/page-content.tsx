@@ -185,7 +185,7 @@ export default function BacklogPageContent() {
     } finally {
       setIsLoading(false);
     }
-  }, [canManageBacklog, pushToast]);
+  }, [canManageBacklog]);
 
   useEffect(() => {
     if (!access.isLoading) void loadBacklog();
