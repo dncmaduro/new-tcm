@@ -1,6 +1,7 @@
 "use client";
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { TaskEvidenceType } from "./types";
 
@@ -94,9 +95,7 @@ export function TaskEvidenceForm({
           ) : null}
 
           {error ? (
-            <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-              {error}
-            </div>
+            <AppErrorToast message={error} title="Không thể lưu minh chứng" />
           ) : null}
 
           <div className="flex flex-wrap justify-end gap-2">

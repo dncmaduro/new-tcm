@@ -1,6 +1,7 @@
 "use client";
 
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { AppErrorToast } from "@/components/app-error-toast";
 import {
   DashboardSummaryCards,
   DashboardGoalProgress,
@@ -21,9 +22,7 @@ export default function DashboardPage() {
         <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <main className="space-y-4 px-4 py-5 lg:px-8 lg:py-6">
             {error ? (
-              <section className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500 shadow-[0_8px_26px_-20px_rgba(15,23,42,0.45)]">
-                Không có data
-              </section>
+              <AppErrorToast message={error} title="Không tải được dashboard" />
             ) : null}
 
             <DashboardSummaryCards

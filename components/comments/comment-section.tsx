@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { EmptyStateCompact, SectionCard } from "@/components/detail-ui";
 import { Button } from "@/components/ui/button";
 import { CommentItem } from "./comment-item";
@@ -63,9 +64,7 @@ export function CommentSection({
   return (
     <SectionCard title="Bình luận">
       {error ? (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {error}
-        </div>
+        <AppErrorToast message={error} title="Không tải được bình luận" />
       ) : null}
 
       <div>
@@ -112,9 +111,7 @@ export function CommentSection({
         />
 
         {formError ? (
-          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-            {formError}
-          </div>
+          <AppErrorToast message={formError} title="Không thể gửi bình luận" />
         ) : null}
 
         <div className="flex justify-end">

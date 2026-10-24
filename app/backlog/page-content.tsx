@@ -6,6 +6,7 @@ import { format } from "date-fns";
 import { vi } from "date-fns/locale";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { AppErrorToast } from "@/components/app-error-toast";
 import {
   Dialog,
   DialogContent,
@@ -30,7 +31,7 @@ import {
   type TaskPriority,
 } from "@/lib/constants/tasks";
 import { useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
-import { useAppToastStore } from "@/lib/app-toast-store";
+import { pushAppErrorToast, useAppToastStore } from "@/lib/app-toast-store";
 import { supabase } from "@/lib/supabase";
 import { formatDateOnlyVi } from "@/lib/timeline";
 
@@ -177,11 +178,10 @@ export default function BacklogPageContent() {
         })),
       );
     } catch (loadError) {
-      pushToast({
-        title: "Không thể tải backlog",
-        body: loadError instanceof Error ? loadError.message : "Vui lòng thử lại.",
-        href: null,
-      });
+      pushAppErrorToast(
+        loadError instanceof Error ? loadError.message : "Vui lòng thử lại.",
+        "Không thể tải backlog",
+      );
     } finally {
       setIsLoading(false);
     }
@@ -223,11 +223,7 @@ export default function BacklogPageContent() {
   const createBacklogTask = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!name.trim()) {
-      pushToast({
-        title: "Thiếu tên task",
-        body: "Nhập tên task trước khi tạo backlog.",
-        href: null,
-      });
+      pushAppErrorToast("Nhập tên task trước khi tạo backlog.", "Thiếu tên task");
       return;
     }
     setIsCreating(true);
@@ -244,11 +240,10 @@ export default function BacklogPageContent() {
       pushToast({ title: "Đã tạo task", body: "Task đã được thêm vào backlog.", href: null });
       await loadBacklog();
     } catch (createError) {
-      pushToast({
-        title: "Không thể tạo task",
-        body: createError instanceof Error ? createError.message : "Vui lòng thử lại.",
-        href: null,
-      });
+      pushAppErrorToast(
+        createError instanceof Error ? createError.message : "Vui lòng thử lại.",
+        "Không thể tạo task",
+      );
     } finally {
       setIsCreating(false);
     }
@@ -278,11 +273,10 @@ export default function BacklogPageContent() {
       });
       await loadBacklog();
     } catch (scheduleError) {
-      pushToast({
-        title: "Không thể cập nhật backlog",
-        body: scheduleError instanceof Error ? scheduleError.message : "Vui lòng thử lại.",
-        href: null,
-      });
+      pushAppErrorToast(
+        scheduleError instanceof Error ? scheduleError.message : "Vui lòng thử lại.",
+        "Không thể cập nhật backlog",
+      );
     } finally {
       setSavingTaskId(null);
     }
@@ -301,9 +295,15 @@ export default function BacklogPageContent() {
               </div>
             ) : null}
             {!access.isLoading && !canManageBacklog ? (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-                Chỉ Director hoặc Leader mới có quyền quản lý backlog.
-              </div>
+              <>
+                <AppErrorToast
+                  message="Chỉ Director hoặc Leader mới có quyền quản lý backlog."
+                  title="Không có quyền quản lý backlog"
+                />
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
+                  Trang backlog hiện chỉ dành cho Director hoặc Leader.
+                </div>
+              </>
             ) : null}
             {!access.isLoading && canManageBacklog ? (
               <>

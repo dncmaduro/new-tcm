@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { AppErrorToast } from "@/components/app-error-toast";
 import {
   canManageTimeRequestProfile,
   resolveCurrentViewerProfileId,
@@ -19,7 +20,7 @@ type TimeRequestLookupRow = {
 export default function SharedTimeRequestEntryPage() {
   const params = useParams<{ requestId: string }>();
   const router = useRouter();
-  const [message, setMessage] = useState("Đang mở yêu cầu...");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let isActive = true;
@@ -90,7 +91,7 @@ export default function SharedTimeRequestEntryPage() {
           return;
         }
 
-        setMessage(error instanceof Error ? error.message : "Không thể mở yêu cầu thời gian.");
+        setError(error instanceof Error ? error.message : "Không thể mở yêu cầu thời gian.");
       }
     };
 
@@ -104,8 +105,11 @@ export default function SharedTimeRequestEntryPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#f3f5fa] px-4 text-slate-900">
       <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white px-6 py-8 text-center shadow-sm">
+        {error ? <AppErrorToast message={error} title="Không thể mở yêu cầu thời gian" /> : null}
         <h1 className="text-lg font-semibold text-slate-900">Yêu cầu thời gian</h1>
-        <p className="mt-3 text-sm leading-6 text-slate-500">{message}</p>
+        <p className="mt-3 text-sm leading-6 text-slate-500">
+          {error ? "Hãy quay lại trang trước và thử lại." : "Đang mở yêu cầu..."}
+        </p>
       </div>
     </div>
   );

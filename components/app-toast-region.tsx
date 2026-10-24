@@ -25,7 +25,17 @@ export function AppToastRegion() {
           )}
         >
           <div className="flex items-start gap-3 px-4 py-3">
-            <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-blue-600" aria-hidden="true" />
+            <span
+              className={cn(
+                "mt-1 h-2.5 w-2.5 shrink-0 rounded-full",
+                toast.tone === "error"
+                  ? "bg-rose-500"
+                  : toast.tone === "success"
+                    ? "bg-emerald-500"
+                    : "bg-blue-600",
+              )}
+              aria-hidden="true"
+            />
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-slate-950">{toast.title}</p>
               {toast.body ? (

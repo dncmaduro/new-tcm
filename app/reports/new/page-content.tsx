@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useLeaveFormConfirm } from "@/components/use-leave-form-confirm";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { Button } from "@/components/ui/button";
@@ -295,9 +296,7 @@ export default function CreatePerformanceReportPage() {
                 ) : (
                   <>
                     {error ? (
-                      <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                        {error}
-                      </div>
+                      <AppErrorToast message={error} title="Không thể tạo báo cáo" />
                     ) : null}
 
                     {duplicateReport ? (

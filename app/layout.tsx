@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-import { Geist_Mono, Quicksand } from "next/font/google";
+import { Be_Vietnam_Pro, Geist_Mono } from "next/font/google";
 import "@mantine/core/styles.css";
 import { Providers } from "@/components/providers";
 import { getSiteMetadata } from "@/lib/seo";
 import "./globals.css";
 
-const appSans = Quicksand({
+const appSans = Be_Vietnam_Pro({
   variable: "--font-app-sans",
   subsets: ["vietnamese"],
   weight: ["400", "500", "600", "700"],

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { Buffer } from "node:buffer";
 
 import { isAttendanceExportAdminEmail } from "@/lib/attendance-export-access";
+import { getAuthEmailsByUserIds } from "@/lib/auth-user-email";
 import { buildAttendanceWorkbookBuffer, type AttendanceExportProfile } from "@/lib/attendance-export-workbook";
 import { sendAttendanceWorkbookEmail, assertAttendanceMailConfigured } from "@/lib/attendance-export-mail";
 import {
@@ -102,7 +103,7 @@ export async function POST(request: Request) {
     }
     const { data: profileRows, error: profileError } = await serviceRoleClient
       .from("profiles")
-      .select("id,name,email")
+      .select("id,user_id,name")
       .in("id", requestedProfileIds);
     if (profileError) {
       throw profileError;
@@ -111,12 +112,17 @@ export async function POST(request: Request) {
     const profileById = new Map(
       (profileRows ?? []).map((profile) => [String(profile.id), profile]),
     );
+    const authEmailByUserId = await getAuthEmailsByUserIds(
+      serviceRoleClient,
+      (profileRows ?? []).map((profile) => profile.user_id),
+    );
     const results = [];
 
     for (const profile of profiles) {
       const databaseProfile = profileById.get(profile.id);
       const recipientName = databaseProfile?.name?.trim() || profile.name;
-      const recipientEmail = databaseProfile?.email?.trim() || "";
+      const recipientEmail =
+        authEmailByUserId.get(databaseProfile?.user_id ?? "") || "";
       if (!databaseProfile || !recipientEmail) {
         results.push({
           profileId: profile.id,

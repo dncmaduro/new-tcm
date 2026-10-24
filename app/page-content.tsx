@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { AppBrandMark } from "@/components/app-brand-mark";
 import { supabase } from "@/lib/supabase";
 
@@ -17,17 +18,6 @@ type LoginResponse = {
     refresh_token?: string;
   };
 };
-
-function AlertIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4 text-red-600" aria-hidden="true">
-      <path
-        d="M12 3a9 9 0 100 18 9 9 0 000-18zm1 12h-2v-2h2v2zm0-4h-2V7h2v4z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
 
 export default function Home() {
   const router = useRouter();
@@ -106,10 +96,7 @@ export default function Home() {
         <section className="rounded-2xl border border-slate-200 bg-white/95 p-7 shadow-[0_14px_36px_-24px_rgba(15,23,42,0.55)] backdrop-blur">
           <form className="space-y-4" onSubmit={handleSubmit}>
             {error ? (
-              <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 animate-[panel-in_220ms_ease-out]">
-                <AlertIcon />
-                <p>{error}</p>
-              </div>
+              <AppErrorToast message={error} title="Đăng nhập thất bại" />
             ) : null}
 
             <div className="space-y-2">

@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Check } from "lucide-react";
 import { FormEvent, Suspense, type ReactNode, useEffect, useMemo, useState } from "react";
 import { useLeaveFormConfirm } from "@/components/use-leave-form-confirm";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
@@ -1127,9 +1128,10 @@ function NewTaskPageContent() {
               ) : null}
 
               {!isLoadingFormData && hasContextLookupError ? (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                  Không tìm thấy dữ liệu đã chọn.
-                </div>
+                <AppErrorToast
+                  message="Không tìm thấy dữ liệu đã chọn."
+                  title="Dữ liệu tạo task không hợp lệ"
+                />
               ) : null}
 
               {isCheckingPermission ? (
@@ -1139,17 +1141,13 @@ function NewTaskPageContent() {
               ) : null}
 
               {!isCheckingPermission && permissionError ? (
-                <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                  {permissionError}
-                </div>
+                <AppErrorToast message={permissionError} title="Không có quyền tạo task" />
               ) : null}
 
               {!isCheckingPermission && canCreateTask ? (
                 <form className="space-y-5" onSubmit={handleSubmit}>
                   {dataLoadError ? (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                      {dataLoadError}
-                    </div>
+                    <AppErrorToast message={dataLoadError} title="Không tải được dữ liệu tạo task" />
                   ) : null}
 
                   {prefillWarning ? (
@@ -1159,9 +1157,7 @@ function NewTaskPageContent() {
                   ) : null}
 
                   {submitError ? (
-                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                      {submitError}
-                    </div>
+                    <AppErrorToast message={submitError} title="Không thể tạo task" />
                   ) : null}
 
                   {submitSuccess ? (
@@ -1503,7 +1499,7 @@ function NewTaskPageContent() {
                     </div>
 
                     {taskTimelineInputError ? (
-                      <p className="-mt-1 text-xs text-rose-600">{taskTimelineInputError}</p>
+                      <AppErrorToast message={taskTimelineInputError} title="Dữ liệu timeline chưa hợp lệ" />
                     ) : null}
 
                     {!taskTimelineInputError && taskTimelineAlignmentWarning ? (

@@ -7,6 +7,7 @@ export type AppToast = {
   title: string;
   body: string | null;
   href: string | null;
+  tone?: "info" | "success" | "error";
 };
 
 type AppToastStore = {
@@ -20,20 +21,37 @@ const AUTO_DISMISS_MS = 5000;
 export const useAppToastStore = create<AppToastStore>((set) => ({
   toasts: [],
   pushToast: (toast) => {
+    const normalizedBody = toast.body?.trim() || null;
     const id =
       typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    let duplicateId: string | null = null;
 
-    set((state) => ({
-      toasts: [
-        {
-          id,
-          ...toast,
-        },
-        ...state.toasts,
-      ].slice(0, 4),
-    }));
+    set((state) => {
+      const duplicate = state.toasts.find(
+        (item) => item.title === toast.title && item.body === normalizedBody,
+      );
+      if (duplicate) {
+        duplicateId = duplicate.id;
+        return state;
+      }
+
+      return {
+        toasts: [
+          {
+            id,
+            ...toast,
+            body: normalizedBody,
+          },
+          ...state.toasts,
+        ].slice(0, 4),
+      };
+    });
+
+    if (duplicateId) {
+      return duplicateId;
+    }
 
     window.setTimeout(() => {
       set((state) => ({
@@ -49,3 +67,12 @@ export const useAppToastStore = create<AppToastStore>((set) => ({
     }));
   },
 }));
+
+export function pushAppErrorToast(body: string, title = "Có lỗi xảy ra") {
+  return useAppToastStore.getState().pushToast({
+    title,
+    body,
+    href: null,
+    tone: "error",
+  });
+}

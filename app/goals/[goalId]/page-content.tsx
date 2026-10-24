@@ -5,6 +5,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { ActivityHistoryDialog } from "@/components/activity-history-dialog";
 import {
@@ -29,6 +30,7 @@ import {
   type KeyResultTypeValue,
 } from "@/lib/constants/key-results";
 import { formatDateTimeDdMmYyyy } from "@/lib/date-format";
+import { pushAppErrorToast } from "@/lib/app-toast-store";
 import {
   buildGoalProgressMap,
   buildGoalDepartmentPerformanceMap,
@@ -819,7 +821,7 @@ function GoalDetailPageContent() {
       .eq("goal_id", goal.id);
 
     if (keyResultsError) {
-      window.alert(keyResultsError.message || "Không thể tải danh sách KR để xóa goal.");
+      pushAppErrorToast(keyResultsError.message || "Không thể tải danh sách KR để xóa goal.");
       setIsDeletingGoal(false);
       return;
     }
@@ -833,7 +835,7 @@ function GoalDetailPageContent() {
         .in("support_key_result_id", keyResultIds);
 
       if (deleteOutboundSupportLinksError) {
-        window.alert(
+        pushAppErrorToast(
           deleteOutboundSupportLinksError.message ||
             "Không thể xóa các liên kết hỗ trợ outbound của goal.",
         );
@@ -847,7 +849,7 @@ function GoalDetailPageContent() {
         .in("target_key_result_id", keyResultIds);
 
       if (deleteInboundSupportLinksError) {
-        window.alert(
+        pushAppErrorToast(
           deleteInboundSupportLinksError.message ||
             "Không thể xóa các liên kết hỗ trợ inbound của goal.",
         );
@@ -861,7 +863,7 @@ function GoalDetailPageContent() {
         .in("key_result_id", keyResultIds);
 
       if (deleteTasksError) {
-        window.alert(deleteTasksError.message || "Không thể xóa task thuộc goal.");
+        pushAppErrorToast(deleteTasksError.message || "Không thể xóa task thuộc goal.");
         setIsDeletingGoal(false);
         return;
       }
@@ -873,7 +875,7 @@ function GoalDetailPageContent() {
       .eq("goal_id", goal.id);
 
     if (deleteGoalDepartmentsError) {
-      window.alert(
+      pushAppErrorToast(
         deleteGoalDepartmentsError.message || "Không thể xóa phòng ban tham gia của goal.",
       );
       setIsDeletingGoal(false);
@@ -886,7 +888,7 @@ function GoalDetailPageContent() {
       .eq("goal_id", goal.id);
 
     if (deleteGoalOwnersError) {
-      window.alert(deleteGoalOwnersError.message || "Không thể xóa người phụ trách của goal.");
+      pushAppErrorToast(deleteGoalOwnersError.message || "Không thể xóa người phụ trách của goal.");
       setIsDeletingGoal(false);
       return;
     }
@@ -898,7 +900,7 @@ function GoalDetailPageContent() {
         .in("id", keyResultIds);
 
       if (deleteKeyResultsError) {
-        window.alert(deleteKeyResultsError.message || "Không thể xóa KR của goal.");
+        pushAppErrorToast(deleteKeyResultsError.message || "Không thể xóa KR của goal.");
         setIsDeletingGoal(false);
         return;
       }
@@ -907,7 +909,7 @@ function GoalDetailPageContent() {
     const { error: deleteGoalError } = await supabase.from("goals").delete().eq("id", goal.id);
 
     if (deleteGoalError) {
-      window.alert(deleteGoalError.message || "Không thể xóa goal.");
+      pushAppErrorToast(deleteGoalError.message || "Không thể xóa goal.");
       setIsDeletingGoal(false);
       return;
     }
@@ -950,9 +952,7 @@ function GoalDetailPageContent() {
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 lg:px-6">
             {!hasValidGoalId ? (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-5 text-sm text-rose-700">
-                Thiếu mã goal.
-              </div>
+              <AppErrorToast message="Thiếu mã goal." title="Liên kết goal không hợp lệ" />
             ) : null}
 
             {hasValidGoalId && isLoading ? (
@@ -962,9 +962,7 @@ function GoalDetailPageContent() {
             ) : null}
 
             {hasValidGoalId && !isLoading && error ? (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-5 text-sm text-rose-700">
-                {error}
-              </div>
+              <AppErrorToast message={error} title="Không tải được goal" />
             ) : null}
 
             {hasValidGoalId && !isLoading && !error && goal ? (
@@ -1179,9 +1177,10 @@ function GoalDetailPageContent() {
                       ) : null}
 
                       {keyResultLoadError ? (
-                        <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                          {keyResultLoadError}
-                        </p>
+                        <AppErrorToast
+                          message={keyResultLoadError}
+                          title="Không tải được key result"
+                        />
                       ) : null}
 
                       {!keyResultLoadError && keyResults.length === 0 ? (
@@ -1363,9 +1362,10 @@ function GoalDetailPageContent() {
                       ) : null}
 
                       {relatedDepartmentLoadError ? (
-                        <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                          {relatedDepartmentLoadError}
-                        </p>
+                        <AppErrorToast
+                          message={relatedDepartmentLoadError}
+                          title="Không tải được phòng ban liên quan"
+                        />
                       ) : null}
 
                       {departmentPerformanceItems.length > 0 ? (
@@ -1605,9 +1605,7 @@ function GoalDetailPageContent() {
 
                   <div className="space-y-5 px-5 py-5">
                     {modalEditError ? (
-                      <p className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                        {modalEditError}
-                      </p>
+                      <AppErrorToast message={modalEditError} title="Không thể cập nhật KR" />
                     ) : null}
 
                     <div className="grid gap-4 lg:grid-cols-2">

@@ -3,6 +3,7 @@
 import { type ReactNode, useState } from "react";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { AppErrorToast } from "@/components/app-error-toast";
 import {
   DepartmentAnalyticsSection,
   DepartmentGoalsSection,
@@ -112,13 +113,18 @@ export default function DepartmentPerformancePage() {
             ) : null}
 
             {!isLoadingPermission && !canManage ? (
-              <section className="rounded-3xl border border-rose-200 bg-rose-50 px-6 py-8">
-                <h2 className="text-xl font-semibold text-rose-900">Bạn không có quyền truy cập trang này.</h2>
-                <p className="mt-2 text-sm leading-6 text-rose-700">
+              <>
+                <AppErrorToast
+                  message={permissionError ?? "Bạn không có quyền truy cập hiệu suất phòng ban."}
+                  title="Không có quyền xem hiệu suất phòng ban"
+                />
+                <section className="rounded-3xl border border-slate-200 bg-white px-6 py-8">
+                <h2 className="text-xl font-semibold text-slate-900">Hiệu suất phòng ban chưa khả dụng.</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
                   Trang hiệu suất phòng ban chỉ dành cho người có quyền quản lý tương ứng để theo dõi goal, KR và phân tích đóng góp theo phòng ban.
                 </p>
-                {permissionError ? <p className="mt-2 text-sm text-rose-600">{permissionError}</p> : null}
-              </section>
+                </section>
+              </>
             ) : null}
 
             {!isLoadingPermission && canManage ? (
@@ -224,9 +230,7 @@ export default function DepartmentPerformancePage() {
                 </section>
 
                 {error ? (
-                  <section className="rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm leading-6 text-rose-700">
-                    {error}
-                  </section>
+                  <AppErrorToast message={error} title="Không tải được dữ liệu hiệu suất" />
                 ) : null}
 
                 <DepartmentSummaryCards summary={summary} loading={isLoading} />

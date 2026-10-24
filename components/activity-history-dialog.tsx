@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AppErrorToast } from "@/components/app-error-toast";
 import {
   Dialog,
   DialogContent,
@@ -183,7 +184,7 @@ export function ActivityHistoryDialog({
           ) : null}
 
           {!isLoading && error ? (
-            <div className="px-4 py-5 text-sm text-rose-700">{error}</div>
+            <AppErrorToast message={error} title="Không tải được lịch sử hoạt động" />
           ) : null}
 
           {!isLoading && !error && logs.length === 0 ? (

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Eye, Link2, Trash2 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { AppErrorToast } from "@/components/app-error-toast";
 import {
   getLeaveRequestSubtypeDetailLabel,
   getEarlyLeaveTimeValueFromMinutes,
@@ -581,7 +582,7 @@ export function TimeRequestManagementOverview({
       </div>
 
       {openRequestError ? (
-        <div className="border-b border-rose-100 bg-rose-50 px-5 py-3 text-sm text-rose-700">{openRequestError}</div>
+        <AppErrorToast message={openRequestError} title="Không thể mở yêu cầu" />
       ) : null}
       {requestActionSuccess ? (
         <div className="border-b border-emerald-100 bg-emerald-50 px-5 py-3 text-sm text-emerald-700">
@@ -589,9 +590,7 @@ export function TimeRequestManagementOverview({
         </div>
       ) : null}
       {requestActionError ? (
-        <div className="border-b border-rose-100 bg-rose-50 px-5 py-3 text-sm text-rose-700">
-          {requestActionError}
-        </div>
+        <AppErrorToast message={requestActionError} title="Không thể xử lý yêu cầu" />
       ) : null}
 
       <div className="overflow-x-auto">
@@ -614,11 +613,17 @@ export function TimeRequestManagementOverview({
                 </td>
               </tr>
             ) : profileError || requestsError ? (
-              <tr className="border-t border-slate-100">
-                <td colSpan={6} className="px-5 py-8 text-center text-sm text-rose-600">
-                  {profileError || requestsError}
-                </td>
-              </tr>
+              <>
+                <AppErrorToast
+                  message={profileError || requestsError}
+                  title="Không tải được yêu cầu điều chỉnh công"
+                />
+                <tr className="border-t border-slate-100">
+                  <td colSpan={6} className="px-5 py-8 text-center text-sm text-slate-500">
+                    Chưa có dữ liệu yêu cầu điều chỉnh công.
+                  </td>
+                </tr>
+              </>
             ) : filteredCorrectionRequests.length === 0 ? (
               <tr className="border-t border-slate-100">
                 <td colSpan={6} className="px-5 py-8 text-center text-sm text-slate-500">

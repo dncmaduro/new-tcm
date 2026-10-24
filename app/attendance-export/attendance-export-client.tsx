@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ManagedAttendancePageContent } from "@/app/attendance-management/page-content";
+import {
+  ManagedAttendancePageContent,
+  type ViewableProfile,
+} from "@/app/attendance-management/page-content";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { fetchAttendanceExportAccess } from "@/lib/attendance-export-client-access";
@@ -41,6 +45,12 @@ type AttendanceSendResponse = {
   sentCount: number;
   failedCount: number;
   results: AttendanceSendResult[];
+};
+
+type AttendanceExportChoice = {
+  selectedProfile: ViewableProfile;
+  profiles: ViewableProfile[];
+  selectedMonth: Date;
 };
 
 async function getAccessToken() {
@@ -112,7 +122,115 @@ function formatPreparedTime(value: string) {
   }).format(parsed);
 }
 
-function PreparedAttendancePanel({
+function AttendanceExportChoiceContent({
+  choice,
+  isPreparing,
+  error,
+  onSelect,
+  onClose,
+}: {
+  choice: AttendanceExportChoice;
+  isPreparing: boolean;
+  error: string | null;
+  onSelect: (profiles: ViewableProfile[], selectedMonth: Date) => void;
+  onClose: () => void;
+}) {
+  return (
+    <section className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
+      <h2 className="text-2xl font-semibold text-slate-900">Chọn phạm vi xuất file</h2>
+      <p className="mt-2 text-sm text-slate-500">
+        Tháng {String(choice.selectedMonth.getMonth() + 1).padStart(2, "0")}/
+        {choice.selectedMonth.getFullYear()}
+      </p>
+
+      <div className="mt-6 grid gap-3">
+        <button
+          type="button"
+          onClick={() => onSelect([choice.selectedProfile], choice.selectedMonth)}
+          disabled={isPreparing}
+          className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-left hover:border-blue-300 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <span className="block text-sm font-semibold text-slate-900">
+            Gửi file chấm công cho {choice.selectedProfile.name}
+          </span>
+          <span className="mt-1 block text-xs text-slate-500">
+            Chỉ xuất file của nhân viên đang xem.
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onSelect(choice.profiles, choice.selectedMonth)}
+          disabled={isPreparing}
+          className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-4 text-left hover:border-blue-400 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <span className="block text-sm font-semibold text-blue-800">
+            Gửi file chấm công cho tất cả nhân viên
+          </span>
+          <span className="mt-1 block text-xs text-blue-700/75">
+            Xuất riêng từng file cho {choice.profiles.length} nhân viên.
+          </span>
+        </button>
+      </div>
+
+      {error ? (
+        <AppErrorToast message={error} title="Không thể tạo file chấm công" />
+      ) : null}
+
+      <div className="mt-6 flex justify-end">
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={isPreparing}
+          className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          Hủy
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function PreparingAttendanceContent({ profileCount }: { profileCount: number }) {
+  return (
+    <section
+      className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl"
+      aria-live="polite"
+    >
+      <div className="flex items-start gap-4">
+        <div className="mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-600">
+          <svg
+            className="h-5 w-5 animate-spin"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle className="opacity-25" cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" />
+            <path
+              className="opacity-90"
+              d="M21 12a9 9 0 0 0-9-9"
+              stroke="currentColor"
+              strokeWidth="3"
+              strokeLinecap="round"
+            />
+          </svg>
+        </div>
+        <div>
+          <h2 className="text-2xl font-semibold text-slate-900">Đang tạo file chấm công</h2>
+          <p className="mt-2 text-sm text-slate-500">
+            Đang tạo {profileCount} file riêng cho nhân viên. Vui lòng chờ một chút.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-6 space-y-3" aria-hidden="true">
+        <div className="h-12 animate-pulse rounded-2xl bg-slate-100" />
+        <div className="h-12 animate-pulse rounded-2xl bg-slate-100" />
+      </div>
+    </section>
+  );
+}
+
+function PreparedAttendanceContent({
   batch,
   isSending,
   sendResults,
@@ -131,19 +249,19 @@ function PreparedAttendancePanel({
 }) {
   const readyCount = batch.files.filter((file) => file.status === "ready").length;
   const sentCount = sendResults?.filter((item) => item.status === "sent").length ?? 0;
+  const sendButtonLabel =
+    batch.profiles.length > 1
+      ? `Gửi file chấm công cho tất cả nhân viên (${readyCount})`
+      : `Gửi file chấm công (${readyCount})`;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
       <section className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
         <div className="border-b border-slate-100 px-6 py-5">
-          <p className="text-xs font-bold uppercase tracking-[0.12em] text-blue-600">
-            Bộ file chấm công đã chuẩn bị
-          </p>
-          <h2 className="mt-1 text-2xl font-semibold text-slate-900">
+          <h2 className="text-2xl font-semibold text-slate-900">
             Tháng {batch.selectedMonth.slice(5, 7)}/{batch.selectedMonth.slice(0, 4)}
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            Đã chuẩn bị {batch.files.length} file lúc {formatPreparedTime(batch.preparedAt)}.
+            Đã tạo {batch.files.length} file lúc {formatPreparedTime(batch.preparedAt)}.
           </p>
         </div>
 
@@ -156,7 +274,7 @@ function PreparedAttendancePanel({
                 : sendResult.error || "Gửi thất bại"
               : file.status === "ready"
                 ? `Sẵn sàng${file.email ? ` · ${file.email}` : ""}`
-                : file.error || "Không thể chuẩn bị file";
+                : file.error || "Không thể tạo file";
 
             return (
               <div
@@ -181,9 +299,7 @@ function PreparedAttendancePanel({
           })}
 
           {error ? (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              {error}
-            </div>
+            <AppErrorToast message={error} title="Không thể gửi file chấm công" />
           ) : null}
 
           {sendResults ? (
@@ -207,7 +323,7 @@ function PreparedAttendancePanel({
             disabled={isSending}
             className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Chuẩn bị lại
+            Tạo lại file
           </button>
           {!sendResults ? (
             <button
@@ -216,16 +332,67 @@ function PreparedAttendancePanel({
               disabled={isSending || readyCount === 0}
               className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
             >
-              {isSending ? "Đang gửi..." : `Gửi bảng công (${readyCount})`}
+              {isSending ? "Đang gửi..." : sendButtonLabel}
             </button>
           ) : null}
         </div>
       </section>
+  );
+}
+
+function AttendanceExportModal({
+  choice,
+  preparedBatch,
+  preparingProfileCount,
+  isPreparing,
+  isSending,
+  sendResults,
+  error,
+  onSelect,
+  onSend,
+  onReprepare,
+  onClose,
+}: {
+  choice: AttendanceExportChoice;
+  preparedBatch: PreparedAttendanceBatch | null;
+  preparingProfileCount: number;
+  isPreparing: boolean;
+  isSending: boolean;
+  sendResults: AttendanceSendResult[] | null;
+  error: string | null;
+  onSelect: (profiles: ViewableProfile[], selectedMonth: Date) => void;
+  onSend: () => void;
+  onReprepare: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+      {isPreparing ? (
+        <PreparingAttendanceContent profileCount={preparingProfileCount} />
+      ) : preparedBatch ? (
+        <PreparedAttendanceContent
+          batch={preparedBatch}
+          isSending={isSending}
+          sendResults={sendResults}
+          error={error}
+          onSend={onSend}
+          onReprepare={onReprepare}
+          onClose={onClose}
+        />
+      ) : (
+        <AttendanceExportChoiceContent
+          choice={choice}
+          isPreparing={isPreparing}
+          error={error}
+          onSelect={onSelect}
+          onClose={onClose}
+        />
+      )}
     </div>
   );
 }
 
-function ExportAccessState({ message }: { message: string }) {
+function ExportAccessState({ message, isError = false }: { message: string; isError?: boolean }) {
   return (
     <div className="h-screen overflow-hidden bg-[#f3f5fa] text-slate-900">
       <div className="flex h-full w-full">
@@ -233,8 +400,11 @@ function ExportAccessState({ message }: { message: string }) {
         <div className="flex h-full min-h-0 w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
           <WorkspacePageHeader title="Xuất chấm công" items={[{ label: "Xuất chấm công" }]} />
           <main className="min-h-0 flex-1 overflow-hidden px-4 py-5 lg:px-7">
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
-              {message}
+            {isError ? (
+              <AppErrorToast message={message} title="Không thể mở trang xuất chấm công" />
+            ) : null}
+            <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-600">
+              {isError ? "Trang xuất chấm công chưa sẵn sàng." : message}
             </div>
           </main>
         </div>
@@ -252,6 +422,8 @@ export default function AttendanceExportClient() {
   const [isSending, setIsSending] = useState(false);
   const [sendResults, setSendResults] = useState<AttendanceSendResult[] | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [exportChoice, setExportChoice] = useState<AttendanceExportChoice | null>(null);
+  const [preparingProfileCount, setPreparingProfileCount] = useState(0);
 
   useEffect(() => {
     let isActive = true;
@@ -285,6 +457,7 @@ export default function AttendanceExportClient() {
       return;
     }
 
+    setPreparingProfileCount(params.profiles.length);
     setIsPreparing(true);
     setExportError(null);
     setSendResults(null);
@@ -293,7 +466,7 @@ export default function AttendanceExportClient() {
       const batch = await prepareAttendanceExport(params);
       setPreparedBatch(batch);
     } catch (error) {
-      setExportError(error instanceof Error ? error.message : "Không thể chuẩn bị file chấm công.");
+      setExportError(error instanceof Error ? error.message : "Không thể tạo file chấm công.");
     } finally {
       setIsPreparing(false);
     }
@@ -327,8 +500,23 @@ export default function AttendanceExportClient() {
     });
   };
 
+  const handleExportChoice = (profiles: ViewableProfile[], selectedMonth: Date) => {
+    void prepareBatch({ profiles, selectedMonth });
+  };
+
+  const closeExportModal = () => {
+    if (isPreparing) {
+      return;
+    }
+
+    setExportChoice(null);
+    setPreparedBatch(null);
+    setSendResults(null);
+    setExportError(null);
+  };
+
   if (status === "misconfigured") {
-    return <ExportAccessState message="Chưa cấu hình `ADMIN_EMAILS` trong môi trường." />;
+    return <ExportAccessState message="Chưa cấu hình `ADMIN_EMAILS` trong môi trường." isError />;
   }
 
   if (status === "loading") {
@@ -336,7 +524,7 @@ export default function AttendanceExportClient() {
   }
 
   if (status === "denied") {
-    return <ExportAccessState message="Bạn không có quyền truy cập trang xuất chấm công." />;
+    return <ExportAccessState message="Bạn không có quyền truy cập trang xuất chấm công." isError />;
   }
 
   return (
@@ -345,39 +533,25 @@ export default function AttendanceExportClient() {
         pageTitle="Xuất chấm công"
         breadcrumbLabel="Xuất chấm công"
         activeSidebarKey="attendanceExport"
-        showExportButton
-        exportButtonLabel={isPreparing ? "Đang chuẩn bị..." : "Chuẩn bị file"}
-        showExportAllButton
-        exportAllButtonLabel={isPreparing ? "Đang chuẩn bị..." : "Chuẩn bị file tất cả"}
+        showExportChoiceButton
+        exportChoiceButtonLabel="Xuất file"
         forceAdminAccess
-        onTimesheetExportRequest={(params) =>
-          prepareBatch({
-            profiles: [params.selectedProfile],
-            selectedMonth: params.selectedMonth,
-          })
-        }
-        onExportAllProfiles={(params) =>
-          prepareBatch({ profiles: params.profiles, selectedMonth: params.selectedMonth })
-        }
+        onExportChoiceRequest={setExportChoice}
       />
-      {preparedBatch ? (
-        <PreparedAttendancePanel
-          batch={preparedBatch}
+      {exportChoice ? (
+        <AttendanceExportModal
+          choice={exportChoice}
+          preparedBatch={preparedBatch}
+          preparingProfileCount={preparingProfileCount}
+          isPreparing={isPreparing}
           isSending={isSending}
           sendResults={sendResults}
           error={exportError}
+          onSelect={handleExportChoice}
           onSend={() => void sendBatch()}
           onReprepare={reprepareBatch}
-          onClose={() => {
-            setPreparedBatch(null);
-            setSendResults(null);
-            setExportError(null);
-          }}
+          onClose={closeExportModal}
         />
-      ) : exportError ? (
-        <div className="fixed bottom-5 right-5 z-50 max-w-md rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 shadow-lg">
-          {exportError}
-        </div>
       ) : null}
     </>
   );

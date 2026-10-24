@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { type ReactNode } from "react";
+import { AppErrorToast } from "@/components/app-error-toast";
 import {
   formatDateShortVi,
   formatTimeVi,
@@ -70,7 +71,12 @@ function CardState({
   }
 
   if (error) {
-    return <div className="px-4 py-4 text-sm text-slate-500">Không tải được dữ liệu lúc này.</div>;
+    return (
+      <>
+        <AppErrorToast message={error} title="Không tải được dữ liệu dashboard" />
+        <div className="px-4 py-4 text-sm text-slate-500">Không tải được dữ liệu lúc này.</div>
+      </>
+    );
   }
 
   if (empty) {

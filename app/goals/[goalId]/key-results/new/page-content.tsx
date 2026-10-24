@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp, PencilLine, Trash2 } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { KeyResultContributionInfo } from "@/components/key-result-contribution-info";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { useLeaveFormConfirm } from "@/components/use-leave-form-confirm";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
@@ -1301,9 +1302,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
               ) : null}
 
               {!isLoading && loadError ? (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                  {loadError}
-                </div>
+                <AppErrorToast message={loadError} title="Không tải được dữ liệu KR" />
               ) : null}
 
               {isCheckingPermission ? (
@@ -1313,9 +1312,7 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
               ) : null}
 
               {!isCheckingPermission && permissionError ? (
-                <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                  {permissionError}
-                </div>
+                <AppErrorToast message={permissionError} title="Không có quyền tạo KR" />
               ) : null}
 
               {!isLoading &&
@@ -1325,15 +1322,14 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
               canCreateKeyResult ? (
                 <form className="space-y-5" onSubmit={handleSubmit}>
                   {submitError ? (
-                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                      {submitError}
-                    </div>
+                    <AppErrorToast message={submitError} title="Không thể lưu KR" />
                   ) : null}
 
                   {!submitError && supportSyncError ? (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                      {supportSyncError}
-                    </div>
+                    <AppErrorToast
+                      message={supportSyncError}
+                      title="Chưa đồng bộ được liên kết hỗ trợ"
+                    />
                   ) : null}
 
                   <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
@@ -1529,9 +1525,10 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                       ) : null}
 
                       {supportTargetLoadError ? (
-                        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                          {supportTargetLoadError}
-                        </div>
+                        <AppErrorToast
+                          message={supportTargetLoadError}
+                          title="Không tải được KR liên kết"
+                        />
                       ) : null}
 
                       <div className="space-y-2.5">
@@ -1726,9 +1723,10 @@ function GoalKeyResultFormPageContent({ mode }: { mode: GoalKeyResultFormMode })
                     </div>
 
                     {!isDateRangeOrdered(form.startDate || null, form.endDate || null) ? (
-                      <p className="-mt-1 text-xs text-rose-600">
-                        Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.
-                      </p>
+                      <AppErrorToast
+                        message="Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu."
+                        title="Ngày KR chưa hợp lệ"
+                      />
                     ) : null}
 
                     <label className="block space-y-1.5">

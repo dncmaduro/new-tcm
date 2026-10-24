@@ -35,6 +35,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { pushAppErrorToast } from "@/lib/app-toast-store";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -331,7 +332,6 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
-  const [logoutError, setLogoutError] = useState<string | null>(null);
   const isCollapsed = useWorkspaceSidebarStore((state) => state.isCollapsed);
   const hydrateSidebarFromStorage = useWorkspaceSidebarStore((state) => state.hydrateFromStorage);
   const toggleSidebarCollapsed = useWorkspaceSidebarStore((state) => state.toggleCollapsed);
@@ -537,12 +537,11 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
 
   const handleLogout = async () => {
     setIsLoggingOut(true);
-    setLogoutError(null);
 
     try {
       const { error } = await supabase.auth.signOut();
       if (error) {
-        setLogoutError("Không thể đăng xuất lúc này. Vui lòng thử lại.");
+        pushAppErrorToast("Không thể đăng xuất lúc này. Vui lòng thử lại.", "Không thể đăng xuất");
         return;
       }
 
@@ -552,7 +551,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
       router.replace("/");
       router.refresh();
     } catch {
-      setLogoutError("Không thể đăng xuất lúc này. Vui lòng thử lại.");
+      pushAppErrorToast("Không thể đăng xuất lúc này. Vui lòng thử lại.", "Không thể đăng xuất");
     } finally {
       setIsLoggingOut(false);
     }
@@ -656,7 +655,6 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
             >
               {isLoggingOut ? "Đang đăng xuất..." : "Đăng xuất"}
             </button>
-            {logoutError ? <p className="text-xs text-rose-200">{logoutError}</p> : null}
           </div>
         </DialogContent>
       </Dialog>
@@ -783,7 +781,6 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
                 type="button"
                 onClick={() => {
                   setIsUserMenuOpen((prev) => !prev);
-                  setLogoutError(null);
                 }}
                 title={sidebarName}
                 className={`flex w-full items-center rounded-xl bg-[#0d234f] p-3 text-left transition hover:bg-[#12306b] ${
@@ -830,11 +827,6 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
                   >
                     {isLoggingOut ? "Đang đăng xuất..." : "Đăng xuất"}
                   </button>
-                  {logoutError ? (
-                    <p className="mt-1 rounded-lg border border-rose-300/30 bg-rose-500/10 px-2 py-1 text-xs text-rose-200">
-                      {logoutError}
-                    </p>
-                  ) : null}
                 </div>
               ) : null}
             </div>

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { cn } from "@/lib/utils";
 import {
   type PerformanceReportItemRow,
@@ -99,7 +100,12 @@ export function BlockState({
     return <div className="px-5 py-10 text-sm text-slate-700">Đang tải dữ liệu...</div>;
   }
   if (error) {
-    return <div className="px-5 py-10 text-sm text-rose-600">{error}</div>;
+    return (
+      <>
+        <AppErrorToast message={error} title="Không tải được dữ liệu báo cáo" />
+        <div className="px-5 py-10 text-sm text-slate-500">Dữ liệu chưa sẵn sàng.</div>
+      </>
+    );
   }
   if (empty) {
     return <div className="px-5 py-10 text-sm text-slate-700">{emptyText}</div>;

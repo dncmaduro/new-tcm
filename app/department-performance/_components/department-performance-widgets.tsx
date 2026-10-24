@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { type ReactNode, useMemo, useState } from "react";
 import { AlertTriangle, ChevronDown, Info, LineChart, Target } from "lucide-react";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -104,7 +105,12 @@ function BlockState({
     return <EmptyPanel text="Đang tải dữ liệu hiệu suất..." />;
   }
   if (error) {
-    return <EmptyPanel text={error} />;
+    return (
+      <>
+        <AppErrorToast message={error} title="Không tải được dữ liệu hiệu suất" />
+        <EmptyPanel text="Dữ liệu chưa sẵn sàng." />
+      </>
+    );
   }
   if (empty) {
     return <EmptyPanel text={emptyText} />;

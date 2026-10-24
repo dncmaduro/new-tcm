@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { Buffer } from "node:buffer";
 
 import { isAttendanceExportAdminEmail } from "@/lib/attendance-export-access";
+import { getAuthEmailsByUserIds } from "@/lib/auth-user-email";
 import { buildAttendanceWorkbookBuffer, type AttendanceExportProfile } from "@/lib/attendance-export-workbook";
 import {
   createServerSupabaseAuthClient,
@@ -90,7 +91,7 @@ export async function POST(request: Request) {
       );
     }
     if (!access.allowed) {
-      return NextResponse.json({ error: "Bạn không có quyền chuẩn bị bảng công." }, { status: 403 });
+      return NextResponse.json({ error: "Bạn không có quyền gửi file chấm công." }, { status: 403 });
     }
 
     const serviceRoleClient = createServerSupabaseServiceRoleClient();
@@ -100,7 +101,7 @@ export async function POST(request: Request) {
     }
     const { data: profileRows, error: profileError } = await serviceRoleClient
       .from("profiles")
-      .select("id,name,email")
+      .select("id,user_id,name")
       .in("id", requestedProfileIds);
     if (profileError) {
       throw profileError;
@@ -108,6 +109,10 @@ export async function POST(request: Request) {
 
     const profileById = new Map(
       (profileRows ?? []).map((profile) => [String(profile.id), profile]),
+    );
+    const authEmailByUserId = await getAuthEmailsByUserIds(
+      serviceRoleClient,
+      (profileRows ?? []).map((profile) => profile.user_id),
     );
     const files = [];
 
@@ -128,7 +133,7 @@ export async function POST(request: Request) {
       const exportProfile = {
         ...profile,
         name: databaseProfile.name?.trim() || profile.name,
-        email: databaseProfile.email?.trim() || null,
+        email: authEmailByUserId.get(databaseProfile.user_id ?? "") || null,
       } satisfies AttendanceExportProfile;
 
       try {
@@ -170,7 +175,7 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Không thể chuẩn bị file chấm công." },
+      { error: error instanceof Error ? error.message : "Không thể tạo file chấm công." },
       { status: 500 },
     );
   }

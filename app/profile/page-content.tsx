@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ChangeEvent, useEffect, useState } from "react";
 import Cropper, { Area } from "react-easy-crop";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { formatDateDdMmYyyy, formatDateTimeDdMmYyyy } from "@/lib/date-format";
@@ -521,9 +522,7 @@ export default function ProfilePage() {
             ) : null}
 
             {!isLoading && error ? (
-              <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                {error}
-              </div>
+              <AppErrorToast message={error} title="Không thể tải hồ sơ cá nhân" />
             ) : null}
 
             {!isLoading && notice ? (

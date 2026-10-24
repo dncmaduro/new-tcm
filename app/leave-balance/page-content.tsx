@@ -23,6 +23,7 @@ import { supabase } from "@/lib/supabase";
 import type { Database } from "@/supabase/cloud/database.types";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { AppErrorToast } from "@/components/app-error-toast";
 
 type LeaveBalanceRow = Database["public"]["Tables"]["leave_balances"]["Row"];
 
@@ -263,9 +264,7 @@ export default function LeaveBalancePageContent() {
 
           <main className="min-h-0 flex-1 px-4 py-5 lg:px-7">
             {!isLoading && error ? (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700">
-                {error}
-              </div>
+              <AppErrorToast message={error} title="Không tải được quỹ phép" />
             ) : null}
 
             {!isLoading && !error && !isTimekeepingEnabled ? (

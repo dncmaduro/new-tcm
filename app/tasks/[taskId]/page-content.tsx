@@ -2,6 +2,7 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { EmptyStateCompact, DetailPageHeader, SectionCard } from "@/components/detail-ui";
 import { TaskMetaSidebar } from "@/components/tasks/task-detail/task-meta-sidebar";
 import { TaskEvidenceSection } from "@/components/tasks/task-detail/task-evidence-section";
@@ -641,15 +642,11 @@ export default function TaskDetailPage() {
             ) : null}
 
             {!isLoading && loadError ? (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                {loadError}
-              </div>
+              <AppErrorToast message={loadError} title="Không tải được chi tiết task" />
             ) : null}
 
             {!isLoading && actionError ? (
-              <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                {actionError}
-              </div>
+              <AppErrorToast message={actionError} title="Không thể cập nhật task" />
             ) : null}
 
             {!isLoading && notice ? (

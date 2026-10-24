@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { TimesheetOverview } from "@/components/timesheet/timesheet-overview";
@@ -43,6 +44,13 @@ type ManagedAttendancePageContentProps = {
   showExportButton?: boolean;
   exportButtonLabel?: string;
   forceAdminAccess?: boolean;
+  showExportChoiceButton?: boolean;
+  exportChoiceButtonLabel?: string;
+  onExportChoiceRequest?: (params: {
+    selectedProfile: ViewableProfile;
+    profiles: ViewableProfile[];
+    selectedMonth: Date;
+  }) => Promise<void> | void;
   showExportAllButton?: boolean;
   exportAllButtonLabel?: string;
   onTimesheetExportRequest?: (params: {
@@ -146,6 +154,9 @@ export function ManagedAttendancePageContent({
   showExportButton = false,
   exportButtonLabel = "Xuất CSV",
   forceAdminAccess = false,
+  showExportChoiceButton = false,
+  exportChoiceButtonLabel = "Xuất file",
+  onExportChoiceRequest,
   showExportAllButton = false,
   exportAllButtonLabel = "Xuất tất cả nhân viên",
   onTimesheetExportRequest,
@@ -534,6 +545,30 @@ export function ManagedAttendancePageContent({
     }
   };
 
+  const handleExportChoice = async () => {
+    if (
+      isExportingAllProfiles ||
+      !onExportChoiceRequest ||
+      isLoadingProfiles ||
+      !selectedProfile ||
+      viewableProfiles.length === 0
+    ) {
+      return;
+    }
+
+    setIsExportingAllProfiles(true);
+
+    try {
+      await onExportChoiceRequest({
+        selectedProfile,
+        profiles: viewableProfiles,
+        selectedMonth: new Date(selectedMonth.getTime()),
+      });
+    } finally {
+      setIsExportingAllProfiles(false);
+    }
+  };
+
   return (
     <div className="h-screen overflow-hidden bg-[#f3f5fa] text-slate-900">
       <div className="flex h-full w-full">
@@ -550,15 +585,19 @@ export function ManagedAttendancePageContent({
             ) : null}
 
             {!workspaceAccess.isLoading && !canViewAttendanceManagement ? (
-              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
-                {permissionError}
-              </div>
+              <>
+                <AppErrorToast
+                  message={permissionError}
+                  title="Không có quyền xem quản lý chấm công"
+                />
+                <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-600">
+                  Bạn không có quyền xem quản lý chấm công trong phạm vi hiện tại.
+                </div>
+              </>
             ) : null}
 
             {!workspaceAccess.isLoading && loadError ? (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700">
-                {loadError}
-              </div>
+              <AppErrorToast message={loadError} title="Không tải được dữ liệu chấm công" />
             ) : null}
 
             {!workspaceAccess.isLoading &&
@@ -657,7 +696,22 @@ export function ManagedAttendancePageContent({
                             </h2>
                           </div>
                           <div className="flex flex-wrap items-center justify-end gap-2 text-xs">
-                            {showExportAllButton ? (
+                            {showExportChoiceButton ? (
+                              <button
+                                type="button"
+                                onClick={handleExportChoice}
+                                disabled={
+                                  isExportingAllProfiles ||
+                                  isLoadingProfiles ||
+                                  viewableProfiles.length === 0
+                                }
+                                className="rounded-full bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                              >
+                                {isExportingAllProfiles
+                                  ? "Đang mở..."
+                                  : exportChoiceButtonLabel}
+                              </button>
+                            ) : showExportAllButton ? (
                               <button
                                 type="button"
                                 onClick={handleExportAllProfiles}
@@ -669,7 +723,7 @@ export function ManagedAttendancePageContent({
                                 className="rounded-full bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
                               >
                                 {isExportingAllProfiles
-                                  ? "Đang chuẩn bị..."
+                                  ? "Đang tạo file..."
                                   : exportAllButtonLabel}
                               </button>
                             ) : null}

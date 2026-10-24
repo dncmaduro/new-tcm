@@ -2,12 +2,13 @@ import { NextResponse } from "next/server";
 
 import { isAttendanceExportAdminEmail } from "@/lib/attendance-export-access";
 import { collectAttendanceIds } from "@/lib/attendance";
+import { getAuthEmailsByUserIds } from "@/lib/auth-user-email";
 import { createServerSupabaseAuthClient, createServerSupabaseServiceRoleClient } from "@/lib/supabase-server";
 
 type ProfileRow = {
   id: string;
+  user_id: string | null;
   name: string | null;
-  email: string | null;
   attendance_id: number | null;
   is_timekeeping_enabled: boolean | null;
 };
@@ -104,7 +105,7 @@ export async function GET(request: Request) {
     ] = await Promise.all([
       serviceRoleClient
         .from("profiles")
-        .select("id,name,email,attendance_id,is_timekeeping_enabled")
+        .select("id,user_id,name,attendance_id,is_timekeeping_enabled")
         .order("name", { ascending: true }),
       serviceRoleClient.from("user_role_in_department").select("profile_id,department_id,role_id"),
       serviceRoleClient.from("roles").select("id,name"),
@@ -117,6 +118,10 @@ export async function GET(request: Request) {
     if (departmentsError) throw departmentsError;
 
     const profiles = (profilesData ?? []) as ProfileRow[];
+    const authEmailByUserId = await getAuthEmailsByUserIds(
+      serviceRoleClient,
+      profiles.map((profile) => profile.user_id),
+    );
     const profileIds = profiles.map((profile) => String(profile.id));
     const { data: attendanceLinksData, error: attendanceLinksError } =
       profileIds.length > 0
@@ -184,8 +189,8 @@ export async function GET(request: Request) {
 
         return {
           id: profileId,
-          name: profile.name?.trim() || profile.email?.trim() || "Không rõ",
-          email: profile.email?.trim() || null,
+          name: profile.name?.trim() || authEmailByUserId.get(profile.user_id ?? "") || "Không rõ",
+          email: authEmailByUserId.get(profile.user_id ?? "") || null,
           roleLabel: primaryAssignment.roleLabel,
           departmentLabel: primaryAssignment.departmentLabel,
           rawRolePriority: toRolePriority(primaryAssignment.roleLabel),

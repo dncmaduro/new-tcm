@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Building2, Info, Search } from "lucide-react";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
@@ -1499,9 +1500,7 @@ function DepartmentsPageContent() {
                 ) : null}
 
                 {!isLoading && loadError ? (
-                  <div className="rounded-[20px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                    {loadError}
-                  </div>
+                  <AppErrorToast message={loadError} title="Không tải được cơ cấu tổ chức" />
                 ) : null}
 
                 {!isLoading ? (

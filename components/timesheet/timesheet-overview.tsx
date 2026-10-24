@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ActionIcon, Tooltip } from "@mantine/core";
 import { FileText, Plus, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { AppErrorToast } from "@/components/app-error-toast";
 import {
   getLeaveRequestSubtypeLabel,
   getLeaveRequestSubtypeDetailLabel,
@@ -1301,9 +1302,10 @@ export function TimesheetOverview({
       </section>
 
       {profileError || attendanceError ? (
-        <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {profileError || attendanceError}
-        </div>
+        <AppErrorToast
+          message={profileError || attendanceError}
+          title="Không tải được dữ liệu chấm công"
+        />
       ) : null}
 
       <section className="mt-5 rounded-2xl border border-slate-200 bg-white">

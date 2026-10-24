@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { Pencil, Trash2 } from "lucide-react";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { Button } from "@/components/ui/button";
 import { formatDateTimeDdMmYyyy } from "@/lib/date-format";
 import { cn } from "@/lib/utils";
@@ -189,9 +190,7 @@ export function CommentItem({
             />
 
             {error ? (
-              <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                {error}
-              </div>
+              <AppErrorToast message={error} title="Không thể lưu bình luận" />
             ) : null}
 
             <div className="flex items-center gap-2">
@@ -215,9 +214,7 @@ export function CommentItem({
         ) : (
           <>
             {error ? (
-              <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                {error}
-              </div>
+              <AppErrorToast message={error} title="Không thể xử lý bình luận" />
             ) : null}
             <CommentRenderer bodyJson={comment.bodyJson} bodyText={comment.bodyText} />
           </>

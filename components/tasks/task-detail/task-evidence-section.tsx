@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { EmptyStateCompact, SectionCard } from "@/components/detail-ui";
 import { TASK_EVIDENCE_STORAGE_BUCKET } from "@/lib/constants/storage";
 import { supabase } from "@/lib/supabase";
@@ -440,9 +441,7 @@ export function TaskEvidenceSection({
     >
 
       {error ? (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {error}
-        </div>
+        <AppErrorToast message={error} title="Không thể xử lý minh chứng" />
       ) : null}
 
       {isLoading ? (

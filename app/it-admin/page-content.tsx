@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { supabase } from "@/lib/supabase";
@@ -375,16 +376,22 @@ export default function ITAdminPageContent() {
           {accessState === "loading" ? <div className="flex min-h-60 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-500"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" />Đang kiểm tra quyền truy cập...</div> : null}
 
           {accessState === "denied" ? (
-            <div className="mx-auto max-w-2xl rounded-2xl border border-rose-200 bg-rose-50 p-7 text-center">
-              <ShieldAlert className="mx-auto h-10 w-10 text-rose-600" />
-              <h2 className="mt-3 text-xl font-bold text-rose-950">Không có quyền quản trị IT</h2>
-              <p className="mt-2 text-sm text-rose-700">{loadError || "Chỉ tài khoản có email được khai báo trong IT_EMAIL mới có thể sử dụng khu vực này."}</p>
-            </div>
+            <>
+              <AppErrorToast
+                message={loadError ?? "Chỉ tài khoản có email được khai báo trong IT_EMAIL mới có thể sử dụng khu vực này."}
+                title="Không có quyền quản trị IT"
+              />
+              <div className="mx-auto max-w-2xl rounded-2xl border border-slate-200 bg-white p-7 text-center">
+              <ShieldAlert className="mx-auto h-10 w-10 text-slate-500" />
+              <h2 className="mt-3 text-xl font-bold text-slate-900">Khu vực quản trị IT chưa khả dụng.</h2>
+              <p className="mt-2 text-sm text-slate-600">Tài khoản hiện tại chưa được cấp quyền sử dụng khu vực này.</p>
+              </div>
+            </>
           ) : null}
 
           {accessState === "allowed" ? (
             <>
-              {actionError ? <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{actionError}</p> : null}
+              {actionError ? <AppErrorToast message={actionError} title="Không thể cập nhật nhân sự" /> : null}
               {notice ? <p className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700"><CheckCircle2 className="h-4 w-4" />{notice}</p> : null}
 
               <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">

@@ -13,6 +13,7 @@ import {
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { ActionGroup } from "@/components/detail-ui";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { TimeRequestDetailDialog } from "@/components/timesheet/time-request-detail-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
@@ -901,9 +902,10 @@ function TimeRequestManagementPageContent() {
                 </div>
 
                 {actionError || openRequestError ? (
-                  <div className="border-b border-rose-100 bg-rose-50 px-5 py-3 text-sm text-rose-700">
-                    {actionError || openRequestError}
-                  </div>
+                  <AppErrorToast
+                    message={actionError || openRequestError}
+                    title="Không thể xử lý yêu cầu thời gian"
+                  />
                 ) : null}
 
                 <div className="overflow-x-auto">
@@ -954,14 +956,17 @@ function TimeRequestManagementPageContent() {
                           </td>
                         </tr>
                       ) : loadError ? (
-                        <tr className="border-b border-slate-100">
-                          <td
-                            colSpan={tableColumnCount}
-                            className="px-5 py-8 text-center text-sm text-rose-600"
-                          >
-                            {loadError}
-                          </td>
-                        </tr>
+                        <>
+                          <AppErrorToast message={loadError} title="Không tải được yêu cầu thời gian" />
+                          <tr className="border-b border-slate-100">
+                            <td
+                              colSpan={tableColumnCount}
+                              className="px-5 py-8 text-center text-sm text-slate-500"
+                            >
+                              Chưa có dữ liệu yêu cầu thời gian.
+                            </td>
+                          </tr>
+                        </>
                       ) : filteredRequests.length === 0 ? (
                         <tr className="border-b border-slate-100">
                           <td

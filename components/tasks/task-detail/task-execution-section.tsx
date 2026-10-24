@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { getTaskProgressHint } from "@/lib/constants/tasks";
 import {
   formatTimelineRangeVi,
@@ -183,7 +184,7 @@ export function TaskExecutionSection({
                   Nếu task chưa có ngày, form sẽ ưu tiên lấy timeline hiện tại của KR làm mốc khởi tạo.
                 </p>
                 {taskTimelineInputError ? (
-                  <p className="text-xs leading-5 text-rose-600">{taskTimelineInputError}</p>
+                  <AppErrorToast message={taskTimelineInputError} title="Timeline task chưa hợp lệ" />
                 ) : null}
                 {!taskTimelineInputError && taskTimelineAlignmentWarning ? (
                   <p className="text-xs leading-5 text-amber-600">{taskTimelineAlignmentWarning}</p>

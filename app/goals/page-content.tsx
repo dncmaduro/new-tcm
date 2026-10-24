@@ -15,6 +15,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Info } from "lucide-react";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
@@ -45,6 +46,7 @@ import {
   type GoalOwnerProfile,
 } from "@/lib/goal-owners";
 import { formatDateTimeDdMmYyyy } from "@/lib/date-format";
+import { pushAppErrorToast } from "@/lib/app-toast-store";
 import { buildWorkspaceAccessDebug, useWorkspaceAccess } from "@/lib/stores/workspace-access-store";
 import { supabase } from "@/lib/supabase";
 import { formatTimelineRangeVi } from "@/lib/timeline";
@@ -2373,7 +2375,7 @@ function GoalsPageContent() {
       .eq("goal_id", goalId);
 
     if (keyResultsError) {
-      window.alert(
+      pushAppErrorToast(
         keyResultsError.message || "Không thể tải danh sách key result để xóa goal.",
       );
       setDeletingGoalId(null);
@@ -2389,7 +2391,7 @@ function GoalsPageContent() {
         .in("support_key_result_id", keyResultIds);
 
       if (deleteOutboundSupportLinksError) {
-        window.alert(
+        pushAppErrorToast(
           deleteOutboundSupportLinksError.message ||
             "Không thể xóa các liên kết hỗ trợ outbound của goal.",
         );
@@ -2403,7 +2405,7 @@ function GoalsPageContent() {
         .in("target_key_result_id", keyResultIds);
 
       if (deleteInboundSupportLinksError) {
-        window.alert(
+        pushAppErrorToast(
           deleteInboundSupportLinksError.message ||
             "Không thể xóa các liên kết hỗ trợ inbound của goal.",
         );
@@ -2417,7 +2419,7 @@ function GoalsPageContent() {
         .in("key_result_id", keyResultIds);
 
       if (deleteTasksError) {
-        window.alert(deleteTasksError.message || "Không thể xóa task thuộc goal.");
+        pushAppErrorToast(deleteTasksError.message || "Không thể xóa task thuộc goal.");
         setDeletingGoalId(null);
         return;
       }
@@ -2429,7 +2431,7 @@ function GoalsPageContent() {
       .eq("goal_id", goalId);
 
     if (deleteGoalDepartmentsError) {
-      window.alert(
+      pushAppErrorToast(
         deleteGoalDepartmentsError.message || "Không thể xóa phòng ban tham gia của goal.",
       );
       setDeletingGoalId(null);
@@ -2442,7 +2444,7 @@ function GoalsPageContent() {
       .eq("goal_id", goalId);
 
     if (deleteGoalOwnersError) {
-      window.alert(deleteGoalOwnersError.message || "Không thể xóa owners của goal.");
+      pushAppErrorToast(deleteGoalOwnersError.message || "Không thể xóa owners của goal.");
       setDeletingGoalId(null);
       return;
     }
@@ -2454,7 +2456,7 @@ function GoalsPageContent() {
         .in("id", keyResultIds);
 
       if (deleteKeyResultsError) {
-        window.alert(deleteKeyResultsError.message || "Không thể xóa key result của goal.");
+        pushAppErrorToast(deleteKeyResultsError.message || "Không thể xóa key result của goal.");
         setDeletingGoalId(null);
         return;
       }
@@ -2463,7 +2465,7 @@ function GoalsPageContent() {
     const { error } = await supabase.from("goals").delete().eq("id", goalId);
 
     if (error) {
-      window.alert(error.message || "Không thể xóa goal.");
+      pushAppErrorToast(error.message || "Không thể xóa goal.");
       setDeletingGoalId(null);
       return;
     }
@@ -2908,9 +2910,7 @@ function GoalsPageContent() {
                   </div>
                 ) : goalsError ? (
                   <div className="p-4 lg:p-6">
-                    <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-6 text-sm text-rose-700">
-                      {goalsError}
-                    </div>
+                    <AppErrorToast message={goalsError} title="Không tải được danh sách goal" />
                   </div>
                 ) : nodes.length === 0 ? (
                   <div className="p-4 lg:p-6">
@@ -3673,7 +3673,7 @@ function GoalsPageContent() {
                   {isLoadingGoalLogs ? (
                     <p className="text-sm text-slate-500">Đang tải nhật ký...</p>
                   ) : goalLogsError ? (
-                    <p className="text-sm text-rose-600">{goalLogsError}</p>
+                    <AppErrorToast message={goalLogsError} title="Không tải được nhật ký goal" />
                   ) : goalLogs.length === 0 ? (
                     <p className="text-sm text-slate-500">
                       Chưa có bản ghi nhật ký cho goal này.

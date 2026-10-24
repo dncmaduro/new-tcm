@@ -5,6 +5,7 @@ import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useState } f
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { ActivityHistoryDialog } from "@/components/activity-history-dialog";
 import {
@@ -1162,9 +1163,7 @@ export default function KeyResultDetailPage() {
 
           <main className="min-h-0 flex-1 overflow-y-auto px-4 py-4 lg:px-6">
             {!hasValidParams ? (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-5 text-sm text-rose-700">
-                Thiếu mã goal hoặc mã KR.
-              </div>
+              <AppErrorToast message="Thiếu mã goal hoặc mã KR." title="Liên kết KR không hợp lệ" />
             ) : null}
 
             {hasValidParams && isLoading ? (
@@ -1174,15 +1173,11 @@ export default function KeyResultDetailPage() {
             ) : null}
 
             {hasValidParams && !isLoading && loadError ? (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-5 text-sm text-rose-700">
-                {loadError}
-              </div>
+              <AppErrorToast message={loadError} title="Không tải được chi tiết KR" />
             ) : null}
 
             {!isLoading && actionError ? (
-              <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                {actionError}
-              </div>
+              <AppErrorToast message={actionError} title="Không thể cập nhật KR" />
             ) : null}
 
             {!isLoading && notice ? (
@@ -1359,9 +1354,10 @@ export default function KeyResultDetailPage() {
                       </div>
 
                       {supportLinkError ? (
-                        <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                          {supportLinkError}
-                        </p>
+                        <AppErrorToast
+                          message={supportLinkError}
+                          title="Không tải được liên kết hỗ trợ"
+                        />
                       ) : null}
 
                       {isSupportKeyResult ? (
@@ -1697,9 +1693,7 @@ export default function KeyResultDetailPage() {
                       </div>
 
                       {taskLoadError ? (
-                        <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                          {taskLoadError}
-                        </p>
+                        <AppErrorToast message={taskLoadError} title="Không tải được task của KR" />
                       ) : null}
 
                       {!taskLoadError && tasks.length === 0 ? (

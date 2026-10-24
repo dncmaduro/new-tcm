@@ -12,6 +12,7 @@ import {
   FormFooterActions,
   FormSection,
 } from "@/components/create-form";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { ClearableNumberInput } from "@/components/ui/clearable-number-input";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -1093,17 +1094,13 @@ function NewGoalPageContent() {
           ) : null}
 
           {!isCheckingPermission && permissionError ? (
-            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              {permissionError}
-            </div>
+            <AppErrorToast message={permissionError} title="Không có quyền tạo goal" />
           ) : null}
 
           {!isCheckingPermission && canCreateGoal ? (
             <form className="space-y-5" onSubmit={handleSubmit}>
               {submitError ? (
-                <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                  {submitError}
-                </div>
+                <AppErrorToast message={submitError} title="Không thể lưu goal" />
               ) : null}
 
               <FormSection title="Thông tin cơ bản">
@@ -1291,9 +1288,10 @@ function NewGoalPageContent() {
                 {form.startDate &&
                 form.endDate &&
                 new Date(form.startDate).getTime() > new Date(form.endDate).getTime() ? (
-                  <p className="-mt-1 text-xs text-rose-600">
-                    Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu.
-                  </p>
+                  <AppErrorToast
+                    message="Ngày kết thúc phải lớn hơn hoặc bằng ngày bắt đầu."
+                    title="Ngày goal chưa hợp lệ"
+                  />
                 ) : null}
               </FormSection>
 

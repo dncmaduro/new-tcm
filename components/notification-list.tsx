@@ -1,6 +1,7 @@
 "use client";
 
 import { CheckCheck, Loader2 } from "lucide-react";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { Button } from "@/components/ui/button";
 import type { AppNotification } from "@/lib/notifications";
 import { cn } from "@/lib/utils";
@@ -142,9 +143,7 @@ export function NotificationList({
           </Button>
         </div>
         {error ? (
-          <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-            {error}
-          </div>
+          <AppErrorToast message={error} title="Không tải được thông báo" />
         ) : null}
       </div>
 

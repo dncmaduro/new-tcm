@@ -6,6 +6,7 @@ import { format } from "date-fns";
 import { vi } from "date-fns/locale";
 import { Suspense, useEffect, useState } from "react";
 import { useLeaveFormConfirm } from "@/components/use-leave-form-confirm";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { Button } from "@/components/ui/button";
@@ -632,9 +633,7 @@ function CreateTimeRequestPageContent() {
             <section className="mx-auto w-full max-w-[920px] rounded-2xl border border-slate-200 bg-white p-5 lg:p-6">
               <form className="space-y-5" onSubmit={(event) => void handleSubmit(event)}>
                 {formError ? (
-                  <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                    {formError}
-                  </div>
+                  <AppErrorToast message={formError} title="Không thể gửi yêu cầu chấm công" />
                 ) : null}
                 {submitSuccess ? (
                   <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
@@ -717,7 +716,7 @@ function CreateTimeRequestPageContent() {
                   isLoadingLeaveBalance ? (
                     <p className="text-sm font-medium text-amber-700">Đang tải quỹ phép...</p>
                   ) : leaveBalanceError ? (
-                    <p className="text-sm font-medium text-rose-700">{leaveBalanceError}</p>
+                    <AppErrorToast message={leaveBalanceError} title="Không tải được quỹ phép" />
                   ) : leaveBalance ? (
                     <p className="text-sm font-medium text-amber-700">
                       Quỹ phép của tháng đã chọn còn lại: {formatHoursLabel(remainingLeaveHours)}.

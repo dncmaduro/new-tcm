@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
+import { AppErrorToast } from "@/components/app-error-toast";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { supabase } from "@/lib/supabase";
@@ -93,9 +94,7 @@ export default function ChangePasswordPage() {
               <p className="mt-2 text-sm text-slate-500">Nhập mật khẩu mới để cập nhật tài khoản của bạn.</p>
 
               {passwordError ? (
-                <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                  {passwordError}
-                </div>
+                <AppErrorToast message={passwordError} title="Không thể đổi mật khẩu" />
               ) : null}
 
               {passwordNotice ? (

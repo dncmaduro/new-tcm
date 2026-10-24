@@ -15,6 +15,7 @@ import {
 } from "react";
 import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
+import { AppErrorToast } from "@/components/app-error-toast";
 import {
   Select,
   SelectContent,
@@ -3625,9 +3626,7 @@ function TasksPageContent() {
             ) : null}
 
             {!isLoadingTasks && taskLoadError ? (
-              <section className="flex min-h-0 flex-1 items-center justify-center rounded-2xl border border-amber-200 bg-amber-50 px-4 py-8 text-sm text-amber-700">
-                {taskLoadError}
-              </section>
+              <AppErrorToast message={taskLoadError} title="Không tải được danh sách task" />
             ) : null}
 
             {!isLoadingTasks && !taskLoadError && currentFilteredItemCount === 0 ? (
