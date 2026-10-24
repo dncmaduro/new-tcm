@@ -1,5 +1,5 @@
+import { redirect } from "next/navigation";
 import type { Metadata } from "next";
-import PageContent from "./page-content";
 
 export const dynamic = "force-dynamic";
 
@@ -9,5 +9,5 @@ export const metadata: Metadata = {
 };
 
 export default function Page() {
-  return <PageContent />;
+  redirect("/it-admin?tab=holidays");
 }

@@ -1,9 +1,8 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
-  CalendarDays,
   Check,
   CheckCircle2,
   ClipboardCheck,
@@ -27,6 +26,7 @@ import { AppErrorToast } from "@/components/app-error-toast";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { supabase } from "@/lib/supabase";
+import HolidayManagementPageContent from "./holidays/page-content";
 
 type Profile = {
   id: string;
@@ -94,7 +94,10 @@ function ToggleField({ checked, label, description, onChange }: { checked: boole
 }
 
 export default function ITAdminPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [accessState, setAccessState] = useState<"loading" | "allowed" | "denied">("loading");
+  const [activeTab, setActiveTab] = useState<"people" | "holidays">("people");
   const [directory, setDirectory] = useState<Directory>(initialDirectory);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [keyword, setKeyword] = useState("");
@@ -119,6 +122,15 @@ export default function ITAdminPageContent() {
   } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setActiveTab(searchParams.get("tab") === "holidays" ? "holidays" : "people");
+  }, [searchParams]);
+
+  const selectTab = (tab: "people" | "holidays") => {
+    setActiveTab(tab);
+    router.replace(tab === "holidays" ? "/it-admin?tab=holidays" : "/it-admin", { scroll: false });
+  };
 
   const loadDirectory = useCallback(async () => {
     const data = await itAdminFetch("/api/it-admin/directory");
@@ -373,19 +385,7 @@ export default function ITAdminPageContent() {
     <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
       <WorkspaceSidebar active="itAdmin" />
       <main className="min-h-screen lg:pl-[var(--workspace-sidebar-width)]">
-        <WorkspacePageHeader
-          title="Quản trị IT"
-          items={[{ label: "Quản trị IT" }]}
-          actions={
-            <Link
-              href="/it-admin/holidays"
-              className="hidden h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-blue-300 hover:text-blue-700 sm:inline-flex"
-            >
-              <CalendarDays className="h-4 w-4" />
-              Quản lý ngày nghỉ
-            </Link>
-          }
-        />
+        <WorkspacePageHeader title="Quản trị IT" items={[{ label: "Quản trị IT" }]} />
         <div className="mx-auto w-full max-w-[1600px] px-4 pb-10 pt-5 sm:px-6 lg:px-8">
           {accessState === "loading" ? <div className="flex min-h-60 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-500"><LoaderCircle className="mr-2 h-5 w-5 animate-spin" />Đang kiểm tra quyền truy cập...</div> : null}
 
@@ -405,10 +405,31 @@ export default function ITAdminPageContent() {
 
           {accessState === "allowed" ? (
             <>
-              {actionError ? <AppErrorToast message={actionError} title="Không thể cập nhật nhân sự" /> : null}
-              {notice ? <p className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700"><CheckCircle2 className="h-4 w-4" />{notice}</p> : null}
+              <div className="mb-5 flex max-w-md rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => selectTab("people")}
+                  className={`flex-1 rounded-xl px-4 py-2.5 text-sm font-bold transition ${activeTab === "people" ? "bg-blue-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
+                >
+                  Nhân sự
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectTab("holidays")}
+                  className={`flex-1 rounded-xl px-4 py-2.5 text-sm font-bold transition ${activeTab === "holidays" ? "bg-blue-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
+                >
+                  Ngày nghỉ
+                </button>
+              </div>
 
-              <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+              {activeTab === "holidays" ? (
+                <HolidayManagementPageContent embedded />
+              ) : (
+                <>
+                  {actionError ? <AppErrorToast message={actionError} title="Không thể cập nhật nhân sự" /> : null}
+                  {notice ? <p className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700"><CheckCircle2 className="h-4 w-4" />{notice}</p> : null}
+
+                  <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                 <div className="flex flex-col gap-4 border-b border-slate-100 px-5 py-5 sm:px-6 lg:flex-row lg:items-start lg:justify-between">
                   <div>
                     <div className="flex items-center gap-2.5"><span className="grid h-9 w-9 place-items-center rounded-xl bg-blue-100 text-blue-700"><UsersRound className="h-4 w-4" /></span><div><h2 className="font-bold text-slate-900">Nhân sự</h2><p className="text-sm text-slate-500">Quản lý tài khoản, phân quyền và quyền chấm công.</p></div></div>
@@ -452,7 +473,9 @@ export default function ITAdminPageContent() {
                     </tbody>
                   </table>
                 </div>
-              </section>
+                  </section>
+                </>
+              )}
             </>
           ) : null}
         </div>

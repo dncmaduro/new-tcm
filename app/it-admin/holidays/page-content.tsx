@@ -91,7 +91,7 @@ async function holidayRequest<T>(path: string, init?: RequestInit) {
   return payload as T;
 }
 
-export default function HolidayManagementPageContent() {
+export default function HolidayManagementPageContent({ embedded = false }: { embedded?: boolean }) {
   const pushToast = useAppToastStore((state) => state.pushToast);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -224,25 +224,27 @@ export default function HolidayManagementPageContent() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f3f5fa] text-slate-900">
-      <div className="flex min-h-screen w-full">
-        <WorkspaceSidebar active="holidayManagement" />
+    <div className={embedded ? "space-y-5" : "min-h-screen bg-[#f3f5fa] text-slate-900"}>
+      <div className={embedded ? "" : "flex min-h-screen w-full"}>
+        {!embedded ? <WorkspaceSidebar active="itAdmin" /> : null}
 
-        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]">
-          <WorkspacePageHeader
-            title="Quản lý ngày nghỉ"
-            items={[{ label: "Quản trị IT", href: "/it-admin" }, { label: "Quản lý ngày nghỉ" }]}
-            actions={
-              <Link
-                href="/it-admin"
-                className="hidden h-10 items-center rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-blue-300 hover:text-blue-700 sm:inline-flex"
-              >
-                Quản trị nhân sự
-              </Link>
-            }
-          />
+        <div className={embedded ? "" : "flex min-h-screen w-full flex-1 flex-col lg:pl-[var(--workspace-sidebar-width)]"}>
+          {!embedded ? (
+            <WorkspacePageHeader
+              title="Quản lý ngày nghỉ"
+              items={[{ label: "Quản trị IT", href: "/it-admin" }, { label: "Quản lý ngày nghỉ" }]}
+              actions={
+                <Link
+                  href="/it-admin"
+                  className="hidden h-10 items-center rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-blue-300 hover:text-blue-700 sm:inline-flex"
+                >
+                  Quản trị nhân sự
+                </Link>
+              }
+            />
+          ) : null}
 
-          <main className="space-y-5 px-4 py-5 lg:px-7">
+          <main className={embedded ? "space-y-5" : "space-y-5 px-4 py-5 lg:px-7"}>
             {loadError ? <AppErrorToast message={loadError} title="Không tải được ngày nghỉ" /> : null}
 
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:p-6">

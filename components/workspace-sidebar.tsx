@@ -64,7 +64,6 @@ type SidebarKey =
   | "departments"
   | "departmentPerformance"
   | "itAdmin"
-  | "holidayManagement"
   | "profile";
 
 type WorkspaceSidebarProps = {
@@ -94,7 +93,6 @@ const timeSidebarItems: SidebarItem[] = [
 
 const managementSidebarItems: SidebarItem[] = [
   { key: "itAdmin", label: "Quản trị IT", href: "/it-admin" },
-  { key: "holidayManagement", label: "Quản lý ngày nghỉ", href: "/it-admin/holidays" },
   { key: "attendanceManagement", label: "Quản lý chấm công", href: "/attendance-management" },
   {
     key: "timeRequestManagement",
@@ -124,7 +122,6 @@ const getSidebarItemIcon = (key: SidebarKey): ComponentType<{ className?: string
   if (key === "departments") return Building2;
   if (key === "departmentPerformance") return Gauge;
   if (key === "itAdmin") return ShieldCheck;
-  if (key === "holidayManagement") return CalendarDays;
   if (key === "profile") return UserCircle2;
   return LayoutDashboard;
 };
@@ -421,7 +418,7 @@ export function WorkspaceSidebar({ active }: WorkspaceSidebarProps) {
   }, [isCollapsed, openCollapsedGroup]);
 
   const visibleManagementItems = managementSidebarItems.filter((item) => {
-    if (item.key === "itAdmin" || item.key === "holidayManagement") {
+    if (item.key === "itAdmin") {
       return canAccessITAdmin;
     }
     if (item.key === "attendanceManagement") {
