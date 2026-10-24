@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   buildTimesDeviceFilter,
+  buildTimesProfileFilter,
   collectAttendanceDeviceLinks,
   normalizeAttendanceId,
 } from "@/lib/attendance";
@@ -76,9 +77,8 @@ export async function GET(request: Request) {
     ] = await Promise.all([
       serviceRoleClient
         .from("profiles")
-        .select("id,attendance_id,is_timekeeping_enabled")
+        .select("id,attendance_id")
         .eq("id", profileId)
-        .eq("is_timekeeping_enabled", true)
         .maybeSingle(),
       serviceRoleClient
         .from("times_profiles")
@@ -104,34 +104,32 @@ export async function GET(request: Request) {
 
     const directAttendanceId = normalizeAttendanceId(profile.attendance_id);
     const linkedDeviceBindings = collectAttendanceDeviceLinks(attendanceLinks ?? []);
-    let times: unknown[] = [];
+    const legacyFilters = [
+      linkedDeviceBindings.length > 0 ? buildTimesDeviceFilter(linkedDeviceBindings) : null,
+      directAttendanceId !== null ? `attendance_id.eq.${directAttendanceId}` : null,
+    ].filter((value): value is string => Boolean(value));
+    const ownershipFilter = buildTimesProfileFilter(profileId, legacyFilters.join(","));
+    let timesQuery = serviceRoleClient
+      .from("times")
+      .select("id,profile_id,attendance_id,device_id,date,check_in,check_out,created_at,updated_at")
+      .gte("date", month.startIso)
+      .lt("date", month.endIso);
 
-    if (linkedDeviceBindings.length > 0 || directAttendanceId !== null) {
-      let timesQuery = serviceRoleClient
-        .from("times")
-        .select("id,attendance_id,device_id,date,check_in,check_out,created_at,updated_at")
-        .gte("date", month.startIso)
-        .lt("date", month.endIso);
-
-      if (linkedDeviceBindings.length > 0) {
-        timesQuery = timesQuery.or(buildTimesDeviceFilter(linkedDeviceBindings));
-      } else if (directAttendanceId !== null) {
-        timesQuery = timesQuery.eq("attendance_id", directAttendanceId);
-      }
-
-      const { data, error } = await timesQuery
-        .order("date", { ascending: true })
-        .order("updated_at", { ascending: false })
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      times = data ?? [];
+    if (ownershipFilter) {
+      timesQuery = timesQuery.or(ownershipFilter);
     }
+
+    const { data: timesData, error: timesError } = await timesQuery
+      .order("date", { ascending: true })
+      .order("updated_at", { ascending: false })
+      .order("created_at", { ascending: false });
+    if (timesError) throw timesError;
 
     return NextResponse.json(
       {
         profile,
         attendanceLinks: attendanceLinks ?? [],
-        times,
+        times: timesData ?? [],
         timeRequests: timeRequests ?? [],
       },
       { status: 200, headers: { "Cache-Control": "no-store" } },

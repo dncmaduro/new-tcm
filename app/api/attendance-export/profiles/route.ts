@@ -9,6 +9,7 @@ type ProfileRow = {
   name: string | null;
   email: string | null;
   attendance_id: number | null;
+  is_timekeeping_enabled: boolean | null;
 };
 
 type MembershipRow = {
@@ -103,8 +104,7 @@ export async function GET(request: Request) {
     ] = await Promise.all([
       serviceRoleClient
         .from("profiles")
-        .select("id,name,email,attendance_id")
-        .eq("is_timekeeping_enabled", true)
+        .select("id,name,email,attendance_id,is_timekeeping_enabled")
         .order("name", { ascending: true }),
       serviceRoleClient.from("user_role_in_department").select("profile_id,department_id,role_id"),
       serviceRoleClient.from("roles").select("id,name"),
@@ -193,6 +193,7 @@ export async function GET(request: Request) {
             profile.attendance_id,
             ...(linksByProfileId[profileId] ?? []),
           ]),
+          isTimekeepingEnabled: profile.is_timekeeping_enabled === true,
         };
       })
       .sort((a, b) => {

@@ -9,6 +9,7 @@ export type AttendanceDeviceLinkValue = {
 
 export type AttendanceTimeRow = {
   id: string;
+  profile_id?: string | null;
   attendance_id: number | null;
   device_id?: number | null;
   date: string;
@@ -136,6 +137,28 @@ export function buildTimesDeviceFilter(links: AttendanceDeviceLink[]) {
       return `and(attendance_id.eq.${attendanceId},device_id.eq.${deviceId})`;
     })
     .join(",");
+}
+
+/**
+ * Keeps the stable profile ownership as the source of truth while still
+ * allowing rows created before `times.profile_id` existed to be read through
+ * the currently linked attendance identifiers.
+ */
+export function buildTimesProfileFilter(profileId: string, legacyFilter?: string | null) {
+  const normalizedProfileId = profileId.trim();
+  if (!normalizedProfileId) {
+    return legacyFilter ?? "";
+  }
+
+  if (!legacyFilter) {
+    return `profile_id.eq.${normalizedProfileId}`;
+  }
+
+  const normalizedLegacyFilter = legacyFilter.includes(",")
+    ? `or(${legacyFilter})`
+    : legacyFilter;
+
+  return `profile_id.eq.${normalizedProfileId},and(profile_id.is.null,${normalizedLegacyFilter})`;
 }
 
 function toTimestamp(value: string | null | undefined) {

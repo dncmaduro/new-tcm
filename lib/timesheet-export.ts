@@ -1,5 +1,6 @@
 import {
   buildTimesDeviceFilter,
+  buildTimesProfileFilter,
   collectAttendanceDeviceLinks,
   mergeAttendanceRowsByDate,
   normalizeAttendanceId,
@@ -23,7 +24,6 @@ import {
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildHolidayMap, fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
-import { canReadTimekeepingData } from "@/lib/timekeeping-access";
 import {
   calculateWorkedMinutesBetweenTimestamps,
   formatTimestampToVietnamHHmm,
@@ -60,7 +60,6 @@ type TimeRequestRow = {
 type ProfileAttendanceRow = {
   id: string;
   attendance_id: number | null;
-  is_timekeeping_enabled: boolean | null;
 };
 
 type TimesProfileLinkRow = {
@@ -278,7 +277,7 @@ async function loadBaseCalendarDays(
   ] = await Promise.all([
     supabaseClient
       .from("profiles")
-      .select("id,attendance_id,is_timekeeping_enabled")
+      .select("id,attendance_id")
       .eq("id", profileId)
       .maybeSingle(),
     supabaseClient
@@ -294,7 +293,7 @@ async function loadBaseCalendarDays(
     throw attendanceLinkError;
   }
 
-  if (!canReadTimekeepingData(profileAttendanceData as ProfileAttendanceRow | null)) {
+  if (!profileAttendanceData) {
     return [];
   }
 
@@ -304,20 +303,20 @@ async function loadBaseCalendarDays(
   const linkedDeviceBindings = collectAttendanceDeviceLinks(
     (attendanceLinkRows ?? []) as TimesProfileLinkRow[],
   );
-  if (linkedDeviceBindings.length === 0 && directAttendanceId === null) {
-    return [];
-  }
-
   let timeQuery = supabaseClient
     .from("times")
-    .select("id,attendance_id,device_id,date,check_in,check_out,created_at,updated_at")
+    .select("id,profile_id,attendance_id,device_id,date,check_in,check_out,created_at,updated_at")
     .gte("date", startIso)
     .lt("date", endIso);
 
-  if (linkedDeviceBindings.length > 0) {
-    timeQuery = timeQuery.or(buildTimesDeviceFilter(linkedDeviceBindings));
-  } else if (directAttendanceId !== null) {
-    timeQuery = timeQuery.eq("attendance_id", directAttendanceId);
+  const legacyFilters = [
+    linkedDeviceBindings.length > 0 ? buildTimesDeviceFilter(linkedDeviceBindings) : null,
+    directAttendanceId !== null ? `attendance_id.eq.${directAttendanceId}` : null,
+  ].filter((value): value is string => Boolean(value));
+  const ownershipFilter = buildTimesProfileFilter(profileId, legacyFilters.join(","));
+
+  if (ownershipFilter) {
+    timeQuery = timeQuery.or(ownershipFilter);
   }
 
   const { data, error } = await timeQuery
@@ -803,7 +802,7 @@ export async function loadTimesheetExportContext(
   const supabaseClient = options?.supabaseClient ?? supabase;
   const { data: profileData, error: profileError } = await supabaseClient
     .from("profiles")
-    .select("id,is_timekeeping_enabled")
+    .select("id")
     .eq("id", profileId)
     .maybeSingle();
 
@@ -811,7 +810,7 @@ export async function loadTimesheetExportContext(
     throw profileError;
   }
 
-  if (!profileData || !canReadTimekeepingData(profileData)) {
+  if (!profileData) {
     return buildEmptyExportContext(selectedMonth);
   }
 

@@ -198,6 +198,32 @@ export async function PATCH(request: Request) {
     const supabase = createServerSupabaseServiceRoleClient();
 
     if (shouldUnlinkAttendance) {
+      const { data: attendanceLinks, error: attendanceLinksError } = await supabase
+        .from("times_profiles")
+        .select("attendance_id,device_id")
+        .eq("profile_id", profileId);
+      if (attendanceLinksError) {
+        throw attendanceLinksError;
+      }
+
+      // Protect any legacy rows that were created before the database trigger
+      // or that were imported without an owner before the link is cleared.
+      for (const link of attendanceLinks ?? []) {
+        if (link.attendance_id === null || link.device_id === null) {
+          continue;
+        }
+
+        const { error: stabilizeTimesError } = await supabase
+          .from("times")
+          .update({ profile_id: profileId })
+          .is("profile_id", null)
+          .eq("attendance_id", link.attendance_id)
+          .eq("device_id", link.device_id);
+        if (stabilizeTimesError) {
+          throw stabilizeTimesError;
+        }
+      }
+
       const { error: unlinkAttendanceError } = await supabase
         .from("times_profiles")
         .update({ profile_id: null })

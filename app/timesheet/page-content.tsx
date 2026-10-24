@@ -5,11 +5,7 @@ import { WorkspacePageHeader } from "@/components/workspace-page-header";
 import { WorkspaceSidebar } from "@/components/workspace-sidebar";
 import { TimesheetOverview } from "@/components/timesheet/timesheet-overview";
 import { supabase } from "@/lib/supabase";
-import {
-  canCreateTimeRequest,
-  canReadTimekeepingData,
-  type TimekeepingCreateProfile,
-} from "@/lib/timekeeping-access";
+import { canCreateTimeRequest, type TimekeepingCreateProfile } from "@/lib/timekeeping-access";
 
 export default function TimesheetPage() {
   const [profileId, setProfileId] = useState<string | null>(null);
@@ -84,7 +80,6 @@ export default function TimesheetPage() {
               profileId={profileId}
               isProfileLoading={isLoadingProfile}
               profileError={profileError}
-              canReadTimekeepingData={canReadTimekeepingData(profileAccess)}
               createRequestHref={
                 canCreateTimeRequest(profileAccess)
                   ? "/timesheet/time-request/new?returnTo=%2Ftimesheet"

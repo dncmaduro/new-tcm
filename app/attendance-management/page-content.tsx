@@ -20,6 +20,7 @@ type ProfileRow = {
   name: string | null;
   email: string | null;
   attendance_id: number | null;
+  is_timekeeping_enabled: boolean | null;
 };
 
 type TimesProfileLinkRow = {
@@ -31,6 +32,7 @@ export type ViewableProfile = AttendanceExportProfile & {
   id: string;
   rawRolePriority: number;
   attendanceIds: number[];
+  isTimekeepingEnabled: boolean;
 };
 
 type ManagedAttendancePageContentProps = {
@@ -251,8 +253,7 @@ export function ManagedAttendancePageContent({
           ] = await Promise.all([
             supabase
               .from("profiles")
-              .select("id,name,email,attendance_id")
-              .eq("is_timekeeping_enabled", true)
+              .select("id,name,email,attendance_id,is_timekeeping_enabled")
               .order("name", { ascending: true }),
             supabase.from("user_role_in_department").select("profile_id,department_id,role_id"),
           ]);
@@ -328,9 +329,8 @@ export function ManagedAttendancePageContent({
 
           const { data: profilesData, error: profilesError } = await supabase
             .from("profiles")
-            .select("id,name,email,attendance_id")
+            .select("id,name,email,attendance_id,is_timekeeping_enabled")
             .in("id", targetProfileIds)
-            .eq("is_timekeeping_enabled", true)
             .order("name", { ascending: true });
 
           if (profilesError) {
@@ -441,6 +441,7 @@ export function ManagedAttendancePageContent({
               departmentLabel: primaryAssignment.departmentLabel,
               rawRolePriority: toRolePriority(primaryAssignment.roleLabel),
               attendanceIds,
+              isTimekeepingEnabled: profile.is_timekeeping_enabled === true,
             } satisfies ViewableProfile;
           })
           .sort((a, b) => {
@@ -618,11 +619,18 @@ export function ManagedAttendancePageContent({
                                 <p className="text-xs text-slate-500">{profile.departmentLabel}</p>
                                 <span
                                   className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                                    profile.attendanceIds.length <= 0 &&
-                                    "bg-amber-50 text-amber-700"
+                                    !profile.isTimekeepingEnabled
+                                      ? "bg-slate-100 text-slate-600"
+                                      : profile.attendanceIds.length <= 0
+                                        ? "bg-amber-50 text-amber-700"
+                                        : "bg-emerald-50 text-emerald-700"
                                   }`}
                                 >
-                                  {profile.attendanceIds.length <= 0 && "Chưa liên kết công"}
+                                  {!profile.isTimekeepingEnabled
+                                    ? "Đã tắt chấm công"
+                                    : profile.attendanceIds.length <= 0
+                                      ? "Chưa liên kết công"
+                                      : "Đã liên kết công"}
                                 </span>
                               </div>
                             </button>

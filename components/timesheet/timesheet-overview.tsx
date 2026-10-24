@@ -17,6 +17,7 @@ import {
 } from "@/lib/constants/time-requests";
 import {
   buildTimesDeviceFilter,
+  buildTimesProfileFilter,
   collectAttendanceDeviceLinks,
   collectAttendanceIds,
   mergeAttendanceRowsByDate,
@@ -32,10 +33,7 @@ import {
 import { formatDateDdMmYyyy } from "@/lib/date-format";
 import { buildHolidayMap, fetchHolidaysInRange, type Holiday } from "@/lib/holidays";
 import { supabase } from "@/lib/supabase";
-import {
-  canReadTimekeepingData as canReadTimekeepingProfileData,
-  getEarliestAllowedTimeRequestDateIso,
-} from "@/lib/timekeeping-access";
+import { getEarliestAllowedTimeRequestDateIso } from "@/lib/timekeeping-access";
 import { calculateWorkedMinutesBetweenTimestamps } from "@/lib/work-time";
 
 export type CalendarDay = {
@@ -96,7 +94,6 @@ type TimeRequestRow = {
 type ProfileAttendanceRow = {
   id: string;
   attendance_id: number | null;
-  is_timekeeping_enabled?: boolean | null;
 };
 
 type TimesProfileLinkRow = {
@@ -151,7 +148,6 @@ type TimesheetOverviewProps = {
   profileId: string | null;
   isProfileLoading?: boolean;
   profileError?: string | null;
-  canReadTimekeepingData?: boolean;
   dataSource?: "client" | "attendanceExportAdmin";
   createRequestHref?: string | null;
   showExportButton?: boolean;
@@ -422,7 +418,6 @@ export function TimesheetOverview({
   profileId,
   isProfileLoading = false,
   profileError = null,
-  canReadTimekeepingData = true,
   dataSource = "client",
   createRequestHref = null,
   showExportButton = false,
@@ -491,7 +486,7 @@ export function TimesheetOverview({
   }, [selectedMonth]);
 
   useEffect(() => {
-    if (!profileId || !canReadTimekeepingData) {
+    if (!profileId) {
       setCorrectionRequests([]);
       return;
     }
@@ -573,12 +568,12 @@ export function TimesheetOverview({
     return () => {
       isActive = false;
     };
-  }, [canReadTimekeepingData, dataSource, profileError, profileId, selectedMonth]);
+  }, [dataSource, profileError, profileId, selectedMonth]);
 
   useEffect(() => {
-    if (!profileId || !canReadTimekeepingData) {
+    if (!profileId) {
       setIsLoadingAttendance(false);
-      setAttendanceError(!profileId ? profileError ?? "" : "");
+      setAttendanceError(profileError ?? "");
       setAttendanceBinding(null);
       setCalendarDays([]);
       return;
@@ -611,7 +606,7 @@ export function TimesheetOverview({
           ] = await Promise.all([
             supabase
               .from("profiles")
-              .select("id,attendance_id,is_timekeeping_enabled")
+              .select("id,attendance_id")
               .eq("id", profileId)
               .maybeSingle(),
             supabase
@@ -630,19 +625,6 @@ export function TimesheetOverview({
 
           profileAttendanceData = nextProfileAttendanceData as ProfileAttendanceRow | null;
           attendanceLinkRows = (nextAttendanceLinkRows ?? []) as TimesProfileLinkRow[];
-        }
-
-        if (
-          !canReadTimekeepingProfileData(profileAttendanceData)
-        ) {
-          if (!isActive) {
-            return;
-          }
-
-          setAttendanceError("");
-          setAttendanceBinding(null);
-          setCalendarDays([]);
-          return;
         }
 
         const directAttendanceId = normalizeAttendanceId(
@@ -670,32 +652,35 @@ export function TimesheetOverview({
           linkedDeviceBindings,
         });
 
-        if (linkedDeviceBindings.length === 0 && directAttendanceId === null) {
-          setAttendanceError("");
-          setCalendarDays([]);
-          return;
-        }
-
         let timeQuery = supabase
           .from("times")
-          .select("id,attendance_id,device_id,date,check_in,check_out,created_at,updated_at")
+          .select("id,profile_id,attendance_id,device_id,date,check_in,check_out,created_at,updated_at")
           .gte("date", startIso)
           .lt("date", endIso);
 
-        if (linkedDeviceBindings.length > 0) {
-          timeQuery = timeQuery.or(buildTimesDeviceFilter(linkedDeviceBindings));
-        } else if (directAttendanceId !== null) {
-          timeQuery = timeQuery.eq("attendance_id", directAttendanceId);
+        const legacyFilters = [
+          linkedDeviceBindings.length > 0
+            ? buildTimesDeviceFilter(linkedDeviceBindings)
+            : null,
+          directAttendanceId !== null ? `attendance_id.eq.${directAttendanceId}` : null,
+        ].filter((value): value is string => Boolean(value));
+        const ownershipFilter = buildTimesProfileFilter(profileId, legacyFilters.join(","));
+
+        if (ownershipFilter) {
+          timeQuery = timeQuery.or(ownershipFilter);
         }
 
-        const data = serverTimeRows
-          ? serverTimeRows
-          : (
-              await timeQuery
-                .order("date", { ascending: true })
-                .order("updated_at", { ascending: false })
-                .order("created_at", { ascending: false })
-            ).data;
+        let data: AttendanceTimeRow[] = serverTimeRows ?? [];
+        if (!serverTimeRows) {
+          const { data: clientTimeRows, error: timeError } = await timeQuery
+            .order("date", { ascending: true })
+            .order("updated_at", { ascending: false })
+            .order("created_at", { ascending: false });
+          if (timeError) {
+            throw timeError;
+          }
+          data = (clientTimeRows ?? []) as AttendanceTimeRow[];
+        }
 
         if (!isActive) {
           return;
@@ -842,7 +827,7 @@ export function TimesheetOverview({
     return () => {
       isActive = false;
     };
-  }, [canReadTimekeepingData, dataSource, holidays, profileError, profileId, selectedMonth]);
+  }, [dataSource, holidays, profileError, profileId, selectedMonth]);
 
   const calendarYear = selectedMonth.getFullYear();
   const calendarMonth = selectedMonth.getMonth() + 1;

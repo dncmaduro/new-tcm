@@ -1446,6 +1446,7 @@ export type Database = {
           date: string
           device_id: number
           id: string
+          profile_id: string | null
           updated_at: string | null
         }
         Insert: {
@@ -1456,6 +1457,7 @@ export type Database = {
           date: string
           device_id?: number
           id?: string
+          profile_id?: string | null
           updated_at?: string | null
         }
         Update: {
@@ -1466,6 +1468,7 @@ export type Database = {
           date?: string
           device_id?: number
           id?: string
+          profile_id?: string | null
           updated_at?: string | null
         }
         Relationships: [
@@ -1475,6 +1478,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "times_profiles"
             referencedColumns: ["attendance_id", "device_id"]
+          },
+          {
+            foreignKeyName: "times_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
           },
         ]
       }

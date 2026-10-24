@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import {
   buildTimesDeviceFilter,
+  buildTimesProfileFilter,
   collectAttendanceDeviceLinks,
-  collectAttendanceIds,
   mergeAttendanceRowsByDate,
   type AttendanceTimeRow,
 } from "@/lib/attendance";
@@ -762,10 +762,6 @@ export function useDashboardData() {
 
         const teammateRows = (teammateResult.data ?? []) as UserRoleRow[];
 
-        const attendanceIds = collectAttendanceIds([
-          profileData.attendance_id,
-          ...((attendanceLinkResult.data ?? []) as TimesProfileLinkRow[]),
-        ]);
         const attendanceDeviceBindings = collectAttendanceDeviceLinks(
           (attendanceLinkResult.data ?? []) as TimesProfileLinkRow[],
         );
@@ -806,17 +802,25 @@ export function useDashboardData() {
         ] = await Promise.all([
           loadTasksByProfileIds([profileId]),
           roleScope === "member" ? Promise.resolve([] as TaskQueryRow[]) : loadTasksByProfileIds(scopeProfileIds),
-          canReadOwnTimekeeping && (attendanceDeviceBindings.length > 0 || attendanceIds.length > 0)
+          canReadOwnTimekeeping
             ? (() => {
                 let query = supabase
                   .from("times")
-                  .select("id,attendance_id,device_id,date,check_in,check_out,created_at,updated_at")
+                  .select("id,profile_id,attendance_id,device_id,date,check_in,check_out,created_at,updated_at")
                   .eq("date", todayIso);
 
-                if (attendanceDeviceBindings.length > 0) {
-                  query = query.or(buildTimesDeviceFilter(attendanceDeviceBindings));
-                } else if (profileData.attendance_id !== null) {
-                  query = query.eq("attendance_id", profileData.attendance_id);
+                const legacyFilters = [
+                  attendanceDeviceBindings.length > 0
+                    ? buildTimesDeviceFilter(attendanceDeviceBindings)
+                    : null,
+                  profileData.attendance_id !== null
+                    ? `attendance_id.eq.${profileData.attendance_id}`
+                    : null,
+                ].filter((value): value is string => Boolean(value));
+                const ownershipFilter = buildTimesProfileFilter(profileId, legacyFilters.join(","));
+
+                if (ownershipFilter) {
+                  query = query.or(ownershipFilter);
                 }
 
                 return query.order("updated_at", { ascending: false });

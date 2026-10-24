@@ -7,7 +7,6 @@ import {
   createServerSupabaseAuthClient,
   createServerSupabaseServiceRoleClient,
 } from "@/lib/supabase-server";
-import { canReadTimekeepingData } from "@/lib/timekeeping-access";
 
 type ExportRequestPayload = {
   selectedMonth?: string;
@@ -103,23 +102,19 @@ export async function POST(request: Request) {
 
     const { data: eligibleProfileRows, error: eligibleProfilesError } = await serviceRoleClient
       .from("profiles")
-      .select("id,is_timekeeping_enabled")
+      .select("id")
       .in("id", requestedProfileIds);
 
     if (eligibleProfilesError) {
       throw eligibleProfilesError;
     }
 
-    const eligibleProfileIds = new Set(
-      (eligibleProfileRows ?? [])
-        .filter((profile) => canReadTimekeepingData(profile))
-        .map((profile) => String(profile.id)),
-    );
+    const eligibleProfileIds = new Set((eligibleProfileRows ?? []).map((profile) => String(profile.id)));
     const exportProfiles = profiles.filter((profile) => eligibleProfileIds.has(profile.id));
 
     if (exportProfiles.length <= 0) {
       return NextResponse.json(
-        { error: "Không có nhân sự nào được bật tính công để xuất dữ liệu." },
+        { error: "Không có nhân sự hợp lệ để xuất dữ liệu." },
         { status: 400 },
       );
     }
