@@ -55,6 +55,7 @@ type SidebarKey =
   | "realtimeReports"
   | "timesheet"
   | "attendanceExport"
+  | "payroll"
   | "timeRequestForms"
   | "leaveBalance"
   | "parttimeSchedule"
@@ -86,6 +87,7 @@ const departmentsItem: SidebarItem = { key: "departments", label: "Phòng ban", 
 const timeSidebarItems: SidebarItem[] = [
   { key: "timesheet", label: "Chấm công", href: "/timesheet" },
   { key: "attendanceExport", label: "Xuất chấm công", href: "/attendance-export" },
+  { key: "payroll", label: "Gửi bảng lương", href: "/payroll" },
   { key: "timeRequestForms", label: "Yêu cầu thời gian", href: "/timesheet/requests" },
   { key: "leaveBalance", label: "Quỹ phép", href: "/leave-balance" },
   { key: "parttimeSchedule", label: "Lịch part-time", href: "/parttime-schedule" },
@@ -113,6 +115,7 @@ const getSidebarItemIcon = (key: SidebarKey): ComponentType<{ className?: string
   if (key === "reports") return FileText;
   if (key === "timesheet") return CalendarDays;
   if (key === "attendanceExport") return FileText;
+  if (key === "payroll") return WalletCards;
   if (key === "timeRequestForms") return ClipboardList;
   if (key === "leaveBalance") return WalletCards;
   if (key === "parttimeSchedule") return Clock3;
