@@ -16,6 +16,24 @@ function buildMonthToken(value: Date) {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}`;
 }
 
+function buildDownloadFileName(value: Date) {
+  return `Chấm công tháng ${String(value.getMonth() + 1).padStart(2, "0")}-${value.getFullYear()}.xlsx`;
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = objectUrl;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.setTimeout(() => {
+    URL.revokeObjectURL(objectUrl);
+  }, 0);
+}
+
 type PreparedAttendanceFile = {
   profileId: string;
   name: string;
@@ -80,6 +98,54 @@ async function requestAttendanceJson<T>(path: string, body: unknown) {
   }
 
   return payload;
+}
+
+async function requestAttendanceWorkbook(params: {
+  profiles: AttendanceExportProfile[];
+  selectedMonth: Date;
+  fileName: string;
+}) {
+  const accessToken = await getAccessToken();
+  const response = await fetch("/api/attendance-export", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      selectedMonth: buildMonthToken(params.selectedMonth),
+      profiles: params.profiles,
+      fileName: params.fileName,
+    }),
+  });
+
+  if (!response.ok) {
+    let message = "Không thể xuất file chấm công.";
+
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) {
+        message = payload.error;
+      }
+    } catch {
+      // Keep the default message when the server does not return JSON.
+    }
+
+    throw new Error(message);
+  }
+
+  downloadBlob(await response.blob(), params.fileName);
+}
+
+async function exportAllAttendanceWorkbook(params: {
+  profiles: ViewableProfile[];
+  selectedMonth: Date;
+}) {
+  await requestAttendanceWorkbook({
+    profiles: params.profiles,
+    selectedMonth: params.selectedMonth,
+    fileName: buildDownloadFileName(params.selectedMonth),
+  });
 }
 
 async function prepareAttendanceExport(params: {
@@ -422,6 +488,7 @@ export default function AttendanceExportClient() {
   const [isSending, setIsSending] = useState(false);
   const [sendResults, setSendResults] = useState<AttendanceSendResult[] | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [directExportError, setDirectExportError] = useState<string | null>(null);
   const [exportChoice, setExportChoice] = useState<AttendanceExportChoice | null>(null);
   const [preparingProfileCount, setPreparingProfileCount] = useState(0);
 
@@ -504,6 +571,21 @@ export default function AttendanceExportClient() {
     void prepareBatch({ profiles, selectedMonth });
   };
 
+  const handleExportAllProfiles = async (params: {
+    profiles: ViewableProfile[];
+    selectedMonth: Date;
+  }) => {
+    setDirectExportError(null);
+
+    try {
+      await exportAllAttendanceWorkbook(params);
+    } catch (error) {
+      setDirectExportError(
+        error instanceof Error ? error.message : "Không thể xuất file Excel tổng hợp.",
+      );
+    }
+  };
+
   const closeExportModal = () => {
     if (isPreparing) {
       return;
@@ -513,6 +595,7 @@ export default function AttendanceExportClient() {
     setPreparedBatch(null);
     setSendResults(null);
     setExportError(null);
+    setDirectExportError(null);
   };
 
   if (status === "misconfigured") {
@@ -535,9 +618,13 @@ export default function AttendanceExportClient() {
         activeSidebarKey="attendanceExport"
         showExportChoiceButton
         exportChoiceButtonLabel="Xuất file"
+        showExportAllButton
+        exportAllButtonLabel="Xuất Excel tất cả"
         forceAdminAccess
         onExportChoiceRequest={setExportChoice}
+        onExportAllProfiles={handleExportAllProfiles}
       />
+      <AppErrorToast message={directExportError} title="Không thể xuất Excel tổng hợp" />
       {exportChoice ? (
         <AttendanceExportModal
           choice={exportChoice}

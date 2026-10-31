@@ -711,7 +711,8 @@ export function ManagedAttendancePageContent({
                                   ? "Đang mở..."
                                   : exportChoiceButtonLabel}
                               </button>
-                            ) : showExportAllButton ? (
+                            ) : null}
+                            {showExportAllButton ? (
                               <button
                                 type="button"
                                 onClick={handleExportAllProfiles}
